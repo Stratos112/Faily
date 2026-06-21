@@ -4,8 +4,10 @@ import torch
 
 TTS_MODELS_DIR = Path("models/tts")
 SFX_MODELS_DIR = Path("models/sfx")
+VC_MODELS_DIR  = Path("models/vc")
 TTS_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 SFX_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+VC_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ModelManager:
