@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/workspaces/projects/Faily/.venv/bin/pip install *)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python *)",
+      "Skill(run)",
+      "Bash(.venv/bin/pip index *)",
+      "Bash(DISPLAY= .venv/bin/python main.py)",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(curl -s http://localhost:8080/)",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(.venv/bin/playwright install *)",
+      "Bash(curl -s http://localhost:7842/)",
+      "Bash(jobs -l)",
+      "Bash(fuser -k 7842/tcp)",
+      "Bash(lsof -i:7842)",
+      "Bash(curl -sv http://localhost:7842/)",
+      "Bash(lsof -i:7842 -sTCP:LISTEN)",
+      "Bash(kill 16413 18033)",
+      "Bash(pkill -f \"python main.py\")",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs kill -9)",
+      "Bash(sudo .venv/bin/playwright install-deps chromium)",
+      "Bash(sudo apt install -y libegl1)",
+      "Bash(sudo apt install -y libxtst6 libxrandr2 libxss1 libnss3 libnspr4 libxdamage1 libxfixes3 libxcomposite1 libxcursor1 libxi6 libgbm1 libasound2)",
+      "Bash(sudo apt install -y libxcb-cursor0)",
+      "Bash(pkill -9 -f \"python main.py\")",
+      "Bash(curl -sf http://localhost:7842/)",
+      "Bash(pkill -f \"python.*main.py\")",
+      "Bash(pkill -f \"nicegui\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:7843/)",
+      "Bash(curl *)",
+      "Bash(fuser -k 7843/tcp)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(git rm *)"
+    ]
+  }
+}
