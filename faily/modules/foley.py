@@ -50,6 +50,9 @@ def generate(
     guidance: float = 3.5,
     progress_ref: list | None = None,
     output_dir: Path | None = None,
+    candidates: int = 1,
+    normalize: bool = False,
+    fade: float = 0.0,
 ) -> Path:
     if output_dir is None:
         output_dir = SFX_OUTPUT_DIR
@@ -66,11 +69,26 @@ def generate(
         num_inference_steps=steps,
         audio_length_in_s=duration,
         guidance_scale=guidance,
+        num_waveforms_per_prompt=candidates,
         callback=_cb,
         callback_steps=1,
     )
 
     audio: np.ndarray = result.audios[0]
+
+    if normalize:
+        peak = np.max(np.abs(audio))
+        if peak > 0:
+            audio = audio / peak
+
+    if fade > 0.0:
+        sr = 16000
+        fade_samples = min(int(fade * sr), len(audio) // 2)
+        if fade_samples > 0:
+            ramp = np.linspace(0.0, 1.0, fade_samples)
+            audio[:fade_samples] *= ramp
+            audio[-fade_samples:] *= ramp[::-1]
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out = output_dir / f"sfx_{ts}.wav"
     sf.write(str(out), audio, 16000)
