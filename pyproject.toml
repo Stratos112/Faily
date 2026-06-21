@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "faily"
+version = "0.1.0"
+description = "Local audio framework — TTS, voice cloning, SFX"
+requires-python = ">=3.10"
+dependencies = [
+    "nicegui[native]>=2.0.0",
+    "transformers>=4.40.0",
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+    "diffusers>=0.27.0",
+    "accelerate>=0.27.0",
+    "soundfile>=0.12.0",
+    "numpy>=1.24.0",
+    "huggingface_hub>=0.22.0",
+    "scipy>=1.11.0",
+]
+
+[project.optional-dependencies]
+audiocraft = ["audiocraft"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["faily*"]

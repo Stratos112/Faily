@@ -34,7 +34,9 @@
       "Bash(fuser -k 7843/tcp)",
       "Bash(git check-ignore *)",
       "Bash(git add *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Skill(claude-api)",
+      "Bash(xargs ls -la)"
     ]
   }
 }
