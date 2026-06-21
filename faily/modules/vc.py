@@ -22,9 +22,11 @@ def _load_tts():
 
 def _load_spk_enc():
     from speechbrain.inference.classifiers import EncoderClassifier
+    from speechbrain.utils.fetching import LocalStrategy
     return EncoderClassifier.from_hparams(
         source=_SPK_ID,
         savedir=str(VC_MODELS_DIR / "spkrec-xvect"),
+        local_strategy=LocalStrategy.COPY,
     )
 
 
