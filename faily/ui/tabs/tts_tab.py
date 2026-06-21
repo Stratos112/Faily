@@ -1,9 +1,23 @@
+from pathlib import Path
 from nicegui import ui, run as ni_run
 from faily.core.model_manager import manager
 from faily.modules.tts import get_models, generate as tts_generate
+from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR
 from faily.ui.components import output_panel, section_label
 
 _BTN = "font-mono tracking-widest"
+_REFS_DIR = Path("outputs/vc/refs")
+_NO_VOICE = "— none —"
+
+
+def _scan_voices() -> list[str]:
+    if not _REFS_DIR.exists():
+        return [_NO_VOICE]
+    files = sorted(
+        f.name for f in _REFS_DIR.iterdir()
+        if f.suffix.lower() in {".wav", ".mp3", ".flac", ".ogg"}
+    )
+    return [_NO_VOICE] + files
 
 
 def build_tts_tab():
@@ -18,19 +32,26 @@ def build_tts_tab():
         if not text:
             ui.notify("Enter some text first", type="warning")
             return
-        model_id = get_models().get(model_select.value, model_select.value)
+
         gen_btn.disable()
         _out["status"].set_text("—")
         _progress[0] = 0.0
         _out["model_loader"].set_visibility(True)
         _poll.active = True
 
+        chosen_voice = voice_select.value
         try:
-            path = await ni_run.io_bound(
-                tts_generate, text, model_id, speed_slider.value, _progress
-            )
-            _prev_id[0] = model_id
-            _out["main_player"].set_source(f"/outputs/tts/{path.name}")
+            if chosen_voice and chosen_voice != _NO_VOICE:
+                ref_path = _REFS_DIR / chosen_voice
+                path = await ni_run.io_bound(vc_generate, text, ref_path, _progress)
+                _out["main_player"].set_source(f"/outputs/vc/{path.name}")
+            else:
+                model_id = get_models().get(model_select.value, model_select.value)
+                path = await ni_run.io_bound(
+                    tts_generate, text, model_id, speed_slider.value, _progress
+                )
+                _prev_id[0] = model_id
+                _out["main_player"].set_source(f"/outputs/tts/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path)
         except Exception as exc:
@@ -66,6 +87,18 @@ def build_tts_tab():
                     .on("update:model-value", _on_model_change)
                 )
                 ui.button(icon="refresh", on_click=lambda: _refresh()).props("flat dense color=grey")
+
+            section_label("CLONE VOICE")
+            with ui.row().classes("w-full gap-2 items-center"):
+                voice_select = (
+                    ui.select(_scan_voices(), value=_NO_VOICE)
+                    .classes("flex-grow")
+                    .props("outlined dark dense")
+                )
+                ui.button(
+                    icon="refresh",
+                    on_click=lambda: voice_select.set_options(_scan_voices(), value=voice_select.value),
+                ).props("flat dense color=grey")
 
             section_label("TEXT")
             text_input = (

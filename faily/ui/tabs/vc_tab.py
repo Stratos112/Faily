@@ -93,13 +93,12 @@ def build_vc_tab():
 
             _section_row(
                 "TEXT",
-                "Text to synthesize in the cloned voice. "
-                "SpeechT5 handles short-to-medium sentences best — very long inputs may be truncated.",
+                "Short phrase used to test the cloned voice. Keep it brief — this is just a sample.",
             )
             text_input = (
-                ui.textarea(placeholder="Enter text to synthesize in the cloned voice…")
+                ui.input(value="sample text")
                 .classes("w-full")
-                .props("outlined dark rows=7")
+                .props("outlined dark")
             )
 
             ui.space()
