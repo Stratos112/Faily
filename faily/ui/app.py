@@ -89,6 +89,6 @@ def run():
         window_size=(1280, 780) if _native else None,
         reload=False,
         dark=True,
-        host="0.0.0.0",
+        host="127.0.0.1" if _native else "0.0.0.0",
         port=7842,
     )
