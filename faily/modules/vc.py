@@ -21,7 +21,7 @@ def _load_tts():
 
 
 def _load_spk_enc():
-    from speechbrain.pretrained import EncoderClassifier
+    from speechbrain.inference.classifiers import EncoderClassifier
     return EncoderClassifier.from_hparams(
         source=_SPK_ID,
         savedir=str(VC_MODELS_DIR / "spkrec-xvect"),
