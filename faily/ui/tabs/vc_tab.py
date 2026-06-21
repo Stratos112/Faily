@@ -52,10 +52,10 @@ def build_vc_tab():
                     ui.label(p.name).classes("font-mono text-[10px] truncate flex-grow")
                     row.on("click", lambda p=p: _on_select(p))
 
-    def _on_upload(e):
+    async def _on_upload(e):
         _REFS_DIR.mkdir(parents=True, exist_ok=True)
-        dest = _REFS_DIR / e.name
-        dest.write_bytes(e.content.read())
+        dest = _REFS_DIR / e.file.name
+        dest.write_bytes(await e.file.read())
         _ref_path[0] = dest
         name_input.set_value(dest.stem)
         _rebuild_list()
