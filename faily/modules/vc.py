@@ -51,7 +51,8 @@ def _speaker_embedding(ref_path: Path):
     import torch
     clf = manager.load(_SPK_ID, _load_spk_enc)
 
-    waveform, sr = torchaudio.load(str(ref_path))
+    data, sr = sf.read(str(ref_path), dtype="float32", always_2d=True)
+    waveform = torch.from_numpy(data.T)  # (channels, samples)
     if sr != 16000:
         waveform = torchaudio.functional.resample(waveform, sr, 16000)
     if waveform.shape[0] > 1:
