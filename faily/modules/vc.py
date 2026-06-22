@@ -22,10 +22,14 @@ def _load_tts():
 
 def _load_spk_enc():
     import sys, types
-    # k2 (K2-FSA) is an ASR toolkit that SpeechBrain lazily imports via its
-    # Xvector module. It has no Windows/Python 3.14 wheels and we don't use it —
-    # stub it out so the lazy import doesn't blow up.
-    sys.modules.setdefault('k2', types.ModuleType('k2'))
+
+    # SpeechBrain lazily imports several optional integrations (k2, spacy,
+    # flair, numba) via its Xvector module. Python 3.14 changed inspect
+    # behaviour so all lazy loaders are triggered at once; stub every missing
+    # one so none of them blow up.
+    for _mod in ('k2', 'spacy', 'spacy.tokens', 'flair', 'numba'):
+        sys.modules.setdefault(_mod, types.ModuleType(_mod))
+
     from speechbrain.inference.classifiers import EncoderClassifier
     from speechbrain.utils.fetching import LocalStrategy
     return EncoderClassifier.from_hparams(
