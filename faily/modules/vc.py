@@ -23,12 +23,27 @@ def _load_tts():
 def _load_spk_enc():
     import sys, types
 
-    # SpeechBrain lazily imports several optional integrations (k2, spacy,
-    # flair, numba) via its Xvector module. Python 3.14 changed inspect
-    # behaviour so all lazy loaders are triggered at once; stub every missing
-    # one so none of them blow up.
-    for _mod in ('k2', 'spacy', 'spacy.tokens', 'flair', 'numba'):
-        sys.modules.setdefault(_mod, types.ModuleType(_mod))
+    # Python 3.14 changed inspect.getframeinfo so it calls hasattr(module,
+    # '__file__') on every module in frame locals, triggering SpeechBrain's
+    # lazy loaders for ALL integrations at once. Those integrations eagerly
+    # import optional packages (flair, spacy, k2, numba) that aren't installed.
+    # Fix: pre-register the integration modules as empty stubs so the lazy
+    # loader finds them already in sys.modules and never runs their __init__.py.
+    def _stub(name):
+        if name not in sys.modules:
+            m = types.ModuleType(name)
+            m.__path__ = []  # mark as package so sub-imports don't error
+            sys.modules[name] = m
+
+    for _m in (
+        'k2', 'spacy', 'spacy.tokens', 'flair', 'flair.data',
+        'numba', 'h5py',
+        'speechbrain.integrations.k2_fsa',
+        'speechbrain.integrations.nlp',
+        'speechbrain.integrations.numba',
+        'speechbrain.integrations.hdf5',
+    ):
+        _stub(_m)
 
     from speechbrain.inference.classifiers import EncoderClassifier
     from speechbrain.utils.fetching import LocalStrategy
