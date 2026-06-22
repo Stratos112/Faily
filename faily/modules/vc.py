@@ -20,31 +20,24 @@ def _load_tts():
     return p, m, voc
 
 
+def _patch_speechbrain_lazy_modules():
+    # Python 3.14 changed inspect.getframeinfo to call hasattr(module, '__file__')
+    # on every module in frame locals. SpeechBrain's LazyModule responds to any
+    # attribute access — including __file__ — by triggering a full load of its
+    # target, which may have uninstalled optional deps (k2, spacy, flair, numba).
+    # Fix: make LazyModule raise AttributeError for dunder attrs, which is the
+    # correct behaviour for an unloaded module and what hasattr expects.
+    from speechbrain.utils import importutils
+    _orig = importutils.LazyModule.__getattr__
+    def _safe(self, attr):
+        if attr.startswith('__'):
+            raise AttributeError(attr)
+        return _orig(self, attr)
+    importutils.LazyModule.__getattr__ = _safe
+
+
 def _load_spk_enc():
-    import sys, types
-
-    # Python 3.14 changed inspect.getframeinfo so it calls hasattr(module,
-    # '__file__') on every module in frame locals, triggering SpeechBrain's
-    # lazy loaders for ALL integrations at once. Those integrations eagerly
-    # import optional packages (flair, spacy, k2, numba) that aren't installed.
-    # Fix: pre-register the integration modules as empty stubs so the lazy
-    # loader finds them already in sys.modules and never runs their __init__.py.
-    def _stub(name):
-        if name not in sys.modules:
-            m = types.ModuleType(name)
-            m.__path__ = []  # mark as package so sub-imports don't error
-            sys.modules[name] = m
-
-    for _m in (
-        'k2', 'spacy', 'spacy.tokens', 'flair', 'flair.data',
-        'numba', 'h5py',
-        'speechbrain.integrations.k2_fsa',
-        'speechbrain.integrations.nlp',
-        'speechbrain.integrations.numba',
-        'speechbrain.integrations.hdf5',
-    ):
-        _stub(_m)
-
+    _patch_speechbrain_lazy_modules()
     from speechbrain.inference.classifiers import EncoderClassifier
     from speechbrain.utils.fetching import LocalStrategy
     return EncoderClassifier.from_hparams(
