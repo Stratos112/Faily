@@ -3,7 +3,7 @@ from nicegui import ui, run as ni_run
 from faily.core.model_manager import manager
 from faily.modules.tts import get_models, generate as tts_generate
 from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR
-from faily.ui.components import output_panel, section_label
+from faily.ui.components import output_panel, section_label, show_error
 
 _BTN = "font-mono tracking-widest"
 _REFS_DIR = Path("outputs/vc/refs")
@@ -55,8 +55,8 @@ def build_tts_tab():
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path)
         except Exception as exc:
-            ui.notify(str(exc), type="negative", timeout=8000)
-            _out["status"].set_text("error — see notification")
+            show_error(exc)
+            _out["status"].set_text("error")
         finally:
             _poll.active = False
             _out["model_loader"].set_visibility(False)

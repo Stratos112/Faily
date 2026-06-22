@@ -1,4 +1,5 @@
 """Shared UI building blocks."""
+import traceback
 from pathlib import Path
 from nicegui import ui
 
@@ -8,6 +9,24 @@ _DIM = "text-[#444] font-mono text-xs"
 
 def section_label(text: str):
     ui.label(text).classes(_LBL)
+
+
+def show_error(exc: Exception) -> None:
+    text = traceback.format_exc() or str(exc)
+    with ui.dialog() as dlg, ui.card().classes("bg-[#1a1a1a] border border-[#3a1a1a] max-w-2xl w-full"):
+        with ui.row().classes("w-full justify-between items-center mb-2"):
+            ui.label("ERROR").classes("text-red-500 font-mono text-xs tracking-widest")
+            ui.button(icon="close", on_click=dlg.close).props("flat dense color=grey")
+        (
+            ui.textarea(value=text)
+            .props("readonly outlined dark dense")
+            .classes("w-full font-mono text-[11px]")
+            .style("min-height:160px")
+        )
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Copy", icon="content_copy", on_click=lambda: ui.clipboard.write(text)).props("flat dense color=amber")
+            ui.button("Close", on_click=dlg.close).props("flat dense color=grey")
+    dlg.open()
 
 
 def output_panel(output_subdir: str):
