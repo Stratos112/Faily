@@ -44,6 +44,7 @@ def _load_spk_enc():
         source=_SPK_ID,
         savedir=str(VC_MODELS_DIR / "spkrec-xvect"),
         local_strategy=LocalStrategy.COPY,
+        run_opts={"device": "cpu"},
     )
 
 
