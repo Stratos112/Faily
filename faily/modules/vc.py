@@ -21,6 +21,11 @@ def _load_tts():
 
 
 def _load_spk_enc():
+    import sys, types
+    # k2 (K2-FSA) is an ASR toolkit that SpeechBrain lazily imports via its
+    # Xvector module. It has no Windows/Python 3.14 wheels and we don't use it —
+    # stub it out so the lazy import doesn't blow up.
+    sys.modules.setdefault('k2', types.ModuleType('k2'))
     from speechbrain.inference.classifiers import EncoderClassifier
     from speechbrain.utils.fetching import LocalStrategy
     return EncoderClassifier.from_hparams(
