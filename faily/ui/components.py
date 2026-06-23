@@ -91,11 +91,19 @@ def output_panel(output_subdir: str):
     def _make_row(path: Path):
         with history_col_el:
             with ui.row().classes(
-                "w-full items-center gap-2 px-3 py-1 rounded cursor-pointer "
+                "w-full items-center gap-2 px-3 py-1 rounded "
                 "hover:bg-[#1e1e1e] border border-[#1e1e1e] hover:border-[#333]"
-            ).on("click", lambda p=path: _load_compare(p)):
-                ui.icon("audio_file", size="14px").classes("text-amber-500 shrink-0")
-                ui.label(path.name).classes("text-[#888] font-mono text-[10px] truncate flex-grow")
+            ):
+                ui.icon("audio_file", size="14px").classes(
+                    "text-amber-500 shrink-0 cursor-pointer"
+                ).on("click", lambda p=path: _load_compare(p))
+                ui.label(path.name).classes(
+                    "text-[#888] font-mono text-[10px] truncate flex-grow cursor-pointer"
+                ).on("click", lambda p=path: _load_compare(p))
+                rel = path.relative_to(Path("outputs"))
+                ui.button(icon="download", on_click=lambda r=rel: ui.download(f"/outputs/{r.as_posix()}")).props(
+                    "flat dense color=grey"
+                ).classes("shrink-0")
 
     def _load_compare(path: Path):
         rel = path.relative_to(Path("outputs"))
