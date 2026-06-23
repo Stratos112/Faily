@@ -1,5 +1,6 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS, transcribe_ref
+from faily.core.characters import save_character, list_characters, delete_character
 from faily.ui.components import output_panel, section_label, show_error
 from pathlib import Path
 
@@ -215,18 +216,75 @@ def build_vc_tab():
                 )
             ref_text_row.set_visibility(False)
 
-            ui.space()
-            gen_btn = (
-                ui.button("CLONE SAMPLE", on_click=_generate)
-                .classes(f"w-full {_BTN}")
-                .props("color=amber unelevated")
+            _section_row(
+                "CHARACTER LIBRARY",
+                "Characters saved here are available in the TUNE tab. "
+                "Name the sample above, then click SAVE CHARACTER.",
             )
+
+            char_list = ui.column().classes("w-full gap-1")
+
+            def _rebuild_char_list():
+                char_list.clear()
+                chars = list_characters()
+                with char_list:
+                    if not chars:
+                        ui.label("no characters yet").classes(
+                            "text-[#333] font-mono text-[10px] px-1 py-1"
+                        )
+                        return
+                    for c in chars:
+                        is_sub = "parent" in c
+                        name = c["name"]
+                        lbl = f"  ↳ {name}" if is_sub else name
+                        with ui.row().classes(
+                            "w-full items-center gap-2 px-3 py-1 rounded "
+                            "border border-[#1e1e1e] hover:border-[#333]"
+                        ):
+                            ui.icon("person" if not is_sub else "person_outline", size="13px").classes(
+                                "shrink-0 text-amber-500" if not is_sub else "shrink-0 text-[#555]"
+                            )
+                            ui.label(lbl).classes("font-mono text-[10px] truncate flex-grow text-[#777]")
+                            ui.button(
+                                icon="delete_outline",
+                                on_click=lambda n=name: _delete_char(n),
+                            ).props("flat dense color=grey").classes("shrink-0")
+
+            def _delete_char(name: str):
+                delete_character(name)
+                _rebuild_char_list()
+                ui.notify(f"deleted  {name}", timeout=2000)
+
+            def _save_char():
+                if _ref_path[0] is None or not _ref_path[0].exists():
+                    ui.notify("Select a reference sample first", type="warning")
+                    return
+                name = name_input.value.strip()
+                if not name:
+                    ui.notify("Enter a character name above", type="warning")
+                    return
+                transcript = ref_text_input.value if _backend[0] == "f5_tts" else ""
+                save_character(name, _ref_path[0], transcript)
+                _rebuild_char_list()
+                ui.notify(f"saved character  {name}", type="positive", timeout=2000)
+
+            ui.space()
+            with ui.row().classes("w-full gap-2"):
+                gen_btn = (
+                    ui.button("PREVIEW", on_click=_generate)
+                    .classes(f"flex-1 {_BTN}")
+                    .props("color=grey unelevated")
+                )
+                ui.button("SAVE CHARACTER", on_click=_save_char).classes(
+                    f"flex-1 {_BTN}"
+                ).props("color=amber unelevated")
 
         pb, ml, mp, st, _, _, ath = output_panel("vc")
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
     _rebuild_list()
     _rebuild_params()
+    _rebuild_char_list()
 
     def _tick():
         val = _progress[0]

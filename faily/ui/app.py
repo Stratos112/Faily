@@ -4,6 +4,7 @@ from nicegui import app, ui
 from faily.ui.tabs.tts_tab import build_tts_tab
 from faily.ui.tabs.foley_tab import build_foley_tab
 from faily.ui.tabs.vc_tab import build_vc_tab
+from faily.ui.tabs.tune_tab import build_tune_tab
 
 OUTPUTS = Path("outputs")
 
@@ -45,7 +46,7 @@ _GLOBAL_CSS = """
 
 
 def run():
-    for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs"]:
+    for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs", OUTPUTS / "characters"]:
         d.mkdir(parents=True, exist_ok=True)
     app.add_static_files("/outputs", str(OUTPUTS))
 
@@ -68,14 +69,17 @@ def run():
 
         with ui.tabs().classes("w-full") as tabs:
             vc_tab    = ui.tab("CLONE", icon="mic")
+            tune_tab  = ui.tab("TUNE",  icon="tune")
             tts_tab   = ui.tab("TTS",   icon="record_voice_over")
             foley_tab = ui.tab("FOLEY", icon="graphic_eq")
 
-        with ui.tab_panels(tabs, value=tts_tab).classes("w-full flex-grow"):
-            with ui.tab_panel(tts_tab):
-                build_tts_tab()
+        with ui.tab_panels(tabs, value=vc_tab).classes("w-full flex-grow"):
             with ui.tab_panel(vc_tab):
                 build_vc_tab()
+            with ui.tab_panel(tune_tab):
+                build_tune_tab()
+            with ui.tab_panel(tts_tab):
+                build_tts_tab()
             with ui.tab_panel(foley_tab):
                 build_foley_tab()
 
