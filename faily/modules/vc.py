@@ -27,7 +27,16 @@ BACKENDS = {
 }
 
 
+def _patch_xtts_transformers():
+    # transformers 5.x removed isin_mps_friendly; coqui-tts still imports it
+    import torch
+    import transformers.pytorch_utils as pu
+    if not hasattr(pu, "isin_mps_friendly"):
+        pu.isin_mps_friendly = torch.isin
+
+
 def _load_xtts():
+    _patch_xtts_transformers()
     from TTS.api import TTS
     gpu = str(manager.device).startswith("cuda")
     return TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=gpu)
@@ -55,11 +64,11 @@ def _xtts_generate(text, ref_path, out, temperature, speed):
     )
 
 
-def _f5_generate(text, ref_path, out, steps, speed):
+def _f5_generate(text, ref_path, out, steps, speed, ref_text=""):
     tts = manager.load("f5_tts", _load_f5)
     wav, sr, _ = tts.infer(
         ref_file=str(ref_path),
-        ref_text="",
+        ref_text=ref_text,
         gen_text=text,
         nfe_step=int(steps),
         speed=speed,
@@ -86,6 +95,7 @@ def generate(
     backend: str = "xtts_v2",
     param1: float | None = None,
     param2: float | None = None,
+    ref_text: str = "",
 ) -> Path:
     if output_dir is None:
         output_dir = VC_OUTPUT_DIR
@@ -107,7 +117,7 @@ def generate(
     if backend == "xtts_v2":
         _xtts_generate(text, ref_path, out, temperature=p1, speed=p2)
     elif backend == "f5_tts":
-        _f5_generate(text, ref_path, out, steps=p1, speed=p2)
+        _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)
     elif backend == "chatterbox":
         _chatterbox_generate(text, ref_path, out, exaggeration=p1, cfg_weight=p2)
     else:

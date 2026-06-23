@@ -24,6 +24,7 @@ def build_vc_tab():
     _backend: list[str] = ["xtts_v2"]
     _param1: list[float] = [BACKENDS["xtts_v2"]["param1"]["default"]]
     _param2: list[float] = [BACKENDS["xtts_v2"]["param2"]["default"]]
+    _ref_text: list[str] = [""]
     _out: dict = {}
 
     def _scan_refs() -> list[Path]:
@@ -114,7 +115,7 @@ def build_vc_tab():
         try:
             path = await ni_run.io_bound(
                 vc_generate, text, _ref_path[0], _progress, None,
-                _backend[0], _param1[0], _param2[0],
+                _backend[0], _param1[0], _param2[0], _ref_text[0],
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
@@ -146,6 +147,7 @@ def build_vc_tab():
             def _on_backend(e):
                 _backend[0] = e.value
                 desc_label.set_text(BACKENDS[e.value]["desc"])
+                ref_text_row.set_visibility(e.value == "f5_tts")
                 _rebuild_params()
 
             ui.select(
@@ -187,6 +189,20 @@ def build_vc_tab():
             )
 
             params_col = ui.column().classes("w-full gap-4")
+
+            with ui.column().classes("w-full gap-2") as ref_text_row:
+                _section_row(
+                    "REFERENCE TRANSCRIPT",
+                    "What is being said in the reference clip. Providing this skips auto-transcription "
+                    "and improves quality. Required if FFmpeg is not installed.",
+                )
+                ref_text_input = (
+                    ui.input(placeholder="type what the reference clip says…")
+                    .classes("w-full")
+                    .props("outlined dark")
+                    .on("update:model-value", lambda e: _ref_text.__setitem__(0, e.args))
+                )
+            ref_text_row.set_visibility(False)
 
             ui.space()
             gen_btn = (
