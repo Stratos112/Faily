@@ -20,6 +20,25 @@ def _patch_torchaudio():
 
 _patch_torchaudio()
 
+
+def _patch_ffmpeg_read():
+    # transformers ASR pipeline calls ffmpeg_read when given a filename path;
+    # patch it to use soundfile so FFmpeg doesn't need to be installed.
+    import transformers.pipelines.audio_utils as au
+    if getattr(au, "_faily_patched", False):
+        return
+    def _sf_read(filename, sampling_rate):
+        import torch
+        data, sr = sf.read(str(filename), dtype="float32", always_2d=False)
+        if sr != sampling_rate:
+            wav = torch.from_numpy(data).unsqueeze(0)
+            data = torchaudio.functional.resample(wav, sr, sampling_rate).squeeze(0).numpy()
+        return data
+    au.ffmpeg_read = _sf_read
+    au._faily_patched = True
+
+_patch_ffmpeg_read()
+
 VC_OUTPUT_DIR = Path("outputs/vc")
 
 _TTS_ID = "microsoft/speecht5_tts"
@@ -126,6 +145,11 @@ def _load_xtts():
     from TTS.api import TTS
     gpu = str(manager.device).startswith("cuda")
     return TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=gpu)
+
+
+def transcribe_ref(ref_path: Path) -> str:
+    from f5_tts.infer.utils_infer import transcribe
+    return transcribe(str(ref_path))
 
 
 def _load_f5():

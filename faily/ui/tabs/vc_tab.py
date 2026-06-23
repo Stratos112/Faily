@@ -1,5 +1,5 @@
 from nicegui import ui, run as ni_run
-from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS
+from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS, transcribe_ref
 from faily.ui.components import output_panel, section_label, show_error
 from pathlib import Path
 
@@ -31,10 +31,21 @@ def build_vc_tab():
             return []
         return sorted(f for f in _REFS_DIR.iterdir() if f.suffix.lower() in _EXTS)
 
-    def _on_select(path: Path):
+    async def _autofill_transcript():
+        if _backend[0] != "f5_tts" or _ref_path[0] is None:
+            return
+        ref_text_input.set_value("transcribing…")
+        try:
+            text = await ni_run.io_bound(transcribe_ref, _ref_path[0])
+            ref_text_input.set_value(text)
+        except Exception:
+            ref_text_input.set_value("")
+
+    async def _on_select(path: Path):
         _ref_path[0] = path
         name_input.set_value(path.stem)
         _rebuild_list()
+        await _autofill_transcript()
 
     def _rebuild_list():
         ref_list.clear()
@@ -85,6 +96,7 @@ def build_vc_tab():
         _ref_path[0] = dest
         name_input.set_value(dest.stem)
         _rebuild_list()
+        await _autofill_transcript()
 
     def _rename():
         if _ref_path[0] is None or not _ref_path[0].exists():
@@ -143,11 +155,12 @@ def build_vc_tab():
                 "text-[#444] font-mono text-[10px] tracking-wide"
             )
 
-            def _on_backend(e):
+            async def _on_backend(e):
                 _backend[0] = e.value
                 desc_label.set_text(BACKENDS[e.value]["desc"])
                 ref_text_row.set_visibility(e.value == "f5_tts")
                 _rebuild_params()
+                await _autofill_transcript()
 
             ui.select(
                 options={k: v["label"] for k, v in BACKENDS.items()},
@@ -192,8 +205,8 @@ def build_vc_tab():
             with ui.column().classes("w-full gap-2") as ref_text_row:
                 _section_row(
                     "REFERENCE TRANSCRIPT",
-                    "What is being said in the reference clip. Providing this skips auto-transcription "
-                    "and improves quality. Required if FFmpeg is not installed.",
+                    "What is being said in the reference clip. Optional — leave blank to auto-transcribe. "
+                    "Providing it manually gives better quality.",
                 )
                 ref_text_input = (
                     ui.input(placeholder="type what the reference clip says…")
