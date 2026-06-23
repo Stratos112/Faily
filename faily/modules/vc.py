@@ -1,11 +1,22 @@
 import soundfile as sf
+import torchaudio
 from datetime import datetime
 from pathlib import Path
-from faily.core.model_manager import manager
+from faily.core.model_manager import manager, VC_MODELS_DIR
 
 VC_OUTPUT_DIR = Path("outputs/vc")
 
+_TTS_ID = "microsoft/speecht5_tts"
+_VOC_ID = "microsoft/speecht5_hifigan"
+_SPK_ID = "speechbrain/spkrec-xvect-voxceleb"
+
 BACKENDS = {
+    "speecht5": {
+        "label": "SpeechT5",
+        "desc": "Microsoft · X-Vector speaker embedding · HiFi-GAN vocoder",
+        "param1": {"label": "VOICE STRENGTH", "tooltip": "Scales the speaker embedding. Below 1.0 is more neutral, above 1.0 exaggerates the voice's character.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        "param2": {"label": "THRESHOLD", "tooltip": "Mel spectrogram stopping criterion. Lower = crisper and shorter output. Higher = smoother but may trail off.", "min": 0.1, "max": 0.9, "step": 0.05, "default": 0.5},
+    },
     "xtts_v2": {
         "label": "XTTS v2",
         "desc": "Coqui AI · Zero-shot · Cross-attention conditioning",
@@ -25,6 +36,65 @@ BACKENDS = {
         "param2": {"label": "CFG WEIGHT", "tooltip": "Guidance strength. Higher = more faithful to the reference voice style.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
     },
 }
+
+
+def _load_tts():
+    from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
+    p   = SpeechT5Processor.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR))
+    m   = SpeechT5ForTextToSpeech.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR)).to(manager.device)
+    voc = SpeechT5HifiGan.from_pretrained(_VOC_ID, cache_dir=str(VC_MODELS_DIR)).to(manager.device)
+    return p, m, voc
+
+
+def _patch_speechbrain_lazy_modules():
+    from speechbrain.utils import importutils
+    _orig = importutils.LazyModule.__getattr__
+    def _safe(self, attr):
+        if attr.startswith("__"):
+            raise AttributeError(attr)
+        return _orig(self, attr)
+    importutils.LazyModule.__getattr__ = _safe
+
+
+def _load_spk_enc():
+    _patch_speechbrain_lazy_modules()
+    from speechbrain.inference.classifiers import EncoderClassifier
+    from speechbrain.utils.fetching import LocalStrategy
+    return EncoderClassifier.from_hparams(
+        source=_SPK_ID,
+        savedir=str(VC_MODELS_DIR / "spkrec-xvect"),
+        local_strategy=LocalStrategy.COPY,
+        run_opts={"device": "cpu"},
+    )
+
+
+def _speaker_embedding(ref_path: Path):
+    import torch
+    clf = manager.load(_SPK_ID, _load_spk_enc)
+    data, sr = sf.read(str(ref_path), dtype="float32", always_2d=True)
+    waveform = torch.from_numpy(data.T)
+    if sr != 16000:
+        waveform = torchaudio.functional.resample(waveform, sr, 16000)
+    if waveform.shape[0] > 1:
+        waveform = waveform.mean(0, keepdim=True)
+    with torch.no_grad():
+        emb = clf.encode_batch(waveform)
+    return emb.squeeze().unsqueeze(0)
+
+
+def _speecht5_generate(text, ref_path, out, emb_scale, threshold):
+    import torch
+    processor, model, vocoder = manager.load(_TTS_ID, _load_tts)
+    spk_emb = _speaker_embedding(ref_path).to(manager.device) * emb_scale
+    inputs = processor(text=text, return_tensors="pt").to(manager.device)
+    with torch.no_grad():
+        speech = model.generate_speech(
+            inputs["input_ids"],
+            speaker_embeddings=spk_emb,
+            vocoder=vocoder,
+            threshold=threshold,
+        )
+    sf.write(str(out), speech.cpu().numpy(), 16000)
 
 
 def _patch_xtts_transformers():
@@ -114,7 +184,9 @@ def generate(
     if progress_ref is not None:
         progress_ref[0] = 0.4
 
-    if backend == "xtts_v2":
+    if backend == "speecht5":
+        _speecht5_generate(text, ref_path, out, emb_scale=p1, threshold=p2)
+    elif backend == "xtts_v2":
         _xtts_generate(text, ref_path, out, temperature=p1, speed=p2)
     elif backend == "f5_tts":
         _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)
