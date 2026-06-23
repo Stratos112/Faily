@@ -24,7 +24,6 @@ def build_vc_tab():
     _backend: list[str] = ["xtts_v2"]
     _param1: list[float] = [BACKENDS["xtts_v2"]["param1"]["default"]]
     _param2: list[float] = [BACKENDS["xtts_v2"]["param2"]["default"]]
-    _ref_text: list[str] = [""]
     _out: dict = {}
 
     def _scan_refs() -> list[Path]:
@@ -115,7 +114,7 @@ def build_vc_tab():
         try:
             path = await ni_run.io_bound(
                 vc_generate, text, _ref_path[0], _progress, None,
-                _backend[0], _param1[0], _param2[0], _ref_text[0],
+                _backend[0], _param1[0], _param2[0], ref_text_input.value,
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
@@ -200,7 +199,6 @@ def build_vc_tab():
                     ui.input(placeholder="type what the reference clip says…")
                     .classes("w-full")
                     .props("outlined dark")
-                    .on("update:model-value", lambda e: _ref_text.__setitem__(0, e.args))
                 )
             ref_text_row.set_visibility(False)
 

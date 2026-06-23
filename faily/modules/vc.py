@@ -4,6 +4,22 @@ from datetime import datetime
 from pathlib import Path
 from faily.core.model_manager import manager, VC_MODELS_DIR
 
+
+def _patch_torchaudio():
+    # torchcodec DLLs are missing on this system; replace torchaudio.load globally
+    # with a soundfile implementation so any library calling it also works.
+    if getattr(torchaudio, "_faily_patched", False):
+        return
+    import torch
+    _orig = torchaudio.load  # keep reference in case anything needs it
+    def _sf_load(uri, *args, **kwargs):
+        data, sr = sf.read(str(uri), dtype="float32", always_2d=True)
+        return torch.from_numpy(data.T).contiguous(), sr
+    torchaudio.load = _sf_load
+    torchaudio._faily_patched = True
+
+_patch_torchaudio()
+
 VC_OUTPUT_DIR = Path("outputs/vc")
 
 _TTS_ID = "microsoft/speecht5_tts"
