@@ -1,5 +1,5 @@
 from nicegui import ui, run as ni_run
-from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR
+from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS
 from faily.ui.components import output_panel, section_label, show_error
 from pathlib import Path
 
@@ -14,11 +14,16 @@ def _section_row(text: str, tip: str):
         ui.icon("info_outline", size="13px").classes("text-[#3a3a3a] cursor-help").tooltip(tip)
 
 
+def _fmt(val: float, step: float) -> str:
+    return str(int(val)) if step >= 1 else f"{val:.2f}"
+
+
 def build_vc_tab():
     _progress: list[float] = [0.0]
     _ref_path: list[Path | None] = [None]
-    _temperature: list[float] = [0.75]
-    _speed: list[float] = [1.0]
+    _backend: list[str] = ["xtts_v2"]
+    _param1: list[float] = [BACKENDS["xtts_v2"]["param1"]["default"]]
+    _param2: list[float] = [BACKENDS["xtts_v2"]["param2"]["default"]]
     _out: dict = {}
 
     def _scan_refs() -> list[Path]:
@@ -54,6 +59,25 @@ def build_vc_tab():
                     ui.label(p.name).classes("font-mono text-[10px] truncate flex-grow")
                     row.on("click", lambda p=p: _on_select(p))
 
+    def _rebuild_params():
+        params_col.clear()
+        cfg = BACKENDS[_backend[0]]
+        with params_col:
+            for p, pval in ((cfg["param1"], _param1), (cfg["param2"], _param2)):
+                pval[0] = p["default"]
+                _section_row(p["label"], p["tooltip"])
+                with ui.row().classes("w-full items-center gap-3"):
+                    lbl = ui.label(_fmt(p["default"], p["step"])).classes(
+                        "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
+                    )
+                    def _on_change(e, pval=pval, lbl=lbl, step=p["step"]):
+                        pval[0] = e.value
+                        lbl.set_text(_fmt(e.value, step))
+                    ui.slider(
+                        min=p["min"], max=p["max"], step=p["step"],
+                        value=p["default"], on_change=_on_change,
+                    ).classes("flex-grow").props("color=amber")
+
     async def _on_upload(e):
         _REFS_DIR.mkdir(parents=True, exist_ok=True)
         dest = _REFS_DIR / e.file.name
@@ -88,7 +112,10 @@ def build_vc_tab():
         _poll.active = True
 
         try:
-            path = await ni_run.io_bound(vc_generate, text, _ref_path[0], _progress, None, _temperature[0], _speed[0])
+            path = await ni_run.io_bound(
+                vc_generate, text, _ref_path[0], _progress, None,
+                _backend[0], _param1[0], _param2[0],
+            )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path)
@@ -109,12 +136,23 @@ def build_vc_tab():
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
 
             _section_row(
-                "MODEL",
-                "SpeechT5 (Microsoft) conditioned on speaker x-vector embeddings. Vocoder: SpeechT5 HiFi-GAN.",
+                "BACKEND",
+                "Voice cloning engine. Each uses a different approach — see description below the selector.",
             )
-            ui.label("XTTS v2 · Coqui AI · Zero-shot voice cloning").classes(
+            desc_label = ui.label(BACKENDS["xtts_v2"]["desc"]).classes(
                 "text-[#444] font-mono text-[10px] tracking-wide"
             )
+
+            def _on_backend(e):
+                _backend[0] = e.value
+                desc_label.set_text(BACKENDS[e.value]["desc"])
+                _rebuild_params()
+
+            ui.select(
+                options={k: v["label"] for k, v in BACKENDS.items()},
+                value="xtts_v2",
+                on_change=_on_backend,
+            ).props("outlined dark dense").classes("w-full")
 
             _section_row(
                 "SAMPLES",
@@ -148,27 +186,7 @@ def build_vc_tab():
                 .props("outlined dark")
             )
 
-            _section_row(
-                "TEMPERATURE",
-                "Controls expressiveness and variation. Lower = more flat and consistent. Higher = more emotive but may wander.",
-            )
-            with ui.row().classes("w-full items-center gap-3"):
-                temp_lbl = ui.label("0.75").classes("font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right")
-                def _on_temperature(e):
-                    _temperature[0] = e.value
-                    temp_lbl.set_text(f"{e.value:.2f}")
-                ui.slider(min=0.1, max=1.0, step=0.05, value=0.75, on_change=_on_temperature).classes("flex-grow").props("color=amber")
-
-            _section_row(
-                "SPEED",
-                "Speech rate. 1.0 is natural pace. Below 1.0 slows down, above speeds up.",
-            )
-            with ui.row().classes("w-full items-center gap-3"):
-                speed_lbl = ui.label("1.00").classes("font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right")
-                def _on_speed(e):
-                    _speed[0] = e.value
-                    speed_lbl.set_text(f"{e.value:.2f}")
-                ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_speed).classes("flex-grow").props("color=amber")
+            params_col = ui.column().classes("w-full gap-4")
 
             ui.space()
             gen_btn = (
@@ -181,6 +199,7 @@ def build_vc_tab():
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
     _rebuild_list()
+    _rebuild_params()
 
     def _tick():
         val = _progress[0]
