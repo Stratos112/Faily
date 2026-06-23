@@ -70,6 +70,8 @@ def generate(
     ref_path: Path,
     progress_ref: list | None = None,
     output_dir: Path | None = None,
+    emb_scale: float = 1.0,
+    threshold: float = 0.5,
 ) -> Path:
     import torch
     if output_dir is None:
@@ -84,7 +86,7 @@ def generate(
     if progress_ref is not None:
         progress_ref[0] = 0.4
 
-    spk_emb = _speaker_embedding(ref_path).to(manager.device)
+    spk_emb = _speaker_embedding(ref_path).to(manager.device) * emb_scale
 
     if progress_ref is not None:
         progress_ref[0] = 0.65
@@ -96,6 +98,7 @@ def generate(
             inputs["input_ids"],
             speaker_embeddings=spk_emb,
             vocoder=vocoder,
+            threshold=threshold,
         )
 
     audio = speech.cpu().numpy()

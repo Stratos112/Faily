@@ -1,6 +1,9 @@
 # Faily
 Framework for local Neaural Net TTS, Foley and sFX. Useful for sound design/game development/digital media production.
 
+needs 
+```set HF_HUB_DISABLE_SYMLINKS_WARNING=1```
+
 use 
 ```set FAILY_NATIVE=1```
 to bypass the browser
