@@ -73,11 +73,17 @@ def run():
             tts_tab   = ui.tab("TTS",   icon="record_voice_over")
             foley_tab = ui.tab("FOLEY", icon="graphic_eq")
 
-        with ui.tab_panels(tabs, value=vc_tab).classes("w-full flex-grow"):
+        _tune_refresh: list = [lambda: None]
+
+        def _on_tab_change(e):
+            if e.value == "TUNE":
+                _tune_refresh[0]()
+
+        with ui.tab_panels(tabs, value=vc_tab, on_change=_on_tab_change).classes("w-full flex-grow"):
             with ui.tab_panel(vc_tab):
                 build_vc_tab()
             with ui.tab_panel(tune_tab):
-                build_tune_tab()
+                _tune_refresh[0] = build_tune_tab()
             with ui.tab_panel(tts_tab):
                 build_tts_tab()
             with ui.tab_panel(foley_tab):

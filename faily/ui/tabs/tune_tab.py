@@ -261,3 +261,12 @@ def build_tune_tab():
         _out["progress_bar"].set_value(val)
 
     _poll = ui.timer(0.15, _tick, active=False)
+
+    def refresh_characters():
+        current = _char_name[0]
+        opts = _char_options()
+        value = current if current in opts else _NO_CHAR
+        char_select.set_options(opts, value=value)
+        _char_name[0] = value
+
+    return refresh_characters
