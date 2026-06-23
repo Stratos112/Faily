@@ -17,8 +17,8 @@ def _section_row(text: str, tip: str):
 def build_vc_tab():
     _progress: list[float] = [0.0]
     _ref_path: list[Path | None] = [None]
-    _emb_scale: list[float] = [1.0]
-    _threshold: list[float] = [0.5]
+    _temperature: list[float] = [0.75]
+    _speed: list[float] = [1.0]
     _out: dict = {}
 
     def _scan_refs() -> list[Path]:
@@ -88,7 +88,7 @@ def build_vc_tab():
         _poll.active = True
 
         try:
-            path = await ni_run.io_bound(vc_generate, text, _ref_path[0], _progress, None, _emb_scale[0], _threshold[0])
+            path = await ni_run.io_bound(vc_generate, text, _ref_path[0], _progress, None, _temperature[0], _speed[0])
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path)
@@ -112,7 +112,7 @@ def build_vc_tab():
                 "MODEL",
                 "SpeechT5 (Microsoft) conditioned on speaker x-vector embeddings. Vocoder: SpeechT5 HiFi-GAN.",
             )
-            ui.label("SpeechT5 · X-Vector Encoder · HiFi-GAN").classes(
+            ui.label("XTTS v2 · Coqui AI · Zero-shot voice cloning").classes(
                 "text-[#444] font-mono text-[10px] tracking-wide"
             )
 
@@ -149,26 +149,26 @@ def build_vc_tab():
             )
 
             _section_row(
-                "VOICE STRENGTH",
-                "Scales the speaker embedding. Below 1.0 pulls toward neutral, above 1.0 exaggerates the voice's character.",
+                "TEMPERATURE",
+                "Controls expressiveness and variation. Lower = more flat and consistent. Higher = more emotive but may wander.",
             )
             with ui.row().classes("w-full items-center gap-3"):
-                strength_lbl = ui.label("1.00").classes("font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right")
-                def _on_strength(e):
-                    _emb_scale[0] = e.value
-                    strength_lbl.set_text(f"{e.value:.2f}")
-                ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_strength).classes("flex-grow").props("color=amber")
+                temp_lbl = ui.label("0.75").classes("font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right")
+                def _on_temperature(e):
+                    _temperature[0] = e.value
+                    temp_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.1, max=1.0, step=0.05, value=0.75, on_change=_on_temperature).classes("flex-grow").props("color=amber")
 
             _section_row(
-                "THRESHOLD",
-                "Mel spectrogram stopping criterion. Lower = crisper and shorter output. Higher = smoother but may trail off.",
+                "SPEED",
+                "Speech rate. 1.0 is natural pace. Below 1.0 slows down, above speeds up.",
             )
             with ui.row().classes("w-full items-center gap-3"):
-                threshold_lbl = ui.label("0.50").classes("font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right")
-                def _on_threshold(e):
-                    _threshold[0] = e.value
-                    threshold_lbl.set_text(f"{e.value:.2f}")
-                ui.slider(min=0.1, max=0.9, step=0.05, value=0.5, on_change=_on_threshold).classes("flex-grow").props("color=amber")
+                speed_lbl = ui.label("1.00").classes("font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right")
+                def _on_speed(e):
+                    _speed[0] = e.value
+                    speed_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_speed).classes("flex-grow").props("color=amber")
 
             ui.space()
             gen_btn = (
