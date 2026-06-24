@@ -205,6 +205,18 @@ def _load_parler():
         ParlerTTSForConditionalGeneration.__bases__ = (
             GenerationMixin,
         ) + ParlerTTSForConditionalGeneration.__bases__
+    # transformers 5.x changed _prepare_attention_mask_for_generation signature from
+    # (inputs, pad_tensor, eos_tensor) to (inputs, generation_config). Parler calls
+    # the old form; wrap it to bridge the gap.
+    _t5_prep_attn = GenerationMixin._prepare_attention_mask_for_generation
+    def _prep_attn_compat(self, inputs_tensor, pad_or_config, eos_tensor=None):
+        if isinstance(pad_or_config, torch.Tensor):
+            class _Cfg:
+                _pad_token_tensor = pad_or_config
+                _eos_token_tensor = eos_tensor
+            return _t5_prep_attn(self, inputs_tensor, _Cfg())
+        return _t5_prep_attn(self, inputs_tensor, pad_or_config)
+    ParlerTTSForConditionalGeneration._prepare_attention_mask_for_generation = _prep_attn_compat
     # transformers 5.x calls tie_weights() with extra kwargs (recompute_mapping,
     # missing_keys) that parler-tts's override doesn't accept. Filter to only
     # the params the original signature declares.
