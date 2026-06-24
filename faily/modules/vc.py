@@ -215,8 +215,11 @@ def _load_parler():
         return _orig_tie(self, **{k: v for k, v in kwargs.items() if k in _orig_params})
     ParlerTTSForConditionalGeneration.tie_weights = _tie_weights
     model = ParlerTTSForConditionalGeneration.from_pretrained(
-        _PARLER_ID, cache_dir=str(VC_MODELS_DIR)
-    ).to(manager.device)
+        _PARLER_ID,
+        cache_dir=str(VC_MODELS_DIR),
+        device_map={"": manager.device},
+        torch_dtype=torch.float16,
+    )
     tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR))
     return model, tok
 
