@@ -39,8 +39,9 @@ def build_vc_tab():
         try:
             text = await ni_run.io_bound(transcribe_ref, _ref_path[0])
             ref_text_input.set_value(text)
-        except Exception:
+        except Exception as exc:
             ref_text_input.set_value("")
+            show_error(exc)
 
     async def _on_select(path: Path):
         _ref_path[0] = path

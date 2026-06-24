@@ -109,7 +109,7 @@ def build_tts_tab():
 
             section_label("SPEED")
             with ui.row().classes("items-center gap-3 w-full"):
-                speed_slider = ui.slider(min=0.5, max=2.0, step=0.05, value=1.0).classes("flex-grow")
+                speed_slider = ui.slider(min=0.05, max=2.0, step=0.05, value=1.0).classes("flex-grow")
                 speed_val = ui.label("1.00×").classes("text-[#888] font-mono text-xs w-14 text-right")
             speed_val.bind_text_from(speed_slider, "value", lambda v: f"{v:.2f}×")
 

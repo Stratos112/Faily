@@ -214,7 +214,7 @@ def build_tune_tab():
                 def _on_speed(e):
                     _speed[0] = e.value
                     speed_lbl.set_text(f"{e.value:.2f}")
-                ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_speed).classes(
+                ui.slider(min=0.05, max=2.0, step=0.05, value=1.0, on_change=_on_speed).classes(
                     "flex-grow"
                 ).props("color=amber")
 

@@ -22,14 +22,15 @@ _patch_torchaudio()
 
 
 def _patch_ffmpeg_read():
-    # transformers ASR pipeline calls ffmpeg_read when given a filename path;
-    # patch it to use soundfile so FFmpeg doesn't need to be installed.
+    # transformers ASR pipeline calls ffmpeg_read(bpayload: bytes, sampling_rate) to decode
+    # audio; replace it with a soundfile implementation so FFmpeg doesn't need to be installed.
     import transformers.pipelines.audio_utils as au
     if getattr(au, "_faily_patched", False):
         return
-    def _sf_read(filename, sampling_rate):
-        import torch
-        data, sr = sf.read(str(filename), dtype="float32", always_2d=False)
+    import io
+    import torch
+    def _sf_read(bpayload, sampling_rate):
+        data, sr = sf.read(io.BytesIO(bpayload), dtype="float32", always_2d=False)
         if sr != sampling_rate:
             wav = torch.from_numpy(data).unsqueeze(0)
             data = torchaudio.functional.resample(wav, sr, sampling_rate).squeeze(0).numpy()
@@ -56,13 +57,13 @@ BACKENDS = {
         "label": "XTTS v2",
         "desc": "Coqui AI · Zero-shot · Cross-attention conditioning",
         "param1": {"label": "TEMPERATURE", "tooltip": "Expressiveness. Low = flat and consistent. High = emotive but may wander.", "min": 0.1, "max": 1.0, "step": 0.05, "default": 0.75},
-        "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
     "f5_tts": {
         "label": "F5-TTS",
         "desc": "SWC Lab · Flow-matching diffusion · Quality scales with steps",
         "param1": {"label": "STEPS", "tooltip": "Diffusion steps. More = higher quality but slower. 32 is a good balance.", "min": 8, "max": 64, "step": 4, "default": 32},
-        "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
     "chatterbox": {
         "label": "Chatterbox",
