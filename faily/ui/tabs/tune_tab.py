@@ -76,13 +76,16 @@ def build_tune_tab():
             _param2[0] = char.get("param2", BACKENDS[backend]["param2"]["default"])
             _speed[0] = char.get("speed", 1.0)
             style_input.set_value(char.get("style_prompt", ""))
+            style_prompt_row.set_visibility(backend in ("parler", "styletss2"))
             _rebuild_params()
         else:
             char_desc.set_text(f"base character  ·  ref: {char.get('ref_audio', '?')}")
+            style_prompt_row.set_visibility(False)
 
     def _on_backend(e):
         _backend[0] = e.value
         backend_desc.set_text(BACKENDS[e.value]["desc"])
+        style_prompt_row.set_visibility(e.value in ("parler", "styletss2"))
         _rebuild_params()
 
     async def _generate():
@@ -194,16 +197,18 @@ def build_tune_tab():
                 .classes("w-full")
             )
 
-            _section_row(
-                "STYLE PROMPT",
-                "Describe how the voice should feel — pace, tone, emotion. "
-                "Saved with sub-characters for documentation; will drive Parler/StyleTTS2 in future.",
-            )
-            style_input = (
-                ui.input(placeholder="e.g. speaks with cold fury, slow and deliberate…")
-                .classes("w-full")
-                .props("outlined dark")
-            )
+            with ui.column().classes("w-full gap-2") as style_prompt_row:
+                _section_row(
+                    "STYLE PROMPT",
+                    "Describe the voice character for Parler-TTS — pace, tone, gender, emotion. "
+                    "Example: 'speaks with cold fury, slow and deliberate'. Saved in sub-character config.",
+                )
+                style_input = (
+                    ui.input(placeholder="e.g. speaks with cold fury, slow and deliberate…")
+                    .classes("w-full")
+                    .props("outlined dark")
+                )
+            style_prompt_row.set_visibility(False)
 
             params_col = ui.column().classes("w-full gap-4")
 
