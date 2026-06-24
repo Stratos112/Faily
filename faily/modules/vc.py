@@ -77,12 +77,9 @@ BACKENDS = {
         "param1": {"label": "TEMPERATURE", "tooltip": "Randomness. Higher = more expressive but less consistent across runs.", "min": 0.1, "max": 2.0, "step": 0.05, "default": 1.0},
         "param2": {"label": "REPETITION PENALTY", "tooltip": "Penalises repeated tokens. 1.0 = off. Raise to 1.2–1.5 if output stutters or loops.", "min": 1.0, "max": 2.0, "step": 0.05, "default": 1.1},
     },
-    "styletss2": {
-        "label": "StyleTTS2",
-        "desc": "Aaron Li · Reference style transfer · Reference audio drives voice character",
-        "param1": {"label": "ALPHA", "tooltip": "Prosody blend. 0 = full reference prosody, 1 = fully content-driven.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.3},
-        "param2": {"label": "DIFFUSION STEPS", "tooltip": "Style refinement steps. More = higher quality but slower. 5 is a good default.", "min": 1, "max": 20, "step": 1, "default": 5},
-    },
+    # styletss2 omitted — styletts2 0.1.6 has hard dep conflicts with transformers 5.x
+    # (accelerate<0.26, huggingface-hub<0.20, einops-exts, gruut). Re-add when a
+    # compatible release exists.
 }
 
 
@@ -178,6 +175,20 @@ def _load_chatterbox():
 _PARLER_ID = "parler-tts/parler-tts-mini-v1.1"
 
 def _load_parler():
+    # parler-tts 0.2.x was written for transformers 4.46 which had SlidingWindowCache
+    # and isin_mps_friendly; both were removed in 5.x.
+    import sys, torch
+    import transformers.cache_utils as _cu
+    import transformers.pytorch_utils as _pu
+    if not hasattr(_cu, "SlidingWindowCache"):
+        _cu.SlidingWindowCache = getattr(_cu, "SlidingWindowStaticCache", _cu.StaticCache)
+    if not hasattr(_pu, "isin_mps_friendly"):
+        _pu.isin_mps_friendly = torch.isin
+    # Drop any partial failed import so the patched versions are picked up cleanly.
+    for _k in list(sys.modules):
+        if _k.startswith("parler_tts"):
+            del sys.modules[_k]
+
     from parler_tts import ParlerTTSForConditionalGeneration
     from transformers import AutoTokenizer
     model = ParlerTTSForConditionalGeneration.from_pretrained(
@@ -185,11 +196,6 @@ def _load_parler():
     ).to(manager.device)
     tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR))
     return model, tok
-
-
-def _load_styletss2():
-    from styletts2 import tts as _s2
-    return _s2.StyleTTS2()
 
 
 def _xtts_generate(text, ref_path, out, temperature, speed):
