@@ -190,7 +190,30 @@ def _load_parler():
             del sys.modules[_k]
 
     from parler_tts import ParlerTTSForConditionalGeneration
-    from transformers import AutoTokenizer
+    from parler_tts.configuration_parler_tts import ParlerTTSConfig
+    from transformers import AutoTokenizer, GenerationMixin
+    # transformers 5.x to_diff_dict calls self.__class__() to get defaults, which
+    # fails for composite configs that require sub-configs.
+    ParlerTTSConfig.has_no_defaults_at_init = True
+    # transformers 5.x __getattribute__ raises AttributeError for missing config
+    # attributes instead of returning None; parler-tts accesses tie_encoder_decoder
+    # which was never defined on ParlerTTSConfig.
+    ParlerTTSConfig.tie_encoder_decoder = False
+    # transformers 5.x removed GenerationMixin from PreTrainedModel's MRO; add it
+    # back so model.generate() works.
+    if not issubclass(ParlerTTSForConditionalGeneration, GenerationMixin):
+        ParlerTTSForConditionalGeneration.__bases__ = (
+            GenerationMixin,
+        ) + ParlerTTSForConditionalGeneration.__bases__
+    # transformers 5.x calls tie_weights() with extra kwargs (recompute_mapping,
+    # missing_keys) that parler-tts's override doesn't accept. Filter to only
+    # the params the original signature declares.
+    import inspect
+    _orig_tie = ParlerTTSForConditionalGeneration.tie_weights
+    _orig_params = set(inspect.signature(_orig_tie).parameters) - {"self"}
+    def _tie_weights(self, **kwargs):
+        return _orig_tie(self, **{k: v for k, v in kwargs.items() if k in _orig_params})
+    ParlerTTSForConditionalGeneration.tie_weights = _tie_weights
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID, cache_dir=str(VC_MODELS_DIR)
     ).to(manager.device)
