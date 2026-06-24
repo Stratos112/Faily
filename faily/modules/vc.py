@@ -71,6 +71,18 @@ BACKENDS = {
         "param1": {"label": "EXAGGERATION", "tooltip": "Emotional intensity. Low = calm and neutral. High = expressive.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
         "param2": {"label": "CFG WEIGHT", "tooltip": "Guidance strength. Higher = more faithful to the reference voice style.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
     },
+    "parler": {
+        "label": "Parler-TTS",
+        "desc": "Hugging Face · Description-driven · Voice character set by STYLE PROMPT — no reference audio needed",
+        "param1": {"label": "TEMPERATURE", "tooltip": "Randomness. Higher = more expressive but less consistent across runs.", "min": 0.1, "max": 2.0, "step": 0.05, "default": 1.0},
+        "param2": {"label": "REPETITION PENALTY", "tooltip": "Penalises repeated tokens. 1.0 = off. Raise to 1.2–1.5 if output stutters or loops.", "min": 1.0, "max": 2.0, "step": 0.05, "default": 1.1},
+    },
+    "styletss2": {
+        "label": "StyleTTS2",
+        "desc": "Aaron Li · Reference style transfer · Reference audio drives voice character",
+        "param1": {"label": "ALPHA", "tooltip": "Prosody blend. 0 = full reference prosody, 1 = fully content-driven.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.3},
+        "param2": {"label": "DIFFUSION STEPS", "tooltip": "Style refinement steps. More = higher quality but slower. 5 is a good default.", "min": 1, "max": 20, "step": 1, "default": 5},
+    },
 }
 
 
@@ -163,6 +175,23 @@ def _load_chatterbox():
     return ChatterboxTTS.from_pretrained(device=str(manager.device))
 
 
+_PARLER_ID = "parler-tts/parler-tts-mini-v1.1"
+
+def _load_parler():
+    from parler_tts import ParlerTTSForConditionalGeneration
+    from transformers import AutoTokenizer
+    model = ParlerTTSForConditionalGeneration.from_pretrained(
+        _PARLER_ID, cache_dir=str(VC_MODELS_DIR)
+    ).to(manager.device)
+    tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR))
+    return model, tok
+
+
+def _load_styletss2():
+    from styletts2 import tts as _s2
+    return _s2.StyleTTS2()
+
+
 def _xtts_generate(text, ref_path, out, temperature, speed):
     tts = manager.load("xtts_v2", _load_xtts)
     tts.tts_to_file(
@@ -198,15 +227,47 @@ def _chatterbox_generate(text, ref_path, out, exaggeration, cfg_weight):
     sf.write(str(out), wav.squeeze().cpu().float().numpy(), model.sr)
 
 
+def _parler_generate(text: str, out: Path, style_prompt: str, temperature: float, rep_penalty: float):
+    import torch
+    model, tokenizer = manager.load(_PARLER_ID, _load_parler)
+    description = style_prompt.strip() or "A clear neutral voice at a moderate pace."
+    input_ids = tokenizer(description, return_tensors="pt").input_ids.to(manager.device)
+    prompt_input_ids = tokenizer(text, return_tensors="pt").input_ids.to(manager.device)
+    with torch.no_grad():
+        gen = model.generate(
+            input_ids=input_ids,
+            prompt_input_ids=prompt_input_ids,
+            do_sample=True,
+            temperature=temperature,
+            repetition_penalty=rep_penalty,
+        )
+    sf.write(str(out), gen.cpu().numpy().squeeze(), model.config.sampling_rate)
+
+
+def _styletss2_generate(text: str, ref_path: Path, out: Path, alpha: float, diffusion_steps: int):
+    tts = manager.load("styletss2", _load_styletss2)
+    wav = tts.inference(
+        text,
+        target_voice_path=str(ref_path),
+        output_sample_rate=24000,
+        alpha=alpha,
+        beta=0.7,
+        diffusion_steps=diffusion_steps,
+        embedding_scale=1.0,
+    )
+    sf.write(str(out), wav, 24000)
+
+
 def generate(
     text: str,
-    ref_path: Path,
+    ref_path: Path | None,
     progress_ref: list | None = None,
     output_dir: Path | None = None,
     backend: str = "xtts_v2",
     param1: float | None = None,
     param2: float | None = None,
     ref_text: str = "",
+    style_prompt: str = "",
 ) -> Path:
     if output_dir is None:
         output_dir = VC_OUTPUT_DIR
@@ -233,6 +294,10 @@ def generate(
         _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)
     elif backend == "chatterbox":
         _chatterbox_generate(text, ref_path, out, exaggeration=p1, cfg_weight=p2)
+    elif backend == "parler":
+        _parler_generate(text, out, style_prompt=style_prompt, temperature=p1, rep_penalty=p2)
+    elif backend == "styletss2":
+        _styletss2_generate(text, ref_path, out, alpha=p1, diffusion_steps=int(p2))
     else:
         raise ValueError(f"Unknown backend: {backend}")
 

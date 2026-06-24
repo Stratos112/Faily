@@ -94,7 +94,7 @@ def build_tune_tab():
             ui.notify("Enter text to speak", type="warning")
             return
         ref = get_ref_path(_char_name[0])
-        if ref is None or not ref.exists():
+        if _backend[0] != "parler" and (ref is None or not ref.exists()):
             ui.notify("Character has no reference audio — save it from the CLONE tab first", type="warning")
             return
 
@@ -111,6 +111,7 @@ def build_tune_tab():
             path = await ni_run.io_bound(
                 vc_generate, text, ref, _progress, None,
                 _backend[0], _param1[0], _param2[0], ref_text,
+                style_input.value.strip(),
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
