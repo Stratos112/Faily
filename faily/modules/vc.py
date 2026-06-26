@@ -230,12 +230,14 @@ def _load_parler():
     def _tie_weights(self, **kwargs):
         return _orig_tie(self, **{k: v for k, v in kwargs.items() if k in _orig_params})
     ParlerTTSForConditionalGeneration.tie_weights = _tie_weights
+    # low_cpu_mem_usage=False forces a full CPU load (no meta tensors), so .to(device)
+    # works and missing/tied weights are properly materialized.
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
         cache_dir=str(VC_MODELS_DIR),
-        device_map={"": manager.device},
         torch_dtype=torch.float16,
-    )
+        low_cpu_mem_usage=False,
+    ).to(manager.device)
     tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR))
     return model, tok
 
