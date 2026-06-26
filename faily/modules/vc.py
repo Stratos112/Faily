@@ -223,21 +223,27 @@ def _load_parler():
         ParlerTTSForCausalLM.__bases__ = (GenerationMixin,) + ParlerTTSForCausalLM.__bases__
     # transformers 5.x calls tie_weights() with extra kwargs (recompute_mapping,
     # missing_keys) that parler-tts's override doesn't accept. Filter to only
-    # the params the original signature declares.
+    # the params the original signature declares. Also explicitly call T5's own
+    # tie_weights so encoder.embed_tokens -> shared (otherwise it stays as a meta
+    # tensor and the forward pass crashes).
     import inspect
     _orig_tie = ParlerTTSForConditionalGeneration.tie_weights
     _orig_params = set(inspect.signature(_orig_tie).parameters) - {"self"}
     def _tie_weights(self, **kwargs):
-        return _orig_tie(self, **{k: v for k, v in kwargs.items() if k in _orig_params})
+        result = _orig_tie(self, **{k: v for k, v in kwargs.items() if k in _orig_params})
+        if hasattr(self, "text_encoder") and hasattr(self.text_encoder, "tie_weights"):
+            try:
+                self.text_encoder.tie_weights()
+            except Exception:
+                pass
+        return result
     ParlerTTSForConditionalGeneration.tie_weights = _tie_weights
-    # low_cpu_mem_usage=False forces a full CPU load (no meta tensors), so .to(device)
-    # works and missing/tied weights are properly materialized.
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
         cache_dir=str(VC_MODELS_DIR),
+        device_map={"": manager.device},
         torch_dtype=torch.float16,
-        low_cpu_mem_usage=False,
-    ).to(manager.device)
+    )
     tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR))
     return model, tok
 
