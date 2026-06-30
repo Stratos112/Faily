@@ -205,7 +205,7 @@ def _load_parler():
 
     from parler_tts import ParlerTTSForConditionalGeneration
     from parler_tts.configuration_parler_tts import ParlerTTSConfig
-    from parler_tts.modeling_parler_tts import ParlerTTSForCausalLM
+    from parler_tts.modeling_parler_tts import ParlerTTSForCausalLM, ParlerTTSDecoder
     from transformers import AutoTokenizer, GenerationMixin
 
     # 4. to_diff_dict() calls ParlerTTSConfig() with no args → ValueError; block it
@@ -274,7 +274,23 @@ def _load_parler():
         return _orig_cache_pos(self, seq_len, model_kwargs)
     ParlerTTSForConditionalGeneration._get_initial_cache_position = _cache_pos_compat
 
-    # 12. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
+    # 12. _update_causal_mask: 5.x outer generate loop sets cache_position to the global
+    #     sequence positions (e.g. [0..6] for a 7-token input), but parler-tts's internal
+    #     decoder calls this with input_tensor whose seq dim may be smaller (e.g. 2 codec
+    #     positions per chunk).  The multiplication requires both to have the same dim-0.
+    #     Fix: if lengths differ, trim cache_position to seq_len from the front.
+    _orig_ucm = ParlerTTSDecoder._update_causal_mask
+    def _ucm_compat(self, attention_mask, input_tensor, cache_position, past_key_values, output_attentions):
+        if cache_position is not None:
+            seq_len = input_tensor.shape[1]
+            if cache_position.shape[0] > seq_len:
+                cache_position = cache_position[:seq_len]
+            elif cache_position.shape[0] < seq_len:
+                cache_position = torch.arange(seq_len, device=input_tensor.device)
+        return _orig_ucm(self, attention_mask, input_tensor, cache_position, past_key_values, output_attentions)
+    ParlerTTSDecoder._update_causal_mask = _ucm_compat
+
+    # 13. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
         cache_dir=str(VC_MODELS_DIR),
