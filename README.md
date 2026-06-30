@@ -5,8 +5,8 @@ Local neural-net audio framework — TTS, voice cloning, and SFX. Built for soun
 | Tab | Purpose |
 |---|---|
 | **CLONE** | Upload reference audio, create reusable voice characters |
-| **TUNE** | Load a character, describe their expression in text, generate in their voice |
-| **TTS** | Narrate text with Bark or MMS-TTS (fixed-voice models) |
+| **CHARACTERS** | Browse character library, view metadata/favorites, navigate to SPEAK |
+| **SPEAK** | Load a character, describe their expression in text, generate in their voice |
 | **FOLEY** | Generate sound effects from text prompts via AudioLDM2 |
 
 ## Voice cloning backends (CLONE)
@@ -15,8 +15,25 @@ Local neural-net audio framework — TTS, voice cloning, and SFX. Built for soun
 - **F5-TTS** — Flow-matching diffusion, quality scales with steps
 - **Chatterbox** — Resemble AI, CFG-guided, best for expression control
 
-## TUNE pipeline (two-stage)
-The TUNE tab uses a two-stage pipeline that separates *who is speaking* from *how they're speaking*:
+## Clip naming
+Generated clips are named `{character}_{style_word}_{text_word}_{NNN}.wav` — e.g. `obi_wan_cold_hello_001.wav`. Each tab's history panel has three per-clip actions:
+- **+** — copy into the character's `clips/` folder (approved generation, feeds future VC training)
+- **♥** — copy into the character's `favorites/` folder (visible in the CHARACTERS tab)
+- **↓** — copy to the system Downloads directory
+
+Clips that are not acted on stay in `outputs/vc/` (master dump).
+
+**Character clip folders:**
+```
+outputs/characters/{name}/
+  clips/       ← approved generations (TODO: feed these into VC training pipeline)
+  favorites/   ← curated favorites for listening / reference
+```
+
+> **TODO — clip training pipeline**: Build a utility that combines a character's `clips/` collection into a training dataset for OpenVoice v2 (multi-reference) or RVC (fine-tuned voice model). As `clips/` grows, the character's voice conversion in stage 2 should improve. See Character voice library roadmap below.
+
+## SPEAK pipeline (two-stage)
+The SPEAK tab uses a two-stage pipeline that separates *who is speaking* from *how they're speaking*:
 
 1. **Expression stage** — A text-description model (Parler-TTS or Orpheus TTS) generates speech from the line + a free-text style prompt ("sing-song, happy, silly but serious"). This stage doesn't know or care about the character's voice.
 2. **Voice conversion stage** — FreeVC (via Coqui TTS) takes the expressive audio and converts it to the character's voice using their reference audio from the character library.

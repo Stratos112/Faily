@@ -1,4 +1,5 @@
 """Shared UI building blocks."""
+import shutil
 import traceback
 from pathlib import Path
 from nicegui import ui
@@ -29,7 +30,7 @@ def show_error(exc: Exception) -> None:
     dlg.open()
 
 
-def output_panel(output_subdir: str):
+def output_panel(output_subdir: str, get_char_name=None):
     """
     Builds the right-hand output column.
 
@@ -88,6 +89,46 @@ def output_panel(output_subdir: str):
     output_dir = Path("outputs") / output_subdir
     existing: list[Path] = sorted(output_dir.glob("*.wav"), reverse=True) if output_dir.exists() else []
 
+    def _add_to_char(path: Path):
+        name = get_char_name() if get_char_name else None
+        if not name:
+            ui.notify("No character selected", type="warning")
+            return
+        from faily.core.characters import get_character, add_clip_to_character
+        if not get_character(name):
+            ui.notify(f"'{name}' is not a saved character yet", type="warning")
+            return
+        try:
+            add_clip_to_character(name, path)
+            ui.notify(f"Added to {name}", type="positive", timeout=2000)
+        except Exception as exc:
+            show_error(exc)
+
+    def _fav(path: Path):
+        name = get_char_name() if get_char_name else None
+        if not name:
+            ui.notify("No character selected", type="warning")
+            return
+        from faily.core.characters import get_character, add_clip_to_favorites
+        if not get_character(name):
+            ui.notify(f"'{name}' is not a saved character yet", type="warning")
+            return
+        try:
+            add_clip_to_favorites(name, path)
+            ui.notify(f"Added to {name} favorites", type="positive", timeout=2000)
+        except Exception as exc:
+            show_error(exc)
+
+    def _download_local(path: Path):
+        try:
+            downloads = Path.home() / "Downloads"
+            downloads.mkdir(parents=True, exist_ok=True)
+            dest = downloads / path.name
+            shutil.copy2(str(path), str(dest))
+            ui.notify(f"Saved to Downloads/{path.name}", type="positive", timeout=3000)
+        except Exception as exc:
+            show_error(exc)
+
     def _make_row(path: Path):
         with history_col_el:
             with ui.row().classes(
@@ -100,10 +141,16 @@ def output_panel(output_subdir: str):
                 ui.label(path.name).classes(
                     "text-[#888] font-mono text-[10px] truncate flex-grow cursor-pointer"
                 ).on("click", lambda p=path: _load_compare(p))
-                rel = path.relative_to(Path("outputs"))
-                ui.button(icon="download", on_click=lambda r=rel: ui.download(f"/outputs/{r.as_posix()}")).props(
+                if get_char_name is not None:
+                    ui.button(icon="add", on_click=lambda p=path: _add_to_char(p)).props(
+                        "flat dense color=grey"
+                    ).classes("shrink-0").tooltip("Add to character")
+                    ui.button(icon="favorite_border", on_click=lambda p=path: _fav(p)).props(
+                        "flat dense color=grey"
+                    ).classes("shrink-0").tooltip("Favorite")
+                ui.button(icon="file_download", on_click=lambda p=path: _download_local(p)).props(
                     "flat dense color=grey"
-                ).classes("shrink-0")
+                ).classes("shrink-0").tooltip("Copy to Downloads")
 
     def _load_compare(path: Path):
         rel = path.relative_to(Path("outputs"))

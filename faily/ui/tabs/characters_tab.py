@@ -2,7 +2,7 @@ from pathlib import Path
 from nicegui import ui
 from faily.core.characters import (
     list_characters, get_character, get_ref_path, delete_character,
-    update_character_metadata, CHARACTERS_DIR,
+    update_character_metadata, list_character_favorites, CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error
 
@@ -158,6 +158,30 @@ def build_characters_tab(on_speak, on_change):
                         )
                         rel = ref.relative_to(Path("outputs"))
                         ui.audio(f"/outputs/{rel.as_posix()}").classes("w-full rounded mt-1")
+
+                # ── favorites ────────────────────────────────────────────────
+                favs = list_character_favorites(name)
+                if favs:
+                    with right_col:
+                        ui.separator().classes("my-3 opacity-20")
+                        ui.label("FAVORITES").classes(
+                            "text-[#444] font-mono text-[10px] tracking-widest"
+                        )
+                        fav_player = ui.audio("").classes("w-full rounded mt-1")
+                        fav_player.set_visibility(False)
+                        for fav in favs:
+                            fav_url = f"/outputs/{fav.relative_to(Path('outputs')).as_posix()}"
+                            with ui.row().classes(
+                                "w-full items-center gap-2 px-2 py-0.5 rounded cursor-pointer "
+                                "hover:bg-[#1a1a1a]"
+                            ).on("click", lambda u=fav_url: (
+                                fav_player.set_source(u),
+                                fav_player.set_visibility(True),
+                            )):
+                                ui.icon("favorite", size="12px").classes("text-pink-400 shrink-0")
+                                ui.label(fav.name).classes(
+                                    "text-[#666] font-mono text-[10px] truncate flex-grow"
+                                )
 
             else:
                 # sub-character fields

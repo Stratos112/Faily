@@ -73,6 +73,7 @@ def build_tune_tab():
                 _engine[0],
                 ref,
                 _progress,
+                char_name=_char_name[0] if _char_name[0] != _NO_CHAR else None,
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
@@ -147,7 +148,10 @@ def build_tune_tab():
                 .props("color=amber unelevated")
             )
 
-        pb, ml, mp, st, _, _, ath = output_panel("vc")
+        pb, ml, mp, st, _, _, ath = output_panel(
+            "vc",
+            get_char_name=lambda: _char_name[0] if _char_name[0] != _NO_CHAR else None,
+        )
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
     def _tick():

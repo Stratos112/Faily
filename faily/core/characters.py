@@ -88,6 +88,31 @@ def delete_character(name: str):
         shutil.rmtree(str(char_dir))
 
 
+def add_clip_to_character(name: str, clip_path: Path) -> Path:
+    """Copy a generated clip into the character's clip collection."""
+    dest_dir = CHARACTERS_DIR / name / "clips"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / clip_path.name
+    shutil.copy2(str(clip_path), str(dest))
+    return dest
+
+
+def add_clip_to_favorites(name: str, clip_path: Path) -> Path:
+    """Copy a generated clip into the character's favorites folder."""
+    dest_dir = CHARACTERS_DIR / name / "favorites"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / clip_path.name
+    shutil.copy2(str(clip_path), str(dest))
+    return dest
+
+
+def list_character_favorites(name: str) -> list[Path]:
+    fav_dir = CHARACTERS_DIR / name / "favorites"
+    if not fav_dir.exists():
+        return []
+    return sorted(fav_dir.glob("*.wav"), reverse=True)
+
+
 def update_character_metadata(name: str, updates: dict) -> dict:
     """Update specific text fields in a character config. Name/created/ref_audio are protected."""
     p = _cfg(name)

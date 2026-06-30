@@ -1,6 +1,6 @@
+import re
 import soundfile as sf
 import torchaudio
-from datetime import datetime
 from pathlib import Path
 from faily.core.model_manager import manager, VC_MODELS_DIR
 
@@ -41,6 +41,37 @@ def _patch_ffmpeg_read():
 _patch_ffmpeg_read()
 
 VC_OUTPUT_DIR = Path("outputs/vc")
+
+
+def _make_clip_name(char_name: str | None, style: str, text: str, output_dir: Path) -> str:
+    """Build a human-readable clip filename: {char}_{style_word}_{text_word}_{NNN}.wav"""
+    def _first_word(s: str) -> str:
+        m = re.search(r'[a-z0-9]+', s.lower())
+        return m.group(0)[:12] if m else ""
+
+    parts = []
+    if char_name:
+        slug = re.sub(r'[^a-z0-9]+', '_', char_name.lower().strip()).strip('_')[:16]
+        if slug:
+            parts.append(slug)
+    if style:
+        w = _first_word(style)
+        if w:
+            parts.append(w)
+    if text:
+        w = _first_word(text)
+        if w:
+            parts.append(w)
+    if not parts:
+        parts = ["clip"]
+
+    base = "_".join(parts)
+    existing = {p.stem for p in output_dir.glob("*.wav")} if output_dir.exists() else set()
+    for i in range(1, 10000):
+        stem = f"{base}_{i:03d}"
+        if stem not in existing:
+            return f"{stem}.wav"
+    return f"{base}_9999.wav"
 
 _TTS_ID = "microsoft/speecht5_tts"
 _VOC_ID = "microsoft/speecht5_hifigan"
@@ -464,15 +495,16 @@ def tune_generate(
     ref_path: Path,
     progress_ref: list | None = None,
     output_dir: Path | None = None,
+    char_name: str | None = None,
 ) -> Path:
     """Two-stage TUNE pipeline: expression engine → FreeVC character voice conversion."""
     if output_dir is None:
         output_dir = VC_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = output_dir / f"tune_{ts}.wav"
-    stage1 = output_dir / f"_s1_{ts}.wav"
+    clip_name = _make_clip_name(char_name, expression, text, output_dir)
+    out = output_dir / clip_name
+    stage1 = output_dir / f"_s1_{clip_name}"
 
     if progress_ref is not None:
         progress_ref[0] = 0.1
@@ -511,6 +543,7 @@ def generate(
     param2: float | None = None,
     ref_text: str = "",
     style_prompt: str = "",
+    char_name: str | None = None,
 ) -> Path:
     if output_dir is None:
         output_dir = VC_OUTPUT_DIR
@@ -523,8 +556,7 @@ def generate(
     if progress_ref is not None:
         progress_ref[0] = 0.2
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = output_dir / f"vc_{ts}.wav"
+    out = output_dir / _make_clip_name(char_name, style_prompt, text, output_dir)
 
     if progress_ref is not None:
         progress_ref[0] = 0.4

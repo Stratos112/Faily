@@ -130,6 +130,7 @@ def build_vc_tab():
                 vc_generate, text, _ref_path[0], _progress, None,
                 _backend[0], _param1[0], _param2[0], ref_text_input.value,
                 style_prompt_input.value,
+                char_name=name_input.value.strip() or None,
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
@@ -297,7 +298,7 @@ def build_vc_tab():
                     f"flex-1 {_BTN}"
                 ).props("color=amber unelevated")
 
-        pb, ml, mp, st, _, _, ath = output_panel("vc")
+        pb, ml, mp, st, _, _, ath = output_panel("vc", get_char_name=lambda: name_input.value.strip() or None)
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
     _rebuild_list()

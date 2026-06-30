@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 from nicegui import app, ui
-from faily.ui.tabs.tts_tab import build_tts_tab
 from faily.ui.tabs.foley_tab import build_foley_tab
 from faily.ui.tabs.vc_tab import build_vc_tab
 from faily.ui.tabs.tune_tab import build_tune_tab
@@ -72,7 +71,6 @@ def run():
             vc_tab       = ui.tab("CLONE",      icon="mic")
             chars_tab    = ui.tab("CHARACTERS", icon="manage_accounts")
             speak_tab    = ui.tab("SPEAK",      icon="record_voice_over")
-            tts_tab      = ui.tab("TTS",        icon="text_fields")
             foley_tab    = ui.tab("FOLEY",      icon="graphic_eq")
 
         # deferred callbacks — populated after panels are built
@@ -110,9 +108,6 @@ def run():
 
             with ui.tab_panel(speak_tab):
                 _speak_refresh[0], _speak_select[0] = build_tune_tab()
-
-            with ui.tab_panel(tts_tab):
-                build_tts_tab()
 
             with ui.tab_panel(foley_tab):
                 build_foley_tab()
