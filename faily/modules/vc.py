@@ -320,33 +320,17 @@ def _load_parler():
             return _orig_get_seq_len(self, layer_idx)
         _cu.DynamicCache.get_seq_length = _get_seq_len_compat
 
-    # 14. prepare_inputs_for_generation: in 5.x, _update_model_kwargs_for_generation may
-    #     wrap past_key_values in a fresh EncoderDecoderCache, making get_seq_length()
-    #     return 0. The formula generated_length = get_seq_length() - prompt_len + 1 then
-    #     goes negative and crashes torch.ones(). Fix: detect the broken case and substitute
-    #     the actual seq_len from our key_cache (or fall back to decoder_input_ids length).
+    # 14. prepare_inputs_for_generation: in 5.x, an empty DynamicCache is pre-allocated
+    #     before the prefill and passed as past_key_values (get_seq_length()=0). Parler-tts
+    #     was written for 4.46 where past_key_values=None at the start, so the formula
+    #     generated_length = 0 - prompt_len + N goes negative → crash. Fix: treat any
+    #     empty cache as None so parler-tts takes its else branch (generated_length = N).
     _orig_pig = ParlerTTSForConditionalGeneration.prepare_inputs_for_generation
     def _pig_compat(self, decoder_input_ids, past_key_values=None, **kwargs):
-        if past_key_values is not None and hasattr(past_key_values, 'get_seq_length'):
-            prompt_input_ids = kwargs.get('prompt_input_ids')
-            prompt_len = prompt_input_ids.shape[1] if prompt_input_ids is not None else 0
-            if past_key_values.get_seq_length() < prompt_len:
-                # get_seq_length() is stale/zero — find actual length from stored keys
-                cache = getattr(past_key_values, 'self_attention_cache', past_key_values)
-                kc = cache.__dict__.get('key_cache') or getattr(cache, 'key_cache', None)
-                actual = 0
-                if isinstance(kc, list) and kc:
-                    first = next((t for t in kc if t is not None), None)
-                    if first is not None:
-                        actual = first.shape[-2]
-                if actual == 0:
-                    actual = max(int(decoder_input_ids.shape[-1]), prompt_len)
-                _orig_gsl = past_key_values.get_seq_length
-                past_key_values.get_seq_length = lambda _layer_idx=0: actual
-                try:
-                    return _orig_pig(self, decoder_input_ids, past_key_values=past_key_values, **kwargs)
-                finally:
-                    past_key_values.get_seq_length = _orig_gsl
+        if (past_key_values is not None and
+                hasattr(past_key_values, 'get_seq_length') and
+                past_key_values.get_seq_length() == 0):
+            past_key_values = None
         return _orig_pig(self, decoder_input_ids, past_key_values=past_key_values, **kwargs)
     ParlerTTSForConditionalGeneration.prepare_inputs_for_generation = _pig_compat
 
@@ -377,6 +361,7 @@ def _parler_generate(text: str, out: Path, style_prompt: str):
             prompt_input_ids=prompt_input_ids,
             prompt_attention_mask=prompt_attention_mask,
             max_new_tokens=500,
+            use_cache=False,
         )
     sf.write(str(out), gen.cpu().float().numpy().squeeze(), model.config.sampling_rate)
 
