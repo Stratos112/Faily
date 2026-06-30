@@ -327,11 +327,16 @@ def _parler_generate(text: str, out: Path, style_prompt: str):
     description = style_prompt.strip() or "A clear, neutral voice at a moderate pace."
     input_ids = tokenizer(description, return_tensors="pt").input_ids.to(manager.device)
     prompt_input_ids = tokenizer(text, return_tensors="pt").input_ids.to(manager.device)
+    attention_mask = torch.ones_like(input_ids)
+    prompt_attention_mask = torch.ones_like(prompt_input_ids)
     device_type = "cuda" if str(manager.device).startswith("cuda") else "cpu"
     with torch.no_grad(), torch.autocast(device_type=device_type, dtype=torch.float16):
         gen = model.generate(
             input_ids=input_ids,
+            attention_mask=attention_mask,
             prompt_input_ids=prompt_input_ids,
+            prompt_attention_mask=prompt_attention_mask,
+            max_new_tokens=500,
         )
     sf.write(str(out), gen.cpu().float().numpy().squeeze(), model.config.sampling_rate)
 
