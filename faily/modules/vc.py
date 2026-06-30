@@ -262,7 +262,19 @@ def _load_parler():
     ParlerTTSForConditionalGeneration._expand_inputs_for_generation = _expand_compat
     ParlerTTSForCausalLM._expand_inputs_for_generation = _expand_compat
 
-    # 11. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
+    # 11. _get_initial_cache_position: 5.x added a `device` arg
+    #     4.46 call: (self, seq_len, model_kwargs)
+    #     5.x call:  (self, seq_len, device, model_kwargs)  ← extra positional arg
+    _orig_cache_pos = ParlerTTSForConditionalGeneration._get_initial_cache_position
+    def _cache_pos_compat(self, seq_len, device_or_kwargs, model_kwargs=None):
+        if model_kwargs is None:
+            # Old 3-arg style — forward as-is
+            return _orig_cache_pos(self, seq_len, device_or_kwargs)
+        # New 4-arg style — drop device, pass seq_len + model_kwargs
+        return _orig_cache_pos(self, seq_len, model_kwargs)
+    ParlerTTSForConditionalGeneration._get_initial_cache_position = _cache_pos_compat
+
+    # 12. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
         cache_dir=str(VC_MODELS_DIR),
