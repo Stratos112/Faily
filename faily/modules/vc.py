@@ -295,8 +295,8 @@ def _load_parler():
     #     Patch update() to maintain parallel lists so parler-tts's reads work.
     if not hasattr(_cu.DynamicCache, 'key_cache'):
         _orig_dc_update = _cu.DynamicCache.update
-        def _dc_update_compat(self, key_states, value_states, layer_idx, **kwargs):
-            result = _orig_dc_update(self, key_states, value_states, layer_idx, **kwargs)
+        def _dc_update_compat(self, key_states, value_states, layer_idx, cache_kwargs=None, **kwargs):
+            key_full, value_full = _orig_dc_update(self, key_states, value_states, layer_idx, cache_kwargs, **kwargs)
             if 'key_cache' not in self.__dict__:
                 self.__dict__['key_cache'] = []
                 self.__dict__['value_cache'] = []
@@ -305,9 +305,9 @@ def _load_parler():
             while len(kc) <= layer_idx:
                 kc.append(None)
                 vc.append(None)
-            kc[layer_idx] = key_states
-            vc[layer_idx] = value_states
-            return result
+            kc[layer_idx] = key_full
+            vc[layer_idx] = value_full
+            return key_full, value_full
         _cu.DynamicCache.update = _dc_update_compat
 
     # 14. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
