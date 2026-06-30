@@ -106,11 +106,32 @@ def add_clip_to_favorites(name: str, clip_path: Path) -> Path:
     return dest
 
 
+def list_character_clips(name: str) -> list[Path]:
+    clips_dir = CHARACTERS_DIR / name / "clips"
+    if not clips_dir.exists():
+        return []
+    return sorted(clips_dir.glob("*.wav"), reverse=True)
+
+
 def list_character_favorites(name: str) -> list[Path]:
     fav_dir = CHARACTERS_DIR / name / "favorites"
     if not fav_dir.exists():
         return []
     return sorted(fav_dir.glob("*.wav"), reverse=True)
+
+
+def rename_character_file(char_name: str, subfolder: str, old_name: str, new_name: str) -> Path:
+    """Rename a clip inside a character's clips/ or favorites/ subfolder."""
+    if not new_name.lower().endswith(".wav"):
+        new_name += ".wav"
+    src = CHARACTERS_DIR / char_name / subfolder / old_name
+    if not src.exists():
+        raise FileNotFoundError(f"File not found: {src}")
+    dest = src.parent / new_name
+    if dest.exists() and dest != src:
+        raise FileExistsError(f"'{new_name}' already exists")
+    src.rename(dest)
+    return dest
 
 
 def update_character_metadata(name: str, updates: dict) -> dict:

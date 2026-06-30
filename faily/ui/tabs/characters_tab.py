@@ -2,7 +2,9 @@ from pathlib import Path
 from nicegui import ui
 from faily.core.characters import (
     list_characters, get_character, get_ref_path, delete_character,
-    update_character_metadata, list_character_favorites, CHARACTERS_DIR,
+    update_character_metadata,
+    list_character_clips, list_character_favorites, rename_character_file,
+    CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error
 
@@ -57,7 +59,6 @@ def build_characters_tab(on_speak, on_change):
                 _item_row(base["name"], parent=None)
                 for sub in subs.get(base["name"], []):
                     _item_row(sub["name"], parent=base["name"])
-            # orphaned sub-characters (parent was deleted)
             known_base_names = {b["name"] for b in bases}
             for parent_name, sub_list in subs.items():
                 if parent_name not in known_base_names:
@@ -69,13 +70,73 @@ def build_characters_tab(on_speak, on_change):
         _rebuild_list()
         _rebuild_detail()
 
-    def _meta_row(col: ui.column, label: str, value: str):
-        with col:
-            with ui.row().classes("items-start gap-3 w-full"):
-                ui.label(label).classes(
-                    "text-[#444] font-mono text-[10px] tracking-widest w-28 shrink-0 pt-0.5"
-                )
-                ui.label(value).classes("text-[#aaa] font-mono text-[11px] flex-grow break-all")
+    def _open_rename_dialog(char_name: str, subfolder: str, clip_path: Path):
+        with ui.dialog() as dlg, ui.card().classes(
+            "bg-[#1a1a1a] border border-[#333] min-w-[380px] gap-3"
+        ):
+            ui.label("RENAME CLIP").classes("text-white font-mono text-xs tracking-widest")
+            inp = (
+                ui.input(value=clip_path.stem)
+                .props("outlined dark dense")
+                .classes("w-full font-mono")
+            )
+            ui.label(".wav").classes("text-[#444] font-mono text-[10px]")
+
+            def _do_rename():
+                new_stem = inp.value.strip()
+                if not new_stem:
+                    return
+                try:
+                    rename_character_file(char_name, subfolder, clip_path.name, new_stem)
+                    dlg.close()
+                    _rebuild_detail()
+                    ui.notify(f"Renamed to {new_stem}.wav", type="positive", timeout=2000)
+                except Exception as exc:
+                    show_error(exc)
+
+            inp.on("keydown.enter", lambda: _do_rename())
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=dlg.close).props("flat dense color=grey")
+                ui.button("Rename", on_click=_do_rename).props("color=amber unelevated dense")
+        dlg.open()
+
+    def _clip_section(char_name: str, title: str, icon_name: str, icon_color: str,
+                      clips: list[Path], subfolder: str):
+        """Build a browseable, renameable clip list section inside the current context."""
+        with ui.row().classes("items-center gap-2"):
+            ui.label(title).classes("text-[#444] font-mono text-[10px] tracking-widest")
+            ui.label(str(len(clips))).classes(
+                "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
+            )
+
+        player = ui.audio("").classes("w-full rounded")
+        player.set_visibility(False)
+
+        for clip in clips:
+            rel = clip.relative_to(Path("outputs"))
+            url = f"/outputs/{rel.as_posix()}"
+
+            with ui.row().classes(
+                "w-full items-center gap-1 px-2 py-1 rounded "
+                "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
+            ):
+                ui.icon(icon_name, size="12px").classes(
+                    f"{icon_color} shrink-0 cursor-pointer"
+                ).on("click", lambda u=url: (
+                    player.set_source(u),
+                    player.set_visibility(True),
+                ))
+                ui.label(clip.stem).classes(
+                    "text-[#666] font-mono text-[10px] truncate flex-grow cursor-pointer"
+                ).on("click", lambda u=url: (
+                    player.set_source(u),
+                    player.set_visibility(True),
+                ))
+                ui.label(".wav").classes("text-[#333] font-mono text-[10px] shrink-0")
+                ui.button(
+                    icon="drive_file_rename_outline",
+                    on_click=lambda c=clip: _open_rename_dialog(char_name, subfolder, c),
+                ).props("flat dense color=grey").classes("shrink-0")
 
     def _rebuild_detail():
         right_col.clear()
@@ -110,114 +171,107 @@ def build_characters_tab(on_speak, on_change):
             ui.separator().classes("my-3 opacity-20")
 
             # ── metadata ────────────────────────────────────────────────────
-            meta_col = ui.column().classes("w-full gap-1.5")
+            def _meta_row(label: str, value: str):
+                with ui.row().classes("items-start gap-3 w-full"):
+                    ui.label(label).classes(
+                        "text-[#444] font-mono text-[10px] tracking-widest w-28 shrink-0 pt-0.5"
+                    )
+                    ui.label(value).classes("text-[#aaa] font-mono text-[11px] flex-grow break-all")
 
             created = char.get("created", "—")[:19].replace("T", "  ")
-            _meta_row(meta_col, "CREATED", created)
+            _meta_row("CREATED", created)
 
             if is_base:
                 ref = get_ref_path(name)
                 ref_label = ref.name if (ref and ref.exists()) else "⚠  missing"
-                _meta_row(meta_col, "REF AUDIO", ref_label)
+                _meta_row("REF AUDIO", ref_label)
 
                 transcript = char.get("transcript", "").strip()
                 if transcript:
-                    with right_col:
-                        ui.label("TRANSCRIPT").classes(
-                            "text-[#444] font-mono text-[10px] tracking-widest mt-1"
-                        )
-                        ui.label(transcript).classes(
-                            "text-[#aaa] font-mono text-[11px] leading-relaxed "
-                            "bg-[#1a1a1a] rounded px-3 py-2 w-full"
-                        )
+                    ui.label("TRANSCRIPT").classes(
+                        "text-[#444] font-mono text-[10px] tracking-widest mt-1"
+                    )
+                    ui.label(transcript).classes(
+                        "text-[#aaa] font-mono text-[11px] leading-relaxed "
+                        "bg-[#1a1a1a] rounded px-3 py-2 w-full"
+                    )
 
-                # ── variants tree ────────────────────────────────────────────
+                # ── variants ────────────────────────────────────────────────
                 _, subs = _grouped()
                 children = subs.get(name, [])
                 if children:
-                    with right_col:
-                        ui.separator().classes("my-3 opacity-20")
-                        ui.label("VARIANTS").classes(
-                            "text-[#444] font-mono text-[10px] tracking-widest"
-                        )
-                        for sub in children:
-                            with ui.row().classes("items-center gap-2 px-2 py-0.5 cursor-pointer").on(
-                                "click", lambda n=sub["name"]: _select(n)
-                            ):
-                                ui.icon("person_outline", size="12px").classes("text-[#555]")
-                                ui.label(f"↳ {sub['name']}").classes(
-                                    "text-[#666] font-mono text-[10px] hover:text-amber-400"
-                                )
+                    ui.separator().classes("my-3 opacity-20")
+                    ui.label("VARIANTS").classes(
+                        "text-[#444] font-mono text-[10px] tracking-widest"
+                    )
+                    for sub in children:
+                        with ui.row().classes(
+                            "items-center gap-2 px-2 py-0.5 rounded cursor-pointer hover:bg-[#111]"
+                        ).on("click", lambda n=sub["name"]: _select(n)):
+                            ui.icon("person_outline", size="12px").classes("text-[#555]")
+                            ui.label(f"↳ {sub['name']}").classes(
+                                "text-[#666] font-mono text-[10px] hover:text-amber-400"
+                            )
 
                 # ── ref audio player ─────────────────────────────────────────
                 if ref and ref.exists():
-                    with right_col:
-                        ui.separator().classes("my-3 opacity-20")
-                        ui.label("REFERENCE AUDIO").classes(
-                            "text-[#444] font-mono text-[10px] tracking-widest"
-                        )
-                        rel = ref.relative_to(Path("outputs"))
-                        ui.audio(f"/outputs/{rel.as_posix()}").classes("w-full rounded mt-1")
+                    ui.separator().classes("my-3 opacity-20")
+                    ui.label("REFERENCE AUDIO").classes(
+                        "text-[#444] font-mono text-[10px] tracking-widest"
+                    )
+                    rel = ref.relative_to(Path("outputs"))
+                    ui.audio(f"/outputs/{rel.as_posix()}").classes("w-full rounded mt-1")
+
+                # ── personality clips ────────────────────────────────────────
+                clips = list_character_clips(name)
+                if clips:
+                    ui.separator().classes("my-3 opacity-20")
+                    _clip_section(
+                        name, "PERSONALITY CLIPS", "library_music", "text-amber-400",
+                        clips, "clips",
+                    )
 
                 # ── favorites ────────────────────────────────────────────────
                 favs = list_character_favorites(name)
                 if favs:
-                    with right_col:
-                        ui.separator().classes("my-3 opacity-20")
-                        ui.label("FAVORITES").classes(
-                            "text-[#444] font-mono text-[10px] tracking-widest"
-                        )
-                        fav_player = ui.audio("").classes("w-full rounded mt-1")
-                        fav_player.set_visibility(False)
-                        for fav in favs:
-                            fav_url = f"/outputs/{fav.relative_to(Path('outputs')).as_posix()}"
-                            with ui.row().classes(
-                                "w-full items-center gap-2 px-2 py-0.5 rounded cursor-pointer "
-                                "hover:bg-[#1a1a1a]"
-                            ).on("click", lambda u=fav_url: (
-                                fav_player.set_source(u),
-                                fav_player.set_visibility(True),
-                            )):
-                                ui.icon("favorite", size="12px").classes("text-pink-400 shrink-0")
-                                ui.label(fav.name).classes(
-                                    "text-[#666] font-mono text-[10px] truncate flex-grow"
-                                )
+                    ui.separator().classes("my-3 opacity-20")
+                    _clip_section(
+                        name, "FAVORITES", "favorite", "text-pink-400",
+                        favs, "favorites",
+                    )
 
             else:
-                # sub-character fields
-                _meta_row(meta_col, "PARENT", char.get("parent", "—"))
+                _meta_row("PARENT", char.get("parent", "—"))
                 if char.get("backend"):
-                    _meta_row(meta_col, "BACKEND", char["backend"])
+                    _meta_row("BACKEND", char["backend"])
                 style = char.get("style_prompt", "").strip()
                 if style:
-                    with right_col:
-                        ui.label("STYLE PROMPT").classes(
-                            "text-[#444] font-mono text-[10px] tracking-widest mt-1"
-                        )
-                        ui.label(style).classes(
-                            "text-[#aaa] font-mono text-[11px] leading-relaxed "
-                            "bg-[#1a1a1a] rounded px-3 py-2 w-full"
-                        )
+                    ui.label("STYLE PROMPT").classes(
+                        "text-[#444] font-mono text-[10px] tracking-widest mt-1"
+                    )
+                    ui.label(style).classes(
+                        "text-[#aaa] font-mono text-[11px] leading-relaxed "
+                        "bg-[#1a1a1a] rounded px-3 py-2 w-full"
+                    )
 
             # ── actions ──────────────────────────────────────────────────────
-            with right_col:
-                ui.separator().classes("mt-4 mb-3 opacity-20")
-                with ui.row().classes("gap-2"):
-                    (
-                        ui.button("SPEAK", icon="record_voice_over", on_click=lambda n=name: on_speak(n))
-                        .props("color=amber unelevated")
-                        .classes(_BTN)
+            ui.separator().classes("mt-4 mb-3 opacity-20")
+            with ui.row().classes("gap-2"):
+                (
+                    ui.button("SPEAK", icon="record_voice_over", on_click=lambda n=name: on_speak(n))
+                    .props("color=amber unelevated")
+                    .classes(_BTN)
+                )
+                ui.button("EDIT", icon="edit", on_click=lambda n=name: _open_edit(n)).props(
+                    "flat color=grey"
+                )
+                (
+                    ui.button(
+                        "DELETE", icon="delete_outline",
+                        on_click=lambda n=name: _confirm_delete(n),
                     )
-                    ui.button("EDIT", icon="edit", on_click=lambda n=name: _open_edit(n)).props(
-                        "flat color=grey"
-                    )
-                    (
-                        ui.button(
-                            "DELETE", icon="delete_outline",
-                            on_click=lambda n=name: _confirm_delete(n),
-                        )
-                        .props("flat color=negative")
-                    )
+                    .props("flat color=negative")
+                )
 
     def _open_edit(name: str):
         char = get_character(name)
