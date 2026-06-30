@@ -290,7 +290,27 @@ def _load_parler():
         return _orig_ucm(self, attention_mask, input_tensor, cache_position, past_key_values, output_attentions)
     ParlerTTSDecoder._update_causal_mask = _ucm_compat
 
-    # 13. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
+    # 13. DynamicCache.key_cache / value_cache were removed in transformers 5.x.
+    #     Parler-tts reads them directly as lists indexed by layer_idx.
+    #     Patch update() to maintain parallel lists so parler-tts's reads work.
+    if not hasattr(_cu.DynamicCache, 'key_cache'):
+        _orig_dc_update = _cu.DynamicCache.update
+        def _dc_update_compat(self, key_states, value_states, layer_idx, **kwargs):
+            result = _orig_dc_update(self, key_states, value_states, layer_idx, **kwargs)
+            if 'key_cache' not in self.__dict__:
+                self.__dict__['key_cache'] = []
+                self.__dict__['value_cache'] = []
+            kc = self.__dict__['key_cache']
+            vc = self.__dict__['value_cache']
+            while len(kc) <= layer_idx:
+                kc.append(None)
+                vc.append(None)
+            kc[layer_idx] = key_states
+            vc[layer_idx] = value_states
+            return result
+        _cu.DynamicCache.update = _dc_update_compat
+
+    # 14. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
         cache_dir=str(VC_MODELS_DIR),
