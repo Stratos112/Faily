@@ -28,16 +28,19 @@ def build_tune_tab():
     _engine: list[str] = [_DEFAULT_ENGINE]
     _out: dict = {}
 
-    def _on_char(e):
-        _char_name[0] = e.value
-        if e.value == _NO_CHAR:
+    def _update_char_info(name: str):
+        _char_name[0] = name
+        if name == _NO_CHAR:
             char_info.set_text("")
             return
-        char = get_character(e.value)
-        ref = get_ref_path(e.value)
+        char = get_character(name)
+        ref = get_ref_path(name)
         ancestry = f"↳ {char['parent']}" if char and "parent" in char else "base character"
         ref_label = ref.name if (ref and ref.exists()) else "⚠  no reference audio — save from CLONE tab"
         char_info.set_text(f"{ancestry}  ·  {ref_label}")
+
+    def _on_char(e):
+        _update_char_info(e.value)
 
     def _on_engine(e):
         _engine[0] = e.value
@@ -163,4 +166,10 @@ def build_tune_tab():
         char_select.set_options(opts, value=value)
         _char_name[0] = value
 
-    return refresh_characters
+    def select_character(name: str):
+        opts = _char_options()
+        if name in opts:
+            char_select.set_options(opts, value=name)
+            _update_char_info(name)
+
+    return refresh_characters, select_character

@@ -5,6 +5,7 @@ from faily.ui.tabs.tts_tab import build_tts_tab
 from faily.ui.tabs.foley_tab import build_foley_tab
 from faily.ui.tabs.vc_tab import build_vc_tab
 from faily.ui.tabs.tune_tab import build_tune_tab
+from faily.ui.tabs.characters_tab import build_characters_tab
 
 OUTPUTS = Path("outputs")
 
@@ -68,30 +69,54 @@ def run():
             )
 
         with ui.tabs().classes("w-full") as tabs:
-            vc_tab    = ui.tab("CLONE", icon="mic")
-            tune_tab  = ui.tab("TUNE",  icon="tune")
-            tts_tab   = ui.tab("TTS",   icon="record_voice_over")
-            foley_tab = ui.tab("FOLEY", icon="graphic_eq")
+            vc_tab       = ui.tab("CLONE",      icon="mic")
+            chars_tab    = ui.tab("CHARACTERS", icon="manage_accounts")
+            speak_tab    = ui.tab("SPEAK",      icon="record_voice_over")
+            tts_tab      = ui.tab("TTS",        icon="text_fields")
+            foley_tab    = ui.tab("FOLEY",      icon="graphic_eq")
 
-        _tune_refresh: list = [lambda: None]
+        # deferred callbacks — populated after panels are built
+        _speak_refresh: list = [lambda: None]
+        _speak_select:  list = [lambda name: None]
+        _chars_refresh: list = [lambda: None]
+        _vc_refresh:    list = [lambda: None]
 
         def _on_tab_change(e):
-            if e.value == "TUNE":
-                _tune_refresh[0]()
+            if e.value == "SPEAK":
+                _speak_refresh[0]()
+            elif e.value == "CHARACTERS":
+                _chars_refresh[0]()
+
+        def _on_speak(name: str):
+            """Called from CHARACTERS tab — navigate to SPEAK tab with char pre-selected."""
+            _speak_refresh[0]()
+            tabs.set_value("SPEAK")
+            _speak_select[0](name)
+
+        def _on_char_change():
+            """Called when a character is deleted from CHARACTERS tab."""
+            _speak_refresh[0]()
+            _vc_refresh[0]()
 
         with ui.tab_panels(tabs, value=vc_tab, on_change=_on_tab_change).classes("w-full flex-grow"):
             with ui.tab_panel(vc_tab):
-                build_vc_tab()
-            with ui.tab_panel(tune_tab):
-                _tune_refresh[0] = build_tune_tab()
+                _vc_refresh[0] = build_vc_tab()
+
+            with ui.tab_panel(chars_tab):
+                _chars_refresh[0] = build_characters_tab(
+                    on_speak=_on_speak,
+                    on_change=_on_char_change,
+                )
+
+            with ui.tab_panel(speak_tab):
+                _speak_refresh[0], _speak_select[0] = build_tune_tab()
+
             with ui.tab_panel(tts_tab):
                 build_tts_tab()
+
             with ui.tab_panel(foley_tab):
                 build_foley_tab()
 
-    # native=True opens a pywebview desktop window.
-    # Requires GTK (python3-gi) or Qt (PySide6 + system libs) on the host.
-    # Set FAILY_NATIVE=1 to enable; falls back to web mode automatically.
     _native = os.environ.get("FAILY_NATIVE", "0") == "1"
     ui.run(
         title="Faily",

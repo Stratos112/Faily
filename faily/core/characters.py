@@ -86,3 +86,17 @@ def delete_character(name: str):
     char_dir = CHARACTERS_DIR / name
     if char_dir.exists():
         shutil.rmtree(str(char_dir))
+
+
+def update_character_metadata(name: str, updates: dict) -> dict:
+    """Update specific text fields in a character config. Name/created/ref_audio are protected."""
+    p = _cfg(name)
+    if not p.exists():
+        raise FileNotFoundError(f"Character '{name}' not found")
+    cfg = json.loads(p.read_text())
+    _safe = {"transcript", "style_prompt", "speed"}
+    for k, v in updates.items():
+        if k in _safe:
+            cfg[k] = v
+    p.write_text(json.dumps(cfg, indent=2))
+    return cfg

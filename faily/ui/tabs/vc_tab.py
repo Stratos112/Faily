@@ -313,3 +313,5 @@ def build_vc_tab():
         _out["progress_bar"].set_value(val)
 
     _poll = ui.timer(0.15, _tick, active=False)
+
+    return _rebuild_char_list
