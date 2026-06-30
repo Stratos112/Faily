@@ -310,6 +310,16 @@ def _load_parler():
             return key_full, value_full
         _cu.DynamicCache.update = _dc_update_compat
 
+        _orig_get_seq_len = _cu.DynamicCache.get_seq_length
+        def _get_seq_len_compat(self, layer_idx=0):
+            kc = self.__dict__.get('key_cache')
+            if kc:
+                first = next((k for k in kc if k is not None), None)
+                if first is not None:
+                    return first.shape[-2]
+            return _orig_get_seq_len(self, layer_idx)
+        _cu.DynamicCache.get_seq_length = _get_seq_len_compat
+
     # 14. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
