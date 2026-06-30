@@ -245,12 +245,20 @@ def _load_parler():
         return result
     ParlerTTSForConditionalGeneration.tie_weights = _tie_weights
 
-    # 10. _expand_inputs_for_generation: parler-tts passes expand_size=None in 5.x
-    #     (computed from generation config fields that may be None/renamed); default to 1
+    # 10. _expand_inputs_for_generation: two issues in 5.x:
+    #   a) parler-tts computes expand_size from generation config fields that may be None → default to 1
+    #   b) 5.x reordered the signature (is_encoder_decoder moved to position 1 before expand_size),
+    #      so passing (input_ids, 1, **kwargs_containing_is_encoder_decoder) duplicates it.
+    #      Fix: extract is_encoder_decoder as a named param and use all-keyword call.
     _orig_expand = GenerationMixin._expand_inputs_for_generation
     @staticmethod
-    def _expand_compat(input_ids=None, expand_size=1, **kwargs):
-        return _orig_expand(input_ids, 1 if expand_size is None else expand_size, **kwargs)
+    def _expand_compat(input_ids=None, expand_size=1, is_encoder_decoder=False, **kwargs):
+        return _orig_expand(
+            input_ids=input_ids,
+            expand_size=1 if expand_size is None else expand_size,
+            is_encoder_decoder=is_encoder_decoder,
+            **kwargs,
+        )
     ParlerTTSForConditionalGeneration._expand_inputs_for_generation = _expand_compat
     ParlerTTSForCausalLM._expand_inputs_for_generation = _expand_compat
 
