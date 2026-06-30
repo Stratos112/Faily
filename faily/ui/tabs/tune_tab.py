@@ -1,14 +1,11 @@
 from nicegui import ui, run as ni_run
-from faily.modules.vc import generate as vc_generate, BACKENDS
-from faily.core.characters import (
-    list_characters, get_character, get_ref_path,
-    save_character, save_sub_character,
-)
+from faily.modules.vc import tune_generate, EXPRESSION_ENGINES
+from faily.core.characters import list_characters, get_character, get_ref_path
 from faily.ui.components import output_panel, section_label, show_error
-from pathlib import Path
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
+_DEFAULT_ENGINE = next(iter(EXPRESSION_ENGINES))
 
 
 def _section_row(text: str, tip: str):
@@ -17,14 +14,9 @@ def _section_row(text: str, tip: str):
         ui.icon("info_outline", size="13px").classes("text-[#3a3a3a] cursor-help").tooltip(tip)
 
 
-def _fmt(val: float, step: float) -> str:
-    return str(int(val)) if step >= 1 else f"{val:.2f}"
-
-
 def _char_options() -> dict[str, str]:
-    chars = list_characters()
     opts = {_NO_CHAR: _NO_CHAR}
-    for c in chars:
+    for c in list_characters():
         label = f"  ↳ {c['name']}" if "parent" in c else c["name"]
         opts[c["name"]] = label
     return opts
@@ -33,60 +25,23 @@ def _char_options() -> dict[str, str]:
 def build_tune_tab():
     _progress: list[float] = [0.0]
     _char_name: list[str] = [_NO_CHAR]
-    _backend: list[str] = ["chatterbox"]
-    _param1: list[float] = [BACKENDS["chatterbox"]["param1"]["default"]]
-    _param2: list[float] = [BACKENDS["chatterbox"]["param2"]["default"]]
-    _speed: list[float] = [1.0]
+    _engine: list[str] = [_DEFAULT_ENGINE]
     _out: dict = {}
-
-    def _rebuild_params():
-        params_col.clear()
-        cfg = BACKENDS[_backend[0]]
-        with params_col:
-            for p, pval in ((cfg["param1"], _param1), (cfg["param2"], _param2)):
-                pval[0] = p["default"]
-                _section_row(p["label"], p["tooltip"])
-                with ui.row().classes("w-full items-center gap-3"):
-                    lbl = ui.label(_fmt(p["default"], p["step"])).classes(
-                        "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
-                    )
-                    def _on_change(e, pval=pval, lbl=lbl, step=p["step"]):
-                        pval[0] = e.value
-                        lbl.set_text(_fmt(e.value, step))
-                    ui.slider(
-                        min=p["min"], max=p["max"], step=p["step"],
-                        value=p["default"], on_change=_on_change,
-                    ).classes("flex-grow").props("color=amber")
 
     def _on_char(e):
         _char_name[0] = e.value
         if e.value == _NO_CHAR:
-            char_desc.set_text("")
+            char_info.set_text("")
             return
         char = get_character(e.value)
-        if not char:
-            return
-        if "parent" in char:
-            parent = char["parent"]
-            backend = char.get("backend", "chatterbox")
-            char_desc.set_text(f"sub-character of  {parent}  ·  {BACKENDS.get(backend, {}).get('label', backend)}")
-            _backend[0] = backend
-            backend_select.set_value(backend)
-            _param1[0] = char.get("param1", BACKENDS[backend]["param1"]["default"])
-            _param2[0] = char.get("param2", BACKENDS[backend]["param2"]["default"])
-            _speed[0] = char.get("speed", 1.0)
-            style_input.set_value(char.get("style_prompt", ""))
-            style_prompt_row.set_visibility(backend in ("parler", "styletss2"))
-            _rebuild_params()
-        else:
-            char_desc.set_text(f"base character  ·  ref: {char.get('ref_audio', '?')}")
-            style_prompt_row.set_visibility(False)
+        ref = get_ref_path(e.value)
+        ancestry = f"↳ {char['parent']}" if char and "parent" in char else "base character"
+        ref_label = ref.name if (ref and ref.exists()) else "⚠  no reference audio — save from CLONE tab"
+        char_info.set_text(f"{ancestry}  ·  {ref_label}")
 
-    def _on_backend(e):
-        _backend[0] = e.value
-        backend_desc.set_text(BACKENDS[e.value]["desc"])
-        style_prompt_row.set_visibility(e.value in ("parler", "styletss2"))
-        _rebuild_params()
+    def _on_engine(e):
+        _engine[0] = e.value
+        engine_desc.set_text(EXPRESSION_ENGINES[e.value]["desc"])
 
     async def _generate():
         if _char_name[0] == _NO_CHAR:
@@ -94,15 +49,12 @@ def build_tune_tab():
             return
         text = text_input.value.strip()
         if not text:
-            ui.notify("Enter text to speak", type="warning")
+            ui.notify("Enter a line to speak", type="warning")
             return
         ref = get_ref_path(_char_name[0])
-        if _backend[0] != "parler" and (ref is None or not ref.exists()):
+        if ref is None or not ref.exists():
             ui.notify("Character has no reference audio — save it from the CLONE tab first", type="warning")
             return
-
-        char = get_character(_char_name[0])
-        ref_text = char.get("transcript", "") if char else ""
 
         gen_btn.disable()
         _out["status"].set_text("—")
@@ -112,9 +64,12 @@ def build_tune_tab():
 
         try:
             path = await ni_run.io_bound(
-                vc_generate, text, ref, _progress, None,
-                _backend[0], _param1[0], _param2[0], ref_text,
-                style_input.value.strip(),
+                tune_generate,
+                text,
+                expression_input.value.strip(),
+                _engine[0],
+                ref,
+                _progress,
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
@@ -131,120 +86,56 @@ def build_tune_tab():
             _out["progress_bar"].set_visibility(False)
             gen_btn.enable()
 
-    def _save():
-        if _char_name[0] == _NO_CHAR:
-            ui.notify("Select a character first", type="warning")
-            return
-        raw = save_name_input.value.strip()
-        if not raw:
-            ui.notify("Enter a name to save", type="warning")
-            return
-        parent = _char_name[0]
-        char = get_character(parent)
-        # If saving over the base character's own name: update config keeping ref audio
-        if raw == parent and char and "ref_audio" in char:
-            ref = get_ref_path(parent)
-            transcript = char.get("transcript", "")
-            save_character(parent, ref, transcript)
-            ui.notify(f"updated  {parent}", type="positive", timeout=2000)
-        else:
-            # Resolve true parent (in case loaded char is itself a sub-character)
-            true_parent = char.get("parent", parent) if char else parent
-            save_sub_character(
-                name=raw,
-                parent=true_parent,
-                backend=_backend[0],
-                param1=_param1[0],
-                param2=_param2[0],
-                speed=_speed[0],
-                style_prompt=style_input.value.strip(),
-            )
-            ui.notify(f"saved  {raw}", type="positive", timeout=2000)
-        # Refresh character picker
-        char_select.set_options(_char_options(), value=raw)
-        _char_name[0] = raw
-
-    # ── UI ────────────────────────────────────────────────────────────────
+    # ── UI ──────────────────────────────────────────────────────────────────
     with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
 
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
 
             _section_row(
                 "CHARACTER",
-                "Select a character created in the CLONE tab. Sub-characters load their saved expression settings.",
+                "The voice to speak in. Characters are created in the CLONE tab. "
+                "Their reference audio is used by FreeVC in stage 2.",
             )
             char_select = (
                 ui.select(options=_char_options(), value=_NO_CHAR, on_change=_on_char)
                 .props("outlined dark dense")
                 .classes("w-full")
             )
-            char_desc = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
+            char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
 
             _section_row(
-                "BACKEND",
-                "Which voice cloning engine to use for this expression. Chatterbox has the best emotion controls.",
+                "EXPRESSION ENGINE",
+                "Model that interprets your style description and generates the expressive intermediate audio. "
+                "FreeVC then converts that audio to the character's voice.",
             )
-            backend_desc = ui.label(BACKENDS["chatterbox"]["desc"]).classes(
+            engine_desc = ui.label(EXPRESSION_ENGINES[_DEFAULT_ENGINE]["desc"]).classes(
                 "text-[#444] font-mono text-[10px] tracking-wide"
             )
-            backend_select = (
-                ui.select(
-                    options={k: v["label"] for k, v in BACKENDS.items()},
-                    value="chatterbox",
-                    on_change=_on_backend,
-                )
-                .props("outlined dark dense")
+            ui.select(
+                options={k: v["label"] for k, v in EXPRESSION_ENGINES.items()},
+                value=_DEFAULT_ENGINE,
+                on_change=_on_engine,
+            ).props("outlined dark dense").classes("w-full")
+
+            _section_row(
+                "STYLE DESCRIPTION",
+                "Describe how this line should be delivered — tone, emotion, pacing, manner. "
+                "This is passed directly to the expression engine as a style prompt. "
+                "Examples: 'sing-song and playful', 'cold fury, slow and deliberate', "
+                "'breathless and panicked', 'warm but exhausted'. Leave blank for neutral.",
+            )
+            expression_input = (
+                ui.textarea(placeholder="e.g. cold fury, slow and deliberate…")
                 .classes("w-full")
+                .props("outlined dark rows=3")
             )
 
-            with ui.column().classes("w-full gap-2") as style_prompt_row:
-                _section_row(
-                    "STYLE PROMPT",
-                    "Describe the voice character for Parler-TTS — pace, tone, gender, emotion. "
-                    "Example: 'speaks with cold fury, slow and deliberate'. Saved in sub-character config.",
-                )
-                style_input = (
-                    ui.input(placeholder="e.g. speaks with cold fury, slow and deliberate…")
-                    .classes("w-full")
-                    .props("outlined dark")
-                )
-            style_prompt_row.set_visibility(False)
-
-            params_col = ui.column().classes("w-full gap-4")
-
-            _section_row("SPEED", "Speech rate. 1.0 is natural pace.")
-            with ui.row().classes("w-full items-center gap-3"):
-                speed_lbl = ui.label("1.00").classes(
-                    "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
-                )
-                def _on_speed(e):
-                    _speed[0] = e.value
-                    speed_lbl.set_text(f"{e.value:.2f}")
-                ui.slider(min=0.05, max=2.0, step=0.05, value=1.0, on_change=_on_speed).classes(
-                    "flex-grow"
-                ).props("color=amber")
-
-            _section_row("TEXT", "What the character should say. Supports longer passages.")
+            _section_row("LINE", "What the character says.")
             text_input = (
-                ui.textarea(placeholder="Enter text…")
+                ui.textarea(placeholder="Enter the line…")
                 .classes("w-full")
                 .props("outlined dark rows=4")
             )
-
-            ui.separator().classes("opacity-10")
-
-            _section_row(
-                "SAVE AS",
-                "Save the current expression settings as a character. "
-                "Use the same name to overwrite, or a new name like 'DarthVader-angry' for a sub-character.",
-            )
-            with ui.row().classes("w-full gap-2 items-center"):
-                save_name_input = (
-                    ui.input(placeholder="character name…")
-                    .props("outlined dark dense")
-                    .classes("flex-grow")
-                )
-                ui.button(icon="save", on_click=_save).props("flat dense color=amber").tooltip("Save character")
 
             ui.space()
             gen_btn = (
@@ -255,8 +146,6 @@ def build_tune_tab():
 
         pb, ml, mp, st, _, _, ath = output_panel("vc")
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
-
-    _rebuild_params()
 
     def _tick():
         val = _progress[0]
@@ -269,9 +158,8 @@ def build_tune_tab():
     _poll = ui.timer(0.15, _tick, active=False)
 
     def refresh_characters():
-        current = _char_name[0]
         opts = _char_options()
-        value = current if current in opts else _NO_CHAR
+        value = _char_name[0] if _char_name[0] in opts else _NO_CHAR
         char_select.set_options(opts, value=value)
         _char_name[0] = value
 

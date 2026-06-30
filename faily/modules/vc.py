@@ -71,15 +71,27 @@ BACKENDS = {
         "param1": {"label": "EXAGGERATION", "tooltip": "Emotional intensity. Low = calm and neutral. High = expressive.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
         "param2": {"label": "CFG WEIGHT", "tooltip": "Guidance strength. Higher = more faithful to the reference voice style.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
     },
+    "kokoro": {
+        "label": "Kokoro + FreeVC",
+        "desc": "Hexgrad Kokoro generates expressive speech → FreeVC applies the character's voice on top. Voice name in VOICE NAME field sets the expression style.",
+        "param1": {"label": "SPEED", "tooltip": "Speech rate for the Kokoro expression pass. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
+        "param2": {"label": "LANGUAGE", "tooltip": "0 = American English  1 = British English  2 = Japanese  3 = Mandarin Chinese", "min": 0, "max": 3, "step": 1, "default": 0},
+    },
+    # styletss2 omitted — dep conflicts with current stack (accelerate<0.26, huggingface-hub<0.20).
+}
+
+# Expression engines for the TUNE tab stage-1 pass (text description → expressive audio).
+# Stage 2 is always FreeVC (see _freevc_convert).
+EXPRESSION_ENGINES = {
     "parler": {
         "label": "Parler-TTS",
-        "desc": "Hugging Face · Description-driven · Voice character set by STYLE PROMPT — no reference audio needed",
-        "param1": {"label": "TEMPERATURE", "tooltip": "Randomness. Higher = more expressive but less consistent across runs.", "min": 0.1, "max": 2.0, "step": 0.05, "default": 1.0},
-        "param2": {"label": "REPETITION PENALTY", "tooltip": "Penalises repeated tokens. 1.0 = off. Raise to 1.2–1.5 if output stutters or loops.", "min": 1.0, "max": 2.0, "step": 0.05, "default": 1.1},
+        "desc": "Hugging Face · free-text style descriptions → expressive intermediate audio",
     },
-    # styletss2 omitted — styletts2 0.1.6 has hard dep conflicts with transformers 5.x
-    # (accelerate<0.26, huggingface-hub<0.20, einops-exts, gruut). Re-add when a
-    # compatible release exists.
+    # Future — uncomment when CosyVoice 2 loader is implemented:
+    # "cosyvoice2": {
+    #     "label": "CosyVoice 2",
+    #     "desc": "Alibaba · natural-language style instructions + zero-shot cloning in one pass",
+    # },
 }
 
 
@@ -174,40 +186,41 @@ def _load_chatterbox():
 
 _PARLER_ID = "parler-tts/parler-tts-mini-v1.1"
 
+
 def _load_parler():
-    # parler-tts 0.2.x was written for transformers 4.46 which had SlidingWindowCache
-    # and isin_mps_friendly; both were removed in 5.x.
-    import sys, torch
+    import sys, torch, inspect
     import transformers.cache_utils as _cu
     import transformers.pytorch_utils as _pu
+
+    # 1. SlidingWindowCache removed in transformers 5.x
     if not hasattr(_cu, "SlidingWindowCache"):
         _cu.SlidingWindowCache = getattr(_cu, "SlidingWindowStaticCache", _cu.StaticCache)
+    # 2. isin_mps_friendly removed in transformers 5.x
     if not hasattr(_pu, "isin_mps_friendly"):
         _pu.isin_mps_friendly = torch.isin
-    # Drop any partial failed import so the patched versions are picked up cleanly.
+    # 3. Drop any partial failed imports so patched versions are picked up cleanly
     for _k in list(sys.modules):
         if _k.startswith("parler_tts"):
             del sys.modules[_k]
 
     from parler_tts import ParlerTTSForConditionalGeneration
     from parler_tts.configuration_parler_tts import ParlerTTSConfig
+    from parler_tts.modeling_parler_tts import ParlerTTSForCausalLM
     from transformers import AutoTokenizer, GenerationMixin
-    # transformers 5.x to_diff_dict calls self.__class__() to get defaults, which
-    # fails for composite configs that require sub-configs.
+
+    # 4. to_diff_dict() calls ParlerTTSConfig() with no args → ValueError; block it
     ParlerTTSConfig.has_no_defaults_at_init = True
-    # transformers 5.x __getattribute__ raises AttributeError for missing config
-    # attributes instead of returning None; parler-tts accesses tie_encoder_decoder
-    # which was never defined on ParlerTTSConfig.
+    # 5. transformers 5.x raises AttributeError for missing config attrs instead of None
     ParlerTTSConfig.tie_encoder_decoder = False
-    # transformers 5.x removed GenerationMixin from PreTrainedModel's MRO; add it
-    # back so model.generate() works.
+
+    # 6 & 7. GenerationMixin removed from PreTrainedModel MRO in 5.x; add back to both classes
     if not issubclass(ParlerTTSForConditionalGeneration, GenerationMixin):
-        ParlerTTSForConditionalGeneration.__bases__ = (
-            GenerationMixin,
-        ) + ParlerTTSForConditionalGeneration.__bases__
-    # transformers 5.x changed _prepare_attention_mask_for_generation signature from
-    # (inputs, pad_tensor, eos_tensor) to (inputs, generation_config, model_kwargs).
-    # Parler calls the old 3-arg form; wrap it to bridge the gap.
+        ParlerTTSForConditionalGeneration.__bases__ = (GenerationMixin,) + ParlerTTSForConditionalGeneration.__bases__
+    if not issubclass(ParlerTTSForCausalLM, GenerationMixin):
+        ParlerTTSForCausalLM.__bases__ = (GenerationMixin,) + ParlerTTSForCausalLM.__bases__
+
+    # 8. _prepare_attention_mask_for_generation: signature changed from
+    #    (inputs, pad_tensor, eos_tensor) to (inputs, generation_config, model_kwargs)
     _t5_prep_attn = GenerationMixin._prepare_attention_mask_for_generation
     def _prep_attn_compat(self, inputs_tensor, pad_or_config, eos_or_kwargs=None, model_kwargs=None):
         if isinstance(pad_or_config, torch.Tensor):
@@ -217,20 +230,13 @@ def _load_parler():
             return _t5_prep_attn(self, inputs_tensor, _Cfg(), model_kwargs or {})
         return _t5_prep_attn(self, inputs_tensor, pad_or_config, eos_or_kwargs or {})
     ParlerTTSForConditionalGeneration._prepare_attention_mask_for_generation = _prep_attn_compat
-    # ParlerTTSForCausalLM (the decoder sub-model) has the same GenerationMixin gap.
-    from parler_tts.modeling_parler_tts import ParlerTTSForCausalLM
-    if not issubclass(ParlerTTSForCausalLM, GenerationMixin):
-        ParlerTTSForCausalLM.__bases__ = (GenerationMixin,) + ParlerTTSForCausalLM.__bases__
-    # transformers 5.x calls tie_weights() with extra kwargs (recompute_mapping,
-    # missing_keys) that parler-tts's override doesn't accept. Filter to only
-    # the params the original signature declares. Also explicitly call T5's own
-    # tie_weights so encoder.embed_tokens -> shared (otherwise it stays as a meta
-    # tensor and the forward pass crashes).
-    import inspect
+
+    # 9. tie_weights: 5.x passes extra kwargs parler-tts's override doesn't accept;
+    #    also explicitly call text_encoder.tie_weights() to fix T5 embed_tokens meta tensor
     _orig_tie = ParlerTTSForConditionalGeneration.tie_weights
-    _orig_params = set(inspect.signature(_orig_tie).parameters) - {"self"}
+    _orig_tie_params = set(inspect.signature(_orig_tie).parameters) - {"self"}
     def _tie_weights(self, **kwargs):
-        result = _orig_tie(self, **{k: v for k, v in kwargs.items() if k in _orig_params})
+        result = _orig_tie(self, **{k: v for k, v in kwargs.items() if k in _orig_tie_params})
         if hasattr(self, "text_encoder") and hasattr(self.text_encoder, "tie_weights"):
             try:
                 self.text_encoder.tie_weights()
@@ -238,6 +244,17 @@ def _load_parler():
                 pass
         return result
     ParlerTTSForConditionalGeneration.tie_weights = _tie_weights
+
+    # 10. _expand_inputs_for_generation: parler-tts passes expand_size=None in 5.x
+    #     (computed from generation config fields that may be None/renamed); default to 1
+    _orig_expand = GenerationMixin._expand_inputs_for_generation
+    @staticmethod
+    def _expand_compat(input_ids=None, expand_size=1, **kwargs):
+        return _orig_expand(input_ids, 1 if expand_size is None else expand_size, **kwargs)
+    ParlerTTSForConditionalGeneration._expand_inputs_for_generation = _expand_compat
+    ParlerTTSForCausalLM._expand_inputs_for_generation = _expand_compat
+
+    # 11. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
         cache_dir=str(VC_MODELS_DIR),
@@ -246,6 +263,20 @@ def _load_parler():
     )
     tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR))
     return model, tok
+
+
+def _parler_generate(text: str, out: Path, style_prompt: str):
+    import torch
+    model, tokenizer = manager.load(_PARLER_ID, _load_parler)
+    description = style_prompt.strip() or "A clear, neutral voice at a moderate pace."
+    input_ids = tokenizer(description, return_tensors="pt").input_ids.to(manager.device)
+    prompt_input_ids = tokenizer(text, return_tensors="pt").input_ids.to(manager.device)
+    with torch.no_grad():
+        gen = model.generate(
+            input_ids=input_ids,
+            prompt_input_ids=prompt_input_ids,
+        )
+    sf.write(str(out), gen.cpu().numpy().squeeze(), model.config.sampling_rate)
 
 
 def _xtts_generate(text, ref_path, out, temperature, speed):
@@ -283,35 +314,104 @@ def _chatterbox_generate(text, ref_path, out, exaggeration, cfg_weight):
     sf.write(str(out), wav.squeeze().cpu().float().numpy(), model.sr)
 
 
-def _parler_generate(text: str, out: Path, style_prompt: str, temperature: float, rep_penalty: float):
-    import torch
-    model, tokenizer = manager.load(_PARLER_ID, _load_parler)
-    description = style_prompt.strip() or "A clear neutral voice at a moderate pace."
-    input_ids = tokenizer(description, return_tensors="pt").input_ids.to(manager.device)
-    prompt_input_ids = tokenizer(text, return_tensors="pt").input_ids.to(manager.device)
-    with torch.no_grad():
-        gen = model.generate(
-            input_ids=input_ids,
-            prompt_input_ids=prompt_input_ids,
-            do_sample=True,
-            temperature=temperature,
-            repetition_penalty=rep_penalty,
-        )
-    sf.write(str(out), gen.cpu().numpy().squeeze(), model.config.sampling_rate)
+_KOKORO_LANGS = ["a", "b", "j", "z"]
 
 
-def _styletss2_generate(text: str, ref_path: Path, out: Path, alpha: float, diffusion_steps: int):
-    tts = manager.load("styletss2", _load_styletss2)
-    wav = tts.inference(
-        text,
-        target_voice_path=str(ref_path),
-        output_sample_rate=24000,
-        alpha=alpha,
-        beta=0.7,
-        diffusion_steps=diffusion_steps,
-        embedding_scale=1.0,
+def _load_freevc():
+    _patch_xtts_transformers()
+    from TTS.api import TTS
+    gpu = str(manager.device).startswith("cuda")
+    return TTS("voice_conversion_models/multilingual/vctk/freevc24", gpu=gpu)
+
+
+def _freevc_convert(source_wav: Path, target_wav: Path, out: Path):
+    model = manager.load("freevc24", _load_freevc)
+    model.voice_conversion_to_file(
+        source_wav=str(source_wav),
+        target_wav=str(target_wav),
+        file_path=str(out),
     )
-    sf.write(str(out), wav, 24000)
+
+
+def _kokoro_generate(
+    text: str,
+    out: Path,
+    style_prompt: str,
+    speed: float,
+    lang_idx: int,
+    ref_path: Path | None = None,
+):
+    import numpy as np
+    lang = _KOKORO_LANGS[max(0, min(int(lang_idx), len(_KOKORO_LANGS) - 1))]
+
+    def _load():
+        from kokoro import KPipeline
+        return KPipeline(lang_code=lang)
+
+    pipeline = manager.load(f"kokoro_{lang}", _load)
+    voice = style_prompt.strip() or "af_heart"
+    chunks = []
+    for _, _, audio in pipeline(text, voice=voice, speed=speed):
+        chunks.append(audio)
+    if not chunks:
+        raise RuntimeError("Kokoro produced no audio output")
+    audio = np.concatenate(chunks)
+
+    if ref_path is not None and ref_path.exists():
+        # Two-stage: Kokoro expression pass → FreeVC character voice conversion
+        tmp = out.with_name(f"_tmp_{out.name}")
+        sf.write(str(tmp), audio, 24000)
+        try:
+            _freevc_convert(tmp, ref_path, out)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+    else:
+        sf.write(str(out), audio, 24000)
+
+
+def tune_generate(
+    text: str,
+    expression: str,
+    engine: str,
+    ref_path: Path,
+    progress_ref: list | None = None,
+    output_dir: Path | None = None,
+) -> Path:
+    """Two-stage TUNE pipeline: expression engine → FreeVC character voice conversion."""
+    if output_dir is None:
+        output_dir = VC_OUTPUT_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = output_dir / f"tune_{ts}.wav"
+    stage1 = output_dir / f"_s1_{ts}.wav"
+
+    if progress_ref is not None:
+        progress_ref[0] = 0.1
+
+    # Stage 1: expression engine generates styled intermediate audio
+    if engine == "parler":
+        _parler_generate(text, stage1, style_prompt=expression)
+    # elif engine == "cosyvoice2":
+    #     _cosyvoice2_generate(text, stage1, style_prompt=expression)
+    else:
+        raise ValueError(f"Unknown expression engine: {engine!r}")
+
+    if progress_ref is not None:
+        progress_ref[0] = 0.6
+
+    # Stage 2: FreeVC converts intermediate to character's voice
+    try:
+        _freevc_convert(stage1, ref_path, out)
+    finally:
+        if stage1.exists():
+            stage1.unlink()
+
+    if progress_ref is not None:
+        progress_ref[0] = 1.0
+
+    return out
 
 
 def generate(
@@ -350,10 +450,8 @@ def generate(
         _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)
     elif backend == "chatterbox":
         _chatterbox_generate(text, ref_path, out, exaggeration=p1, cfg_weight=p2)
-    elif backend == "parler":
-        _parler_generate(text, out, style_prompt=style_prompt, temperature=p1, rep_penalty=p2)
-    elif backend == "styletss2":
-        _styletss2_generate(text, ref_path, out, alpha=p1, diffusion_steps=int(p2))
+    elif backend == "kokoro":
+        _kokoro_generate(text, out, style_prompt=style_prompt, speed=p1, lang_idx=int(p2), ref_path=ref_path)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 

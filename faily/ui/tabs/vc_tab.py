@@ -114,7 +114,7 @@ def build_vc_tab():
         ui.notify(f"saved as  {new_path.name}", type="positive", timeout=2000)
 
     async def _generate():
-        if _backend[0] != "parler" and (_ref_path[0] is None or not _ref_path[0].exists()):
+        if _backend[0] != "kokoro" and (_ref_path[0] is None or not _ref_path[0].exists()):
             ui.notify("Select a reference sample first", type="warning")
             return
         text = text_input.value.strip() or "sample text"
@@ -162,7 +162,7 @@ def build_vc_tab():
                 _backend[0] = e.value
                 desc_label.set_text(BACKENDS[e.value]["desc"])
                 ref_text_row.set_visibility(e.value == "f5_tts")
-                style_prompt_row.set_visibility(e.value in ("parler", "styletss2"))
+                style_prompt_row.set_visibility(e.value == "kokoro")
                 _rebuild_params()
                 await _autofill_transcript()
 
@@ -221,12 +221,14 @@ def build_vc_tab():
 
             with ui.column().classes("w-full gap-2") as style_prompt_row:
                 _section_row(
-                    "STYLE PROMPT",
-                    "Describe the voice for Parler-TTS — pace, tone, gender, emotion. "
-                    "Leave blank for a neutral default. StyleTTS2 ignores this.",
+                    "VOICE NAME",
+                    "Kokoro voice for the expression pass. If a reference sample is selected above, "
+                    "FreeVC then converts the output to that voice. "
+                    "Examples: af_heart (warm), am_adam (authoritative), af_bella (expressive), af_sky (soft). "
+                    "Leave blank for af_heart.",
                 )
                 style_prompt_input = (
-                    ui.input(placeholder="e.g. a warm female voice, calm and measured…")
+                    ui.input(placeholder="e.g. af_heart, am_adam, af_bella, af_sky…")
                     .classes("w-full")
                     .props("outlined dark")
                 )
