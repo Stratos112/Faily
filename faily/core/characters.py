@@ -29,16 +29,60 @@ def get_character(name: str) -> dict | None:
     return json.loads(p.read_text()) if p.exists() else None
 
 
+def get_ref_chain(name: str) -> list[dict]:
+    """Walk ancestry root→name; return [{audio, transcript}] for nodes that have audio."""
+    path_up, seen, current = [], set(), name
+    while current and current not in seen:
+        seen.add(current)
+        char = get_character(current)
+        if not char:
+            break
+        path_up.append(char)
+        current = char.get("parent")
+    chain = []
+    for char in reversed(path_up):
+        if "ref_audio" not in char:
+            continue
+        audio = CHARACTERS_DIR / char["name"] / char["ref_audio"]
+        if audio.exists():
+            chain.append({"audio": audio, "transcript": char.get("transcript", "")})
+    return chain
+
+
+def concat_ref_audio(name: str) -> tuple[Path | None, str]:
+    """Return (ref_path, transcript) for the full ancestry chain, concatenating if needed.
+
+    Writes _ref_concat.wav into the character dir when multiple files need merging.
+    """
+    chain = get_ref_chain(name)
+    if not chain:
+        return None, ""
+    transcript = " ".join(n["transcript"] for n in chain if n["transcript"]).strip()
+    if len(chain) == 1:
+        return chain[0]["audio"], transcript
+    import numpy as np
+    import soundfile as sf
+    import torch
+    import torchaudio
+    arrays, target_sr = [], None
+    for node in chain:
+        data, sr = sf.read(str(node["audio"]), dtype="float32", always_2d=False)
+        if target_sr is None:
+            target_sr = sr
+        elif sr != target_sr:
+            wav = torch.from_numpy(data).unsqueeze(0)
+            data = torchaudio.functional.resample(wav, sr, target_sr).squeeze(0).numpy()
+        arrays.append(data)
+    combined = np.concatenate(arrays)
+    out = CHARACTERS_DIR / name / "_ref_concat.wav"
+    sf.write(str(out), combined, target_sr)
+    return out, transcript
+
+
 def get_ref_path(name: str) -> Path | None:
-    """Resolve the reference audio path, following parent link for sub-characters."""
-    char = get_character(name)
-    if not char:
-        return None
-    source = char.get("parent") or name
-    base = get_character(source)
-    if not base or "ref_audio" not in base:
-        return None
-    return CHARACTERS_DIR / source / base["ref_audio"]
+    """Return the resolved reference audio path for name (concatenated chain if needed)."""
+    path, _ = concat_ref_audio(name)
+    return path
 
 
 def save_character(name: str, ref_path: Path, transcript: str = "") -> dict:
@@ -65,9 +109,12 @@ def save_sub_character(
     param2: float,
     speed: float = 1.0,
     style_prompt: str = "",
+    ref_path: Path | None = None,
+    transcript: str = "",
 ) -> dict:
     """Save an expression variant of an existing character."""
-    (CHARACTERS_DIR / name).mkdir(parents=True, exist_ok=True)
+    char_dir = CHARACTERS_DIR / name
+    char_dir.mkdir(parents=True, exist_ok=True)
     cfg = {
         "name": name,
         "parent": parent,
@@ -78,6 +125,11 @@ def save_sub_character(
         "style_prompt": style_prompt,
         "created": datetime.now().isoformat(),
     }
+    if ref_path is not None:
+        dest = char_dir / ("ref" + ref_path.suffix)
+        shutil.copy2(str(ref_path), str(dest))
+        cfg["ref_audio"] = dest.name
+        cfg["transcript"] = transcript
     _cfg(name).write_text(json.dumps(cfg, indent=2))
     return cfg
 
