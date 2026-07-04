@@ -70,7 +70,7 @@ def run():
         with ui.tabs().classes("w-full") as tabs:
             vc_tab       = ui.tab("CLONE",      icon="mic")
             chars_tab    = ui.tab("CHARACTERS", icon="manage_accounts")
-            speak_tab    = ui.tab("SPEAK",      icon="record_voice_over")
+            speak_tab    = ui.tab("TUNE",       icon="record_voice_over")
             foley_tab    = ui.tab("FOLEY",      icon="graphic_eq")
 
         # deferred callbacks — populated after panels are built
@@ -80,7 +80,7 @@ def run():
         _vc_refresh:    list = [lambda: None]
 
         def _on_tab_change(e):
-            if e.value == "SPEAK":
+            if e.value == "TUNE":
                 _speak_refresh[0]()
             elif e.value == "CHARACTERS":
                 _chars_refresh[0]()
@@ -88,7 +88,7 @@ def run():
         def _on_speak(name: str):
             """Called from CHARACTERS tab — navigate to SPEAK tab with char pre-selected."""
             _speak_refresh[0]()
-            tabs.set_value("SPEAK")
+            tabs.set_value("TUNE")
             _speak_select[0](name)
 
         def _on_char_change():

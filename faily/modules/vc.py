@@ -111,8 +111,24 @@ BACKENDS = {
     # styletss2 omitted — dep conflicts with current stack (accelerate<0.26, huggingface-hub<0.20).
 }
 
+STAGE2_BACKENDS = {
+    "freevc": {
+        "label": "FreeVC",
+        "desc": "Fast zero-shot voice conversion. Works best on short inputs.",
+    },
+    "openvoice": {
+        "label": "OpenVoice v2",
+        "desc": "Zero-shot · handles longer/expressive inputs better than FreeVC. — not yet implemented",
+        "available": False,
+    },
+    "seedvc": {
+        "label": "Seed-VC",
+        "desc": "Diffusion-based · best prosody preservation on complex Parler output. — not yet implemented",
+        "available": False,
+    },
+}
+
 # Expression engines for the TUNE tab stage-1 pass (text description → expressive audio).
-# Stage 2 is always FreeVC (see _freevc_convert).
 EXPRESSION_ENGINES = {
     "parler": {
         "label": "Parler-TTS",
@@ -376,7 +392,18 @@ def _load_parler():
     return model, tok
 
 
-def _parler_generate(text: str, out: Path, style_prompt: str):
+def _normalize_audio(path: Path, target_db: float):
+    import numpy as np
+    data, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    rms = np.sqrt(np.mean(data ** 2))
+    if rms < 1e-9:
+        return
+    target_rms = 10 ** (target_db / 20)
+    data = np.clip(data * (target_rms / rms), -1.0, 1.0)
+    sf.write(str(path), data, sr)
+
+
+def _parler_generate(text: str, out: Path, style_prompt: str, max_new_tokens: int = 500):
     import torch
     model, tokenizer = manager.load(_PARLER_ID, _load_parler)
     description = style_prompt.strip() or "A clear, neutral voice at a moderate pace."
@@ -391,7 +418,7 @@ def _parler_generate(text: str, out: Path, style_prompt: str):
             attention_mask=attention_mask,
             prompt_input_ids=prompt_input_ids,
             prompt_attention_mask=prompt_attention_mask,
-            max_new_tokens=500,
+            max_new_tokens=max_new_tokens,
             use_cache=False,
         )
     sf.write(str(out), gen.cpu().float().numpy().squeeze(), model.config.sampling_rate)
@@ -496,8 +523,11 @@ def tune_generate(
     progress_ref: list | None = None,
     output_dir: Path | None = None,
     char_name: str | None = None,
+    normalize_db: float | None = -18.0,
+    max_new_tokens: int = 500,
+    stage2_backend: str = "freevc",
 ) -> Path:
-    """Two-stage TUNE pipeline: expression engine → FreeVC character voice conversion."""
+    """Two-stage TUNE pipeline: expression engine → voice conversion."""
     if output_dir is None:
         output_dir = VC_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -509,20 +539,28 @@ def tune_generate(
     if progress_ref is not None:
         progress_ref[0] = 0.1
 
-    # Stage 1: expression engine generates styled intermediate audio
+    # Stage 1: expression engine → expressive intermediate audio
     if engine == "parler":
-        _parler_generate(text, stage1, style_prompt=expression)
-    # elif engine == "cosyvoice2":
-    #     _cosyvoice2_generate(text, stage1, style_prompt=expression)
+        _parler_generate(text, stage1, style_prompt=expression, max_new_tokens=max_new_tokens)
     else:
         raise ValueError(f"Unknown expression engine: {engine!r}")
+
+    if normalize_db is not None:
+        _normalize_audio(stage1, normalize_db)
 
     if progress_ref is not None:
         progress_ref[0] = 0.6
 
-    # Stage 2: FreeVC converts intermediate to character's voice
+    # Stage 2: voice conversion → character's voice
     try:
-        _freevc_convert(stage1, ref_path, out)
+        if stage2_backend == "freevc":
+            _freevc_convert(stage1, ref_path, out)
+        elif stage2_backend == "openvoice":
+            _openvoice_convert(stage1, ref_path, out)
+        elif stage2_backend == "seedvc":
+            _seedvc_convert(stage1, ref_path, out)
+        else:
+            raise ValueError(f"Unknown stage2 backend: {stage2_backend!r}")
     finally:
         if stage1.exists():
             stage1.unlink()
@@ -531,6 +569,14 @@ def tune_generate(
         progress_ref[0] = 1.0
 
     return out
+
+
+def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
+    raise NotImplementedError("OpenVoice v2 not yet integrated")
+
+
+def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path):
+    raise NotImplementedError("Seed-VC not yet integrated")
 
 
 def generate(

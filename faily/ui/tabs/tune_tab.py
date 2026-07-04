@@ -1,5 +1,5 @@
 from nicegui import ui, run as ni_run
-from faily.modules.vc import tune_generate, EXPRESSION_ENGINES
+from faily.modules.vc import tune_generate, EXPRESSION_ENGINES, STAGE2_BACKENDS
 from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
 from faily.ui.components import output_panel, section_label, show_error
 
@@ -26,6 +26,9 @@ def build_tune_tab():
     _progress: list[float] = [0.0]
     _char_name: list[str] = [_NO_CHAR]
     _engine: list[str] = [_DEFAULT_ENGINE]
+    _stage2: list[str] = ["freevc"]
+    _normalize_db: list[float] = [-18.0]
+    _max_tokens: list[int] = [500]
     _out: dict = {}
 
     def _update_char_info(name: str):
@@ -45,6 +48,10 @@ def build_tune_tab():
     def _on_engine(e):
         _engine[0] = e.value
         engine_desc.set_text(EXPRESSION_ENGINES[e.value]["desc"])
+
+    def _on_stage2(e):
+        _stage2[0] = e.value
+        stage2_desc.set_text(STAGE2_BACKENDS[e.value]["desc"])
 
     async def _generate():
         if _char_name[0] == _NO_CHAR:
@@ -74,6 +81,9 @@ def build_tune_tab():
                     ref,
                     _progress,
                     char_name=_char_name[0] if _char_name[0] != _NO_CHAR else None,
+                    normalize_db=_normalize_db[0],
+                    max_new_tokens=_max_tokens[0],
+                    stage2_backend=_stage2[0],
                 )
                 _out["main_player"].set_source(f"/outputs/vc/{path.name}")
                 _out["status"].set_text(f"✓  {path.name}")
@@ -122,6 +132,19 @@ def build_tune_tab():
             ).props("outlined dark dense").classes("w-full")
 
             _section_row(
+                "VOICE CONVERSION",
+                "Model used in stage 2 to apply the character's voice to the expressive intermediate audio.",
+            )
+            stage2_desc = ui.label(STAGE2_BACKENDS["freevc"]["desc"]).classes(
+                "text-[#444] font-mono text-[10px] tracking-wide"
+            )
+            ui.select(
+                options={k: v["label"] for k, v in STAGE2_BACKENDS.items()},
+                value="freevc",
+                on_change=_on_stage2,
+            ).props("outlined dark dense").classes("w-full")
+
+            _section_row(
                 "STYLE DESCRIPTION",
                 "Describe how this line should be delivered — tone, emotion, pacing, manner. "
                 "This is passed directly to the expression engine as a style prompt. "
@@ -140,6 +163,38 @@ def build_tune_tab():
                 .classes("w-full")
                 .props("outlined dark rows=4")
             )
+
+            _section_row(
+                "MAX TOKENS",
+                "Parler generation length. Lower values produce shorter output that FreeVC handles more cleanly. "
+                "Raise if lines are getting cut off.",
+            )
+            with ui.row().classes("w-full items-center gap-3"):
+                tokens_lbl = ui.label("500").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_tokens(e):
+                    _max_tokens[0] = int(e.value)
+                    tokens_lbl.set_text(str(int(e.value)))
+                ui.slider(min=50, max=1200, step=50, value=500, on_change=_on_tokens).classes(
+                    "flex-grow"
+                ).props("color=amber")
+
+            _section_row(
+                "PRE-CONVERT LEVEL",
+                "Normalise Parler output to this dBFS before FreeVC. "
+                "Consistent input level reduces distortion in the voice conversion step.",
+            )
+            with ui.row().classes("w-full items-center gap-3"):
+                norm_lbl = ui.label("-18 dBFS").classes(
+                    "font-mono text-[10px] text-amber-400 w-16 shrink-0 text-right"
+                )
+                def _on_norm(e):
+                    _normalize_db[0] = float(e.value)
+                    norm_lbl.set_text(f"{int(e.value)} dBFS")
+                ui.slider(min=-24, max=-3, step=1, value=-18, on_change=_on_norm).classes(
+                    "flex-grow"
+                ).props("color=amber")
 
             ui.space()
             gen_btn = (

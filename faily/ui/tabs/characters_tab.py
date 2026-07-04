@@ -14,7 +14,7 @@ _BTN = "font-mono tracking-widest"
 
 def build_characters_tab(on_speak, on_change):
     """
-    on_speak(name): navigate to SPEAK tab with this character pre-selected
+    on_speak(name): navigate to TUNE tab with this character pre-selected
     on_change():    notify app that characters were deleted (refresh other tabs)
     Returns: refresh() callable
     """
@@ -307,7 +307,7 @@ def build_characters_tab(on_speak, on_change):
             ui.separator().classes("mt-4 mb-3 opacity-20")
             with ui.row().classes("gap-2"):
                 (
-                    ui.button("SPEAK", icon="record_voice_over", on_click=lambda n=name: on_speak(n))
+                    ui.button("TUNE", icon="record_voice_over", on_click=lambda n=name: on_speak(n))
                     .props("color=amber unelevated")
                     .classes(_BTN)
                 )
