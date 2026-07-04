@@ -89,20 +89,64 @@ def output_panel(output_subdir: str, get_char_name=None):
     output_dir = Path("outputs") / output_subdir
     existing: list[Path] = sorted(output_dir.glob("*.wav"), reverse=True) if output_dir.exists() else []
 
-    def _add_to_char(path: Path):
+    def _open_ref_dialog(path: Path, transcript: str):
         name = get_char_name() if get_char_name else None
         if not name:
             ui.notify("No character selected", type="warning")
             return
-        from faily.core.characters import get_character, add_clip_to_character
-        if not get_character(name):
+        from faily.core.characters import get_character, add_ref_clip, add_clip_to_character
+        char = get_character(name)
+        if not char:
             ui.notify(f"'{name}' is not a saved character yet", type="warning")
             return
-        try:
-            add_clip_to_character(name, path)
-            ui.notify(f"Added to {name}", type="positive", timeout=2000)
-        except Exception as exc:
-            show_error(exc)
+        parent = char.get("parent")
+
+        with ui.dialog() as dlg, ui.card().classes(
+            "bg-[#111] border border-[#2a2a2a] min-w-[400px] gap-3"
+        ):
+            ui.label("ADD TO REFERENCE POOL").classes(
+                "text-amber-400 font-mono text-[10px] tracking-widest"
+            )
+            ui.label("TRANSCRIPT").classes("text-[#444] font-mono text-[10px] tracking-widest")
+            field = (
+                ui.textarea(value=transcript)
+                .props("outlined dark rows=3")
+                .classes("w-full font-mono text-[11px]")
+            )
+
+            def _add_ref(target: str):
+                try:
+                    add_ref_clip(target, path, field.value.strip())
+                    dlg.close()
+                    ui.notify(f"Added to {target} refs", type="positive", timeout=2000)
+                except Exception as exc:
+                    show_error(exc)
+
+            def _add_clips(target: str):
+                try:
+                    add_clip_to_character(target, path)
+                    dlg.close()
+                    ui.notify(f"Added to {target} clips", type="positive", timeout=2000)
+                except Exception as exc:
+                    show_error(exc)
+
+            with ui.row().classes("w-full gap-2 flex-wrap items-center mt-1"):
+                ui.button(
+                    f"→ REF  {name}", icon="mic",
+                    on_click=lambda n=name: _add_ref(n),
+                ).props("color=amber unelevated dense").classes("font-mono text-[10px]")
+                if parent:
+                    ui.button(
+                        f"→ REF  {parent}", icon="mic",
+                        on_click=lambda p=parent: _add_ref(p),
+                    ).props("color=amber flat dense").classes("font-mono text-[10px]")
+                ui.button(
+                    "→ CLIPS", icon="library_music",
+                    on_click=lambda n=name: _add_clips(n),
+                ).props("flat dense color=grey").classes("font-mono text-[10px]")
+                ui.space()
+                ui.button("Cancel", on_click=dlg.close).props("flat dense color=grey")
+        dlg.open()
 
     def _fav(path: Path):
         name = get_char_name() if get_char_name else None
@@ -129,7 +173,7 @@ def output_panel(output_subdir: str, get_char_name=None):
         except Exception as exc:
             show_error(exc)
 
-    def _make_row(path: Path):
+    def _make_row(path: Path, transcript: str = ""):
         with history_col_el:
             with ui.row().classes(
                 "w-full items-center gap-2 px-3 py-1 rounded "
@@ -142,9 +186,12 @@ def output_panel(output_subdir: str, get_char_name=None):
                     "text-[#888] font-mono text-[10px] truncate flex-grow cursor-pointer"
                 ).on("click", lambda p=path: _load_compare(p))
                 if get_char_name is not None:
-                    ui.button(icon="add", on_click=lambda p=path: _add_to_char(p)).props(
-                        "flat dense color=grey"
-                    ).classes("shrink-0").tooltip("Add to character")
+                    ui.button(
+                        icon="add_reaction",
+                        on_click=lambda p=path, t=transcript: _open_ref_dialog(p, t),
+                    ).props("flat dense color=grey").classes("shrink-0").tooltip(
+                        "Add to character reference pool"
+                    )
                     ui.button(icon="favorite_border", on_click=lambda p=path: _fav(p)).props(
                         "flat dense color=grey"
                     ).classes("shrink-0").tooltip("Favorite")
@@ -157,8 +204,8 @@ def output_panel(output_subdir: str, get_char_name=None):
         compare_player.set_source(f"/outputs/{rel.as_posix()}")
         compare_section.set_visibility(True)
 
-    def add_to_history(path: Path):
-        _make_row(path)
+    def add_to_history(path: Path, transcript: str = ""):
+        _make_row(path, transcript)
 
     for p in existing[:30]:
         _make_row(p)

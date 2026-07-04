@@ -134,7 +134,7 @@ def build_vc_tab():
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
-            _out["add_to_history"](path)
+            _out["add_to_history"](path, text)
         except Exception as exc:
             show_error(exc)
             _out["status"].set_text("error")

@@ -1,5 +1,7 @@
 import json
 import shutil
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -30,7 +32,7 @@ def get_character(name: str) -> dict | None:
 
 
 def get_ref_chain(name: str) -> list[dict]:
-    """Walk ancestry root→name; return [{audio, transcript}] for nodes that have audio."""
+    """Walk ancestry root→name; return [{audio, transcript}] for all ref audio in each node."""
     path_up, seen, current = [], set(), name
     while current and current not in seen:
         seen.add(current)
@@ -41,25 +43,33 @@ def get_ref_chain(name: str) -> list[dict]:
         current = char.get("parent")
     chain = []
     for char in reversed(path_up):
-        if "ref_audio" not in char:
-            continue
-        audio = CHARACTERS_DIR / char["name"] / char["ref_audio"]
-        if audio.exists():
-            chain.append({"audio": audio, "transcript": char.get("transcript", "")})
+        node = char["name"]
+        if "ref_audio" in char:
+            audio = CHARACTERS_DIR / node / char["ref_audio"]
+            if audio.exists():
+                chain.append({"audio": audio, "transcript": char.get("transcript", "")})
+        for rc in char.get("ref_clips", []):
+            audio = CHARACTERS_DIR / node / rc["file"]
+            if audio.exists():
+                chain.append({"audio": audio, "transcript": rc.get("transcript", "")})
     return chain
 
 
-def concat_ref_audio(name: str) -> tuple[Path | None, str]:
-    """Return (ref_path, transcript) for the full ancestry chain, concatenating if needed.
+@contextmanager
+def build_ref_audio(name: str):
+    """Yield (Path, transcript) for the full ref chain.
 
-    Writes _ref_concat.wav into the character dir when multiple files need merging.
+    Single-entry chains return the existing file directly (no copy).
+    Multi-entry chains are concatenated into a temp file that is deleted on exit.
     """
     chain = get_ref_chain(name)
     if not chain:
-        return None, ""
+        yield None, ""
+        return
     transcript = " ".join(n["transcript"] for n in chain if n["transcript"]).strip()
     if len(chain) == 1:
-        return chain[0]["audio"], transcript
+        yield chain[0]["audio"], transcript
+        return
     import numpy as np
     import soundfile as sf
     import torch
@@ -74,15 +84,22 @@ def concat_ref_audio(name: str) -> tuple[Path | None, str]:
             data = torchaudio.functional.resample(wav, sr, target_sr).squeeze(0).numpy()
         arrays.append(data)
     combined = np.concatenate(arrays)
-    out = CHARACTERS_DIR / name / "_ref_concat.wav"
-    sf.write(str(out), combined, target_sr)
-    return out, transcript
+    tmp = Path(tempfile.mktemp(suffix=".wav"))
+    try:
+        sf.write(str(tmp), combined, target_sr)
+        yield tmp, transcript
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def get_ref_path(name: str) -> Path | None:
-    """Return the resolved reference audio path for name (concatenated chain if needed)."""
-    path, _ = concat_ref_audio(name)
-    return path
+    """Return the first ref audio in the chain, for display/preview only.
+
+    Use build_ref_audio() at generation time to get the full concatenated chain.
+    """
+    chain = get_ref_chain(name)
+    return chain[0]["audio"] if chain else None
 
 
 def save_character(name: str, ref_path: Path, transcript: str = "") -> dict:
@@ -138,6 +155,26 @@ def delete_character(name: str):
     char_dir = CHARACTERS_DIR / name
     if char_dir.exists():
         shutil.rmtree(str(char_dir))
+
+
+def add_ref_clip(name: str, clip_path: Path, transcript: str = "") -> Path:
+    """Copy a generated clip into the character's ref pool and register it in config."""
+    char_dir = CHARACTERS_DIR / name
+    if not (char_dir / "config.json").exists():
+        raise FileNotFoundError(f"Character '{name}' not found")
+    refs_dir = char_dir / "refs"
+    refs_dir.mkdir(exist_ok=True)
+    i = 1
+    while True:
+        dest = refs_dir / f"ref_{i:03d}{clip_path.suffix}"
+        if not dest.exists():
+            break
+        i += 1
+    shutil.copy2(str(clip_path), str(dest))
+    cfg = json.loads(_cfg(name).read_text())
+    cfg.setdefault("ref_clips", []).append({"file": f"refs/{dest.name}", "transcript": transcript})
+    _cfg(name).write_text(json.dumps(cfg, indent=2))
+    return dest
 
 
 def add_clip_to_character(name: str, clip_path: Path) -> Path:

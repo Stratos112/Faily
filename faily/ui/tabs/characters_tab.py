@@ -4,6 +4,7 @@ from faily.core.characters import (
     list_characters, get_character, get_ref_path, delete_character,
     update_character_metadata,
     list_character_clips, list_character_favorites, rename_character_file,
+    get_ref_chain,
     CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error
@@ -253,6 +254,51 @@ def build_characters_tab(on_speak, on_change):
                         "text-[#aaa] font-mono text-[11px] leading-relaxed "
                         "bg-[#1a1a1a] rounded px-3 py-2 w-full"
                     )
+                # own ref clips
+                own_refs = char.get("ref_clips", [])
+                if own_refs:
+                    ui.separator().classes("my-3 opacity-20")
+                    ui.label("OWN REF CLIPS").classes(
+                        "text-[#444] font-mono text-[10px] tracking-widest"
+                    )
+                    for rc in own_refs:
+                        t = rc.get("transcript", "").strip()
+                        with ui.row().classes("items-start gap-2 w-full px-1 py-0.5"):
+                            ui.icon("mic", size="12px").classes("text-amber-500 mt-0.5 shrink-0")
+                            with ui.column().classes("gap-0 flex-grow min-w-0"):
+                                ui.label(rc["file"].split("/")[-1]).classes(
+                                    "text-[#aaa] font-mono text-[10px] truncate"
+                                )
+                                if t:
+                                    ui.label(f'"{t}"').classes(
+                                        "text-[#555] font-mono text-[10px] italic leading-tight"
+                                    )
+
+            # ── reference chain ───────────────────────────────────────────────
+            chain = get_ref_chain(name)
+            if chain:
+                ui.separator().classes("my-3 opacity-20")
+                with ui.row().classes("items-center gap-2 w-full"):
+                    ui.label(f"REFERENCE CHAIN  ({len(chain)} clips)").classes(
+                        "text-[#444] font-mono text-[10px] tracking-widest flex-grow"
+                    )
+                    ui.button("RELOAD", icon="refresh", on_click=_rebuild_detail).props(
+                        "flat dense color=amber"
+                    ).classes("font-mono text-[10px] tracking-widest shrink-0")
+
+                for entry in chain:
+                    audio: Path = entry["audio"]
+                    t: str = entry.get("transcript", "").strip()
+                    with ui.row().classes("items-start gap-2 w-full px-1 py-0.5"):
+                        ui.icon("mic", size="12px").classes("text-[#555] mt-0.5 shrink-0")
+                        with ui.column().classes("gap-0 flex-grow min-w-0"):
+                            ui.label(audio.name).classes(
+                                "text-[#666] font-mono text-[10px] truncate"
+                            )
+                            if t:
+                                ui.label(f'"{t}"').classes(
+                                    "text-[#444] font-mono text-[10px] italic leading-tight"
+                                )
 
             # ── actions ──────────────────────────────────────────────────────
             ui.separator().classes("mt-4 mb-3 opacity-20")

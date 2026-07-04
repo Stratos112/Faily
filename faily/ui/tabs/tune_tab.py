@@ -1,6 +1,6 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import tune_generate, EXPRESSION_ENGINES
-from faily.core.characters import list_characters, get_character, get_ref_path
+from faily.core.characters import list_characters, get_character, get_ref_path, get_ref_chain, build_ref_audio
 from faily.ui.components import output_panel, section_label, show_error
 
 _BTN = "font-mono tracking-widest"
@@ -34,9 +34,9 @@ def build_tune_tab():
             char_info.set_text("")
             return
         char = get_character(name)
-        ref = get_ref_path(name)
+        chain = get_ref_chain(name)
         ancestry = f"↳ {char['parent']}" if char and "parent" in char else "base character"
-        ref_label = ref.name if (ref and ref.exists()) else "⚠  no reference audio — save from CLONE tab"
+        ref_label = f"{len(chain)} ref clip{'s' if len(chain) != 1 else ''}" if chain else "⚠  no reference audio — save from CLONE tab"
         char_info.set_text(f"{ancestry}  ·  {ref_label}")
 
     def _on_char(e):
@@ -54,8 +54,7 @@ def build_tune_tab():
         if not text:
             ui.notify("Enter a line to speak", type="warning")
             return
-        ref = get_ref_path(_char_name[0])
-        if ref is None or not ref.exists():
+        if not get_ref_chain(_char_name[0]):
             ui.notify("Character has no reference audio — save it from the CLONE tab first", type="warning")
             return
 
@@ -65,30 +64,31 @@ def build_tune_tab():
         _out["model_loader"].set_visibility(True)
         _poll.active = True
 
-        try:
-            path = await ni_run.io_bound(
-                tune_generate,
-                text,
-                expression_input.value.strip(),
-                _engine[0],
-                ref,
-                _progress,
-                char_name=_char_name[0] if _char_name[0] != _NO_CHAR else None,
-            )
-            _out["main_player"].set_source(f"/outputs/vc/{path.name}")
-            _out["status"].set_text(f"✓  {path.name}")
-            _out["add_to_history"](path)
-        except Exception as exc:
-            show_error(exc)
-            _out["status"].set_text("error")
-        finally:
-            _poll.active = False
-            _out["model_loader"].set_visibility(False)
-            _out["progress_bar"].set_value(1.0)
-            _out["progress_bar"].set_visibility(True)
-            await ui.run_javascript("await new Promise(r => setTimeout(r, 400))")
-            _out["progress_bar"].set_visibility(False)
-            gen_btn.enable()
+        with build_ref_audio(_char_name[0]) as (ref, _):
+            try:
+                path = await ni_run.io_bound(
+                    tune_generate,
+                    text,
+                    expression_input.value.strip(),
+                    _engine[0],
+                    ref,
+                    _progress,
+                    char_name=_char_name[0] if _char_name[0] != _NO_CHAR else None,
+                )
+                _out["main_player"].set_source(f"/outputs/vc/{path.name}")
+                _out["status"].set_text(f"✓  {path.name}")
+                _out["add_to_history"](path, text)
+            except Exception as exc:
+                show_error(exc)
+                _out["status"].set_text("error")
+            finally:
+                _poll.active = False
+                _out["model_loader"].set_visibility(False)
+                _out["progress_bar"].set_value(1.0)
+                _out["progress_bar"].set_visibility(True)
+                await ui.run_javascript("await new Promise(r => setTimeout(r, 400))")
+                _out["progress_bar"].set_visibility(False)
+                gen_btn.enable()
 
     # ── UI ──────────────────────────────────────────────────────────────────
     with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
