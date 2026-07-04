@@ -4,6 +4,7 @@ from nicegui import app, ui
 from faily.ui.tabs.foley_tab import build_foley_tab
 from faily.ui.tabs.vc_tab import build_vc_tab
 from faily.ui.tabs.tune_tab import build_tune_tab
+from faily.ui.tabs.speak_tab import build_speak_tab
 from faily.ui.tabs.characters_tab import build_characters_tab
 
 OUTPUTS = Path("outputs")
@@ -46,7 +47,7 @@ _GLOBAL_CSS = """
 
 
 def run():
-    for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs", OUTPUTS / "characters"]:
+    for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs", OUTPUTS / "characters", OUTPUTS / "speak"]:
         d.mkdir(parents=True, exist_ok=True)
     app.add_static_files("/outputs", str(OUTPUTS))
 
@@ -71,6 +72,7 @@ def run():
             vc_tab       = ui.tab("CLONE",      icon="mic")
             chars_tab    = ui.tab("CHARACTERS", icon="manage_accounts")
             speak_tab    = ui.tab("TUNE",       icon="record_voice_over")
+            rvc_tab      = ui.tab("SPEAK",      icon="spatial_audio")
             foley_tab    = ui.tab("FOLEY",      icon="graphic_eq")
 
         # deferred callbacks — populated after panels are built
@@ -78,10 +80,13 @@ def run():
         _speak_select:  list = [lambda name: None]
         _chars_refresh: list = [lambda: None]
         _vc_refresh:    list = [lambda: None]
+        _rvc_refresh:   list = [lambda: None]
 
         def _on_tab_change(e):
             if e.value == "TUNE":
                 _speak_refresh[0]()
+            elif e.value == "SPEAK":
+                _rvc_refresh[0]()
             elif e.value == "CHARACTERS":
                 _chars_refresh[0]()
 
@@ -94,6 +99,7 @@ def run():
         def _on_char_change():
             """Called when a character is deleted from CHARACTERS tab."""
             _speak_refresh[0]()
+            _rvc_refresh[0]()
             _vc_refresh[0]()
 
         with ui.tab_panels(tabs, value=vc_tab, on_change=_on_tab_change).classes("w-full flex-grow"):
@@ -108,6 +114,9 @@ def run():
 
             with ui.tab_panel(speak_tab):
                 _speak_refresh[0], _speak_select[0] = build_tune_tab()
+
+            with ui.tab_panel(rvc_tab):
+                _rvc_refresh[0] = build_speak_tab()
 
             with ui.tab_panel(foley_tab):
                 build_foley_tab()

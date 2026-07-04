@@ -1,4 +1,5 @@
 """Shared UI building blocks."""
+import asyncio
 import shutil
 import traceback
 from pathlib import Path
@@ -28,6 +29,55 @@ def show_error(exc: Exception) -> None:
             ui.button("Copy", icon="content_copy", on_click=lambda: ui.clipboard.write(text)).props("flat dense color=amber")
             ui.button("Close", on_click=dlg.close).props("flat dense color=grey")
     dlg.open()
+
+
+def model_picker(options: dict, default: str, on_change) -> ui.column:
+    """Selectable list with per-option hover tooltips.
+
+    options: {key: {"label": str, "desc": str, "available": bool (default True)}}
+    on_change(key: str) — sync or async, called on selection.
+    """
+    _active = [default]
+    col = ui.column().classes("w-full gap-1")
+
+    def _rebuild():
+        col.clear()
+        with col:
+            for key, info in options.items():
+                active = _active[0] == key
+                available = info.get("available", True)
+                border = (
+                    "border-amber-500/60 bg-[#1a1500]" if active
+                    else "border-[#1e1e1e] hover:border-[#333] hover:bg-[#111]"
+                )
+                text = (
+                    "text-amber-400" if active
+                    else "text-[#555]" if not available
+                    else "text-[#888]"
+                )
+                cursor = "cursor-pointer" if available else "cursor-not-allowed"
+                with ui.row().classes(
+                    f"w-full items-center gap-2 px-3 py-1.5 rounded border {border} {text} {cursor}"
+                ).tooltip(info.get("desc", "")) as row:
+                    ui.icon(
+                        "radio_button_checked" if active else "radio_button_unchecked",
+                        size="13px",
+                    ).classes("shrink-0")
+                    ui.label(info["label"]).classes("font-mono text-[10px] flex-grow")
+                    if not available:
+                        ui.label("soon").classes("font-mono text-[9px] text-[#333] shrink-0")
+
+                    if available:
+                        def _click(k=key):
+                            _active[0] = k
+                            _rebuild()
+                            result = on_change(k)
+                            if asyncio.iscoroutine(result):
+                                asyncio.ensure_future(result)
+                        row.on("click", _click)
+
+    _rebuild()
+    return col
 
 
 def output_panel(output_subdir: str, get_char_name=None):

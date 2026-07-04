@@ -1,7 +1,7 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS, transcribe_ref
 from faily.core.characters import save_character, list_characters, delete_character
-from faily.ui.components import output_panel, section_label, show_error
+from faily.ui.components import output_panel, section_label, show_error, model_picker
 from pathlib import Path
 
 _REFS_DIR = VC_OUTPUT_DIR / "refs"
@@ -155,23 +155,14 @@ def build_vc_tab():
                 "BACKEND",
                 "Voice cloning engine. Each uses a different approach — see description below the selector.",
             )
-            desc_label = ui.label(BACKENDS["xtts_v2"]["desc"]).classes(
-                "text-[#444] font-mono text-[10px] tracking-wide"
-            )
-
-            async def _on_backend(e):
-                _backend[0] = e.value
-                desc_label.set_text(BACKENDS[e.value]["desc"])
-                ref_text_row.set_visibility(e.value == "f5_tts")
-                style_prompt_row.set_visibility(e.value == "kokoro")
+            async def _on_backend(key: str):
+                _backend[0] = key
+                ref_text_row.set_visibility(key == "f5_tts")
+                style_prompt_row.set_visibility(key == "kokoro")
                 _rebuild_params()
                 await _autofill_transcript()
 
-            ui.select(
-                options={k: v["label"] for k, v in BACKENDS.items()},
-                value="xtts_v2",
-                on_change=_on_backend,
-            ).props("outlined dark dense").classes("w-full")
+            model_picker(BACKENDS, "xtts_v2", _on_backend)
 
             _section_row(
                 "SAMPLES",

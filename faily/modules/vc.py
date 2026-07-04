@@ -80,31 +80,31 @@ _SPK_ID = "speechbrain/spkrec-xvect-voxceleb"
 BACKENDS = {
     "speecht5": {
         "label": "SpeechT5",
-        "desc": "Microsoft · X-Vector speaker embedding · HiFi-GAN vocoder",
+        "desc": "Microsoft · X-vector speaker embedding. Fast and lightweight. Good for quick previews. Less natural than neural approaches and struggles to maintain speaker identity on longer outputs.",
         "param1": {"label": "VOICE STRENGTH", "tooltip": "Scales the speaker embedding. Below 1.0 is more neutral, above 1.0 exaggerates the voice's character.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
         "param2": {"label": "THRESHOLD", "tooltip": "Mel spectrogram stopping criterion. Lower = crisper and shorter output. Higher = smoother but may trail off.", "min": 0.1, "max": 0.9, "step": 0.05, "default": 0.5},
     },
     "xtts_v2": {
         "label": "XTTS v2",
-        "desc": "Coqui AI · Zero-shot · Cross-attention conditioning",
+        "desc": "Coqui AI · Zero-shot cross-attention conditioning. Best all-rounder for voice cloning. Natural prosody on short-to-medium clips. Slow initial load; can clip or cut off on very long inputs.",
         "param1": {"label": "TEMPERATURE", "tooltip": "Expressiveness. Low = flat and consistent. High = emotive but may wander.", "min": 0.1, "max": 1.0, "step": 0.05, "default": 0.75},
         "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
     "f5_tts": {
         "label": "F5-TTS",
-        "desc": "SWC Lab · Flow-matching diffusion · Quality scales with steps",
+        "desc": "SWC Lab · Flow-matching diffusion. Highest speaker similarity when given a good transcript. Requires the reference transcript — auto-fills on upload. More steps = better quality but slower. Overkill for quick drafts.",
         "param1": {"label": "STEPS", "tooltip": "Diffusion steps. More = higher quality but slower. 32 is a good balance.", "min": 8, "max": 64, "step": 4, "default": 32},
         "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
     "chatterbox": {
         "label": "Chatterbox",
-        "desc": "Resemble AI · CFG-guided · Emotion exaggeration control",
+        "desc": "Resemble AI · CFG-guided generation. Strong emotional range via the exaggeration dial. Less faithful to exact speaker identity than XTTS. Good for expressive or theatrical characters.",
         "param1": {"label": "EXAGGERATION", "tooltip": "Emotional intensity. Low = calm and neutral. High = expressive.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
         "param2": {"label": "CFG WEIGHT", "tooltip": "Guidance strength. Higher = more faithful to the reference voice style.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
     },
     "kokoro": {
         "label": "Kokoro + FreeVC",
-        "desc": "Hexgrad Kokoro generates expressive speech → FreeVC applies the character's voice on top. Voice name in VOICE NAME field sets the expression style.",
+        "desc": "Kokoro expression pass → FreeVC voice swap. Fast and styleable via voice name. The two-stage approach can garble long inputs — best for short punchy lines. No reference transcript needed.",
         "param1": {"label": "SPEED", "tooltip": "Speech rate for the Kokoro expression pass. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
         "param2": {"label": "LANGUAGE", "tooltip": "0 = American English  1 = British English  2 = Japanese  3 = Mandarin Chinese", "min": 0, "max": 3, "step": 1, "default": 0},
     },
@@ -114,16 +114,16 @@ BACKENDS = {
 STAGE2_BACKENDS = {
     "freevc": {
         "label": "FreeVC",
-        "desc": "Fast zero-shot voice conversion. Works best on short inputs.",
+        "desc": "Fast zero-shot voice swap. Reliable on short inputs under ~4s. Quality degrades noticeably on longer Parler output — reduce MAX TOKENS if output sounds garbled.",
     },
     "openvoice": {
         "label": "OpenVoice v2",
-        "desc": "Zero-shot · handles longer/expressive inputs better than FreeVC. — not yet implemented",
+        "desc": "Zero-shot · built for longer and more expressive inputs than FreeVC. Better prosody preservation. Slower to load. Not yet integrated.",
         "available": False,
     },
     "seedvc": {
         "label": "Seed-VC",
-        "desc": "Diffusion-based · best prosody preservation on complex Parler output. — not yet implemented",
+        "desc": "Diffusion-based · best content and rhythm preservation on complex Parler output. Slowest of the three due to diffusion steps. Not yet integrated.",
         "available": False,
     },
 }
@@ -132,7 +132,7 @@ STAGE2_BACKENDS = {
 EXPRESSION_ENGINES = {
     "parler": {
         "label": "Parler-TTS",
-        "desc": "Hugging Face · free-text style descriptions → expressive intermediate audio",
+        "desc": "Parler-TTS · Describe tone, pace, and delivery in plain English. Expressive but inconsistent — results vary by phrasing. Lower MAX TOKENS reduces downstream garbling in voice conversion.",
     },
     # Future — uncomment when CosyVoice 2 loader is implemented:
     # "cosyvoice2": {

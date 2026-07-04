@@ -1,7 +1,7 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import tune_generate, EXPRESSION_ENGINES, STAGE2_BACKENDS
 from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
-from faily.ui.components import output_panel, section_label, show_error
+from faily.ui.components import output_panel, section_label, show_error, model_picker
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
@@ -45,13 +45,11 @@ def build_tune_tab():
     def _on_char(e):
         _update_char_info(e.value)
 
-    def _on_engine(e):
-        _engine[0] = e.value
-        engine_desc.set_text(EXPRESSION_ENGINES[e.value]["desc"])
+    def _on_engine(key: str):
+        _engine[0] = key
 
-    def _on_stage2(e):
-        _stage2[0] = e.value
-        stage2_desc.set_text(STAGE2_BACKENDS[e.value]["desc"])
+    def _on_stage2(key: str):
+        _stage2[0] = key
 
     async def _generate():
         if _char_name[0] == _NO_CHAR:
@@ -119,30 +117,17 @@ def build_tune_tab():
 
             _section_row(
                 "EXPRESSION ENGINE",
-                "Model that interprets your style description and generates the expressive intermediate audio. "
-                "FreeVC then converts that audio to the character's voice.",
+                "Generates expressive intermediate audio from your text and style description. "
+                "Hover each option for details.",
             )
-            engine_desc = ui.label(EXPRESSION_ENGINES[_DEFAULT_ENGINE]["desc"]).classes(
-                "text-[#444] font-mono text-[10px] tracking-wide"
-            )
-            ui.select(
-                options={k: v["label"] for k, v in EXPRESSION_ENGINES.items()},
-                value=_DEFAULT_ENGINE,
-                on_change=_on_engine,
-            ).props("outlined dark dense").classes("w-full")
+            model_picker(EXPRESSION_ENGINES, _DEFAULT_ENGINE, _on_engine)
 
             _section_row(
                 "VOICE CONVERSION",
-                "Model used in stage 2 to apply the character's voice to the expressive intermediate audio.",
+                "Applies the character's voice to the expressive intermediate audio. "
+                "Hover each option for details.",
             )
-            stage2_desc = ui.label(STAGE2_BACKENDS["freevc"]["desc"]).classes(
-                "text-[#444] font-mono text-[10px] tracking-wide"
-            )
-            ui.select(
-                options={k: v["label"] for k, v in STAGE2_BACKENDS.items()},
-                value="freevc",
-                on_change=_on_stage2,
-            ).props("outlined dark dense").classes("w-full")
+            model_picker(STAGE2_BACKENDS, "freevc", _on_stage2)
 
             _section_row(
                 "STYLE DESCRIPTION",
