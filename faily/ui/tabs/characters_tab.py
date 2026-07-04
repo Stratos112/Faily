@@ -21,17 +21,20 @@ def build_characters_tab(on_speak, on_change):
     _selected: list[str | None] = [None]
 
     def _grouped() -> tuple[list[dict], dict[str, list[dict]]]:
+        """Return (roots, children_by_parent). Works at arbitrary depth."""
         all_chars = list_characters()
-        bases = [c for c in all_chars if "parent" not in c]
-        subs: dict[str, list[dict]] = {}
+        by_name = {c["name"]: c for c in all_chars}
+        roots = [c for c in all_chars if "parent" not in c or c["parent"] not in by_name]
+        children: dict[str, list[dict]] = {}
         for c in all_chars:
-            if "parent" in c:
-                subs.setdefault(c["parent"], []).append(c)
-        return bases, subs
+            p = c.get("parent")
+            if p and p in by_name:
+                children.setdefault(p, []).append(c)
+        return roots, children
 
-    def _item_row(name: str, parent: str | None):
+    def _item_row(name: str, depth: int):
         is_active = _selected[0] == name
-        indent = "pl-6" if parent else ""
+        indent = f"pl-{depth * 6}" if depth else ""
         active_cls = (
             "border-amber-500/60 text-amber-400 bg-[#1a1500]"
             if is_active
@@ -40,31 +43,30 @@ def build_characters_tab(on_speak, on_change):
         with ui.row().classes(
             f"w-full items-center gap-2 px-3 py-1.5 rounded cursor-pointer border {active_cls} {indent}"
         ) as row:
-            icon = "person_outline" if parent else "person"
-            icon_cls = "text-[#555]" if parent else "text-amber-500"
+            icon = "person_outline" if depth else "person"
+            icon_cls = "text-[#555]" if depth else "text-amber-500"
             ui.icon(icon, size="14px").classes(f"shrink-0 {icon_cls}")
-            prefix = "↳ " if parent else ""
+            prefix = "↳ " * depth
             ui.label(prefix + name).classes("font-mono text-[10px] truncate flex-grow")
             row.on("click", lambda n=name: _select(n))
 
     def _rebuild_list():
         left_col.clear()
-        bases, subs = _grouped()
+        roots, children = _grouped()
+
+        def _walk(name: str, depth: int):
+            _item_row(name, depth=depth)
+            for child in children.get(name, []):
+                _walk(child["name"], depth + 1)
+
         with left_col:
-            if not bases and not any(subs.values()):
+            if not roots and not children:
                 ui.label("No characters yet — save one from the CLONE tab.").classes(
                     "text-[#444] font-mono text-[10px] px-1 py-4"
                 )
                 return
-            for base in bases:
-                _item_row(base["name"], parent=None)
-                for sub in subs.get(base["name"], []):
-                    _item_row(sub["name"], parent=base["name"])
-            known_base_names = {b["name"] for b in bases}
-            for parent_name, sub_list in subs.items():
-                if parent_name not in known_base_names:
-                    for sub in sub_list:
-                        _item_row(sub["name"], parent=f"⚠ {parent_name}")
+            for root in roots:
+                _walk(root["name"], depth=0)
 
     def _select(name: str):
         _selected[0] = name
@@ -198,8 +200,8 @@ def build_characters_tab(on_speak, on_change):
                     )
 
                 # ── variants ────────────────────────────────────────────────
-                _, subs = _grouped()
-                children = subs.get(name, [])
+                _, children_map = _grouped()
+                children = children_map.get(name, [])
                 if children:
                     ui.separator().classes("my-3 opacity-20")
                     ui.label("VARIANTS").classes(
@@ -254,25 +256,26 @@ def build_characters_tab(on_speak, on_change):
                         "text-[#aaa] font-mono text-[11px] leading-relaxed "
                         "bg-[#1a1a1a] rounded px-3 py-2 w-full"
                     )
-                # own ref clips
-                own_refs = char.get("ref_clips", [])
-                if own_refs:
-                    ui.separator().classes("my-3 opacity-20")
-                    ui.label("OWN REF CLIPS").classes(
-                        "text-[#444] font-mono text-[10px] tracking-widest"
-                    )
-                    for rc in own_refs:
-                        t = rc.get("transcript", "").strip()
-                        with ui.row().classes("items-start gap-2 w-full px-1 py-0.5"):
-                            ui.icon("mic", size="12px").classes("text-amber-500 mt-0.5 shrink-0")
-                            with ui.column().classes("gap-0 flex-grow min-w-0"):
-                                ui.label(rc["file"].split("/")[-1]).classes(
-                                    "text-[#aaa] font-mono text-[10px] truncate"
+
+            # ── added ref clips (base and sub) ────────────────────────────────
+            own_refs = char.get("ref_clips", [])
+            if own_refs:
+                ui.separator().classes("my-3 opacity-20")
+                ui.label("ADDED REF CLIPS").classes(
+                    "text-[#444] font-mono text-[10px] tracking-widest"
+                )
+                for rc in own_refs:
+                    t = rc.get("transcript", "").strip()
+                    with ui.row().classes("items-start gap-2 w-full px-1 py-0.5"):
+                        ui.icon("mic", size="12px").classes("text-amber-500 mt-0.5 shrink-0")
+                        with ui.column().classes("gap-0 flex-grow min-w-0"):
+                            ui.label(rc["file"].split("/")[-1]).classes(
+                                "text-[#aaa] font-mono text-[10px] truncate"
+                            )
+                            if t:
+                                ui.label(f'"{t}"').classes(
+                                    "text-[#555] font-mono text-[10px] italic leading-tight"
                                 )
-                                if t:
-                                    ui.label(f'"{t}"').classes(
-                                        "text-[#555] font-mono text-[10px] italic leading-tight"
-                                    )
 
             # ── reference chain ───────────────────────────────────────────────
             chain = get_ref_chain(name)
@@ -357,8 +360,8 @@ def build_characters_tab(on_speak, on_change):
         if not char:
             return
         is_base = "parent" not in char
-        _, subs = _grouped()
-        children = subs.get(name, []) if is_base else []
+        _, children_map = _grouped()
+        children = children_map.get(name, []) if is_base else []
         child_names = [c["name"] for c in children]
 
         with ui.dialog() as dlg, ui.card().classes(

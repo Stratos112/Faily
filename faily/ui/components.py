@@ -80,8 +80,6 @@ def output_panel(output_subdir: str, get_char_name=None):
         history_scroll = ui.scroll_area().classes("w-full flex-grow").style(
             "max-height:260px; min-height:80px"
         )
-        history_col = history_scroll.default_slot.children  # internal list ref
-
         with history_scroll:
             history_col_el = ui.column().classes("w-full gap-1")
 

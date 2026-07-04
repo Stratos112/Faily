@@ -1,6 +1,6 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import tune_generate, EXPRESSION_ENGINES
-from faily.core.characters import list_characters, get_character, get_ref_path, get_ref_chain, build_ref_audio
+from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
 from faily.ui.components import output_panel, section_label, show_error
 
 _BTN = "font-mono tracking-widest"

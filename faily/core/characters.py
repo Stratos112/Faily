@@ -84,7 +84,8 @@ def build_ref_audio(name: str):
             data = torchaudio.functional.resample(wav, sr, target_sr).squeeze(0).numpy()
         arrays.append(data)
     combined = np.concatenate(arrays)
-    tmp = Path(tempfile.mktemp(suffix=".wav"))
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
+        tmp = Path(f.name)
     try:
         sf.write(str(tmp), combined, target_sr)
         yield tmp, transcript
