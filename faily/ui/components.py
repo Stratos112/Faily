@@ -92,12 +92,13 @@ def output_panel(output_subdir: str, get_char_name=None):
         if not name:
             ui.notify("No character selected", type="warning")
             return
-        from faily.core.characters import get_character, add_ref_clip, add_clip_to_character
-        char = get_character(name)
-        if not char:
+        from faily.core.characters import get_character, add_ref_clip, list_characters
+        if not get_character(name):
             ui.notify(f"'{name}' is not a saved character yet", type="warning")
             return
-        parent = char.get("parent")
+
+        all_chars = list_characters()
+        options = {c["name"]: c["name"] for c in all_chars}
 
         with ui.dialog() as dlg, ui.card().classes(
             "bg-[#111] border border-[#2a2a2a] min-w-[400px] gap-3"
@@ -111,39 +112,26 @@ def output_panel(output_subdir: str, get_char_name=None):
                 .props("outlined dark rows=3")
                 .classes("w-full font-mono text-[11px]")
             )
+            ui.label("CHARACTER").classes("text-[#444] font-mono text-[10px] tracking-widest")
+            target_select = (
+                ui.select(options=options, value=name)
+                .props("outlined dark dense")
+                .classes("w-full")
+            )
 
-            def _add_ref(target: str):
+            def _add():
                 try:
-                    add_ref_clip(target, path, field.value.strip())
+                    add_ref_clip(target_select.value, path, field.value.strip())
                     dlg.close()
-                    ui.notify(f"Added to {target} refs", type="positive", timeout=2000)
+                    ui.notify(f"Added to {target_select.value}", type="positive", timeout=2000)
                 except Exception as exc:
                     show_error(exc)
 
-            def _add_clips(target: str):
-                try:
-                    add_clip_to_character(target, path)
-                    dlg.close()
-                    ui.notify(f"Added to {target} clips", type="positive", timeout=2000)
-                except Exception as exc:
-                    show_error(exc)
-
-            with ui.row().classes("w-full gap-2 flex-wrap items-center mt-1"):
-                ui.button(
-                    f"→ REF  {name}", icon="mic",
-                    on_click=lambda n=name: _add_ref(n),
-                ).props("color=amber unelevated dense").classes("font-mono text-[10px]")
-                if parent:
-                    ui.button(
-                        f"→ REF  {parent}", icon="mic",
-                        on_click=lambda p=parent: _add_ref(p),
-                    ).props("color=amber flat dense").classes("font-mono text-[10px]")
-                ui.button(
-                    "→ CLIPS", icon="library_music",
-                    on_click=lambda n=name: _add_clips(n),
-                ).props("flat dense color=grey").classes("font-mono text-[10px]")
-                ui.space()
+            with ui.row().classes("w-full justify-end gap-2 mt-1"):
                 ui.button("Cancel", on_click=dlg.close).props("flat dense color=grey")
+                ui.button("ADD TO REFS", icon="mic", on_click=_add).props(
+                    "color=amber unelevated dense"
+                ).classes("font-mono text-[10px]")
         dlg.open()
 
     def _fav(path: Path):
