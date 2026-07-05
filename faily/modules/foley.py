@@ -27,6 +27,11 @@ def get_models() -> dict[str, str]:
 
 
 def _loader_audioldm2(model_id: str):
+    # diffusers < 0.33 imports FLAX_WEIGHTS_NAME from transformers.utils which was removed in transformers 5.x
+    import transformers.utils as _tu
+    if not hasattr(_tu, "FLAX_WEIGHTS_NAME"):
+        _tu.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
+
     from diffusers import AudioLDM2Pipeline
     from transformers import GPT2LMHeadModel
     import torch
