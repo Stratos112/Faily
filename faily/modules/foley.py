@@ -10,7 +10,7 @@ def _patch_model_output():
     diffusers AudioLDM2 slices text-encoder ModelOutputs with [:, None, :].
     transformers 5.x ModelOutput.__getitem__ doesn't support tuple indices.
     Patch it once — cache-proof, called before every inference.
-    Prefers text_embeds (CLAP projected 512-dim) then last_hidden_state.
+    Prefers text_embeds → pooler_output (CLAP projected 512-dim in transformers 5.x) → last_hidden_state.
     """
     try:
         import transformers.utils.generic as _g
@@ -22,7 +22,7 @@ def _patch_model_output():
     _orig = _g.ModelOutput.__getitem__
     def _getitem(self, k):
         if isinstance(k, tuple):
-            for _attr in ("text_embeds", "last_hidden_state"):
+            for _attr in ("text_embeds", "pooler_output", "last_hidden_state"):
                 v = getattr(self, _attr, None)
                 if isinstance(v, _t.Tensor):
                     return v[k]
