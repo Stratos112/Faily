@@ -26,35 +26,11 @@ def get_models() -> dict[str, str]:
     return {**_BUNDLED, **scan_local()}
 
 
-def _patch_model_output_indexing():
-    """
-    transformers 5.x changed ModelOutput.__getitem__ to call to_tuple()[k] for all
-    non-string keys. Python tuples reject tuple indices (e.g. obj[:, None, :]), so
-    diffusers pipelines that slice a ModelOutput like a tensor now raise TypeError.
-    Patch __getitem__ once so tuple-style multi-dim slices fall through to the first
-    tensor value in the ModelOutput instead.
-    """
-    import transformers.utils.generic as _g
-    import torch as _t
-    if getattr(_g.ModelOutput, "_faily_patched", False):
-        return
-    _orig = _g.ModelOutput.__getitem__
-    def _getitem(self, k):
-        if isinstance(k, tuple):
-            for v in self.to_tuple():
-                if isinstance(v, _t.Tensor):
-                    return v[k]
-        return _orig(self, k)
-    _g.ModelOutput.__getitem__ = _getitem
-    _g.ModelOutput._faily_patched = True
-
-
 def _loader_audioldm2(model_id: str):
     # diffusers < 0.33 imports FLAX_WEIGHTS_NAME from transformers.utils which was removed in transformers 5.x
     import transformers.utils as _tu
     if not hasattr(_tu, "FLAX_WEIGHTS_NAME"):
         _tu.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
-    _patch_model_output_indexing()
 
     from diffusers import AudioLDM2Pipeline
     from transformers import GPT2LMHeadModel
@@ -68,6 +44,28 @@ def _loader_audioldm2(model_id: str):
         model_id, subfolder="language_model", torch_dtype=dtype,
         ignore_mismatched_sizes=True, cache_dir=str(SFX_MODELS_DIR),
     )
+    # transformers 5.x: ModelOutput no longer supports tensor-style indexing.
+    # diffusers AudioLDM2 encode_prompt slices encoder outputs as [:, None, :].
+    # Patch each encoder's forward to return the correct bare tensor instead of ModelOutput.
+    # CLAP (text_encoder): return text_embeds (projected, 512-dim) — NOT last_hidden_state (768-dim)
+    _clap = getattr(pipe, "text_encoder", None)
+    if _clap is not None:
+        _orig_clap = _clap.forward
+        def _clap_fwd(*a, _f=_orig_clap, **kw):
+            out = _f(*a, **kw)
+            if isinstance(out, torch.Tensor): return out
+            t = getattr(out, "text_embeds", None)
+            return t if t is not None else getattr(out, "last_hidden_state", out)
+        _clap.forward = _clap_fwd
+    # T5 (text_encoder_2): return last_hidden_state sequence tensor
+    _t5 = getattr(pipe, "text_encoder_2", None)
+    if _t5 is not None:
+        _orig_t5 = _t5.forward
+        def _t5_fwd(*a, _f=_orig_t5, **kw):
+            out = _f(*a, **kw)
+            if isinstance(out, torch.Tensor): return out
+            return getattr(out, "last_hidden_state", out)
+        _t5.forward = _t5_fwd
     return pipe.to(manager.device)
 
 
