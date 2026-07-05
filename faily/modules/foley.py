@@ -26,11 +26,35 @@ def get_models() -> dict[str, str]:
     return {**_BUNDLED, **scan_local()}
 
 
+def _patch_model_output_indexing():
+    """
+    transformers 5.x changed ModelOutput.__getitem__ to call to_tuple()[k] for all
+    non-string keys. Python tuples reject tuple indices (e.g. obj[:, None, :]), so
+    diffusers pipelines that slice a ModelOutput like a tensor now raise TypeError.
+    Patch __getitem__ once so tuple-style multi-dim slices fall through to the first
+    tensor value in the ModelOutput instead.
+    """
+    import transformers.utils.generic as _g
+    import torch as _t
+    if getattr(_g.ModelOutput, "_faily_patched", False):
+        return
+    _orig = _g.ModelOutput.__getitem__
+    def _getitem(self, k):
+        if isinstance(k, tuple):
+            for v in self.to_tuple():
+                if isinstance(v, _t.Tensor):
+                    return v[k]
+        return _orig(self, k)
+    _g.ModelOutput.__getitem__ = _getitem
+    _g.ModelOutput._faily_patched = True
+
+
 def _loader_audioldm2(model_id: str):
     # diffusers < 0.33 imports FLAX_WEIGHTS_NAME from transformers.utils which was removed in transformers 5.x
     import transformers.utils as _tu
     if not hasattr(_tu, "FLAX_WEIGHTS_NAME"):
         _tu.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
+    _patch_model_output_indexing()
 
     from diffusers import AudioLDM2Pipeline
     from transformers import GPT2LMHeadModel
@@ -44,19 +68,6 @@ def _loader_audioldm2(model_id: str):
         model_id, subfolder="language_model", torch_dtype=dtype,
         ignore_mismatched_sizes=True, cache_dir=str(SFX_MODELS_DIR),
     )
-    # transformers 5.x: ModelOutput no longer supports multi-dim indexing (e.g. [:, None, :])
-    # Patch text encoders so their forward returns bare tensors instead of ModelOutput
-    for _attr in ("text_encoder", "text_encoder_2"):
-        _enc = getattr(pipe, _attr, None)
-        if _enc is None:
-            continue
-        _orig_fwd = _enc.forward
-        def _unwrap_fwd(*a, _f=_orig_fwd, **kw):
-            out = _f(*a, **kw)
-            if not isinstance(out, torch.Tensor) and hasattr(out, "last_hidden_state"):
-                return out.last_hidden_state
-            return out
-        _enc.forward = _unwrap_fwd
     return pipe.to(manager.device)
 
 
