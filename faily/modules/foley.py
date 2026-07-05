@@ -44,6 +44,19 @@ def _loader_audioldm2(model_id: str):
         model_id, subfolder="language_model", torch_dtype=dtype,
         ignore_mismatched_sizes=True, cache_dir=str(SFX_MODELS_DIR),
     )
+    # transformers 5.x: ModelOutput no longer supports multi-dim indexing (e.g. [:, None, :])
+    # Patch text encoders so their forward returns bare tensors instead of ModelOutput
+    for _attr in ("text_encoder", "text_encoder_2"):
+        _enc = getattr(pipe, _attr, None)
+        if _enc is None:
+            continue
+        _orig_fwd = _enc.forward
+        def _unwrap_fwd(*a, _f=_orig_fwd, **kw):
+            out = _f(*a, **kw)
+            if not isinstance(out, torch.Tensor) and hasattr(out, "last_hidden_state"):
+                return out.last_hidden_state
+            return out
+        _enc.forward = _unwrap_fwd
     return pipe.to(manager.device)
 
 
