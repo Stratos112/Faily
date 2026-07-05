@@ -43,6 +43,10 @@ _GLOBAL_CSS = """
     .faily-loader span:nth-child(5) { animation-delay: 0.64s; }
     .faily-loader span:nth-child(6) { animation-delay: 0.48s; }
     .faily-loader span:nth-child(7) { animation-delay: 0.32s; }
+
+    .pipeline-tab { border-top: 2px solid rgba(245, 158, 11, 0.28) !important; }
+    .pipeline-first { border-left: 2px solid rgba(245, 158, 11, 0.28) !important; border-top-left-radius: 4px !important; }
+    .pipeline-last  { border-right: 2px solid rgba(245, 158, 11, 0.28) !important; border-top-right-radius: 4px !important; }
 """
 
 
@@ -69,10 +73,10 @@ def run():
             )
 
         with ui.tabs().classes("w-full") as tabs:
-            vc_tab       = ui.tab("CLONE",      icon="mic")
             chars_tab    = ui.tab("CHARACTERS", icon="manage_accounts")
-            speak_tab    = ui.tab("TUNE",       icon="record_voice_over")
-            rvc_tab      = ui.tab("SPEAK",      icon="spatial_audio")
+            vc_tab       = ui.tab("CLONE",      icon="mic").classes("pipeline-tab pipeline-first")
+            speak_tab    = ui.tab("TUNE",       icon="record_voice_over").classes("pipeline-tab pipeline-mid")
+            rvc_tab      = ui.tab("SPEAK",      icon="spatial_audio").classes("pipeline-tab pipeline-last")
             foley_tab    = ui.tab("FOLEY",      icon="graphic_eq")
 
         # deferred callbacks — populated after panels are built
