@@ -4,6 +4,35 @@ from datetime import datetime
 from pathlib import Path
 from faily.core.model_manager import manager, SFX_MODELS_DIR
 
+
+def _patch_model_output():
+    """
+    diffusers AudioLDM2 slices text-encoder ModelOutputs with [:, None, :].
+    transformers 5.x ModelOutput.__getitem__ doesn't support tuple indices.
+    Patch it once — cache-proof, called before every inference.
+    Prefers text_embeds (CLAP projected 512-dim) then last_hidden_state.
+    """
+    try:
+        import transformers.utils.generic as _g
+        import torch as _t
+    except ImportError:
+        return
+    if getattr(_g.ModelOutput, "_faily_patched", False):
+        return
+    _orig = _g.ModelOutput.__getitem__
+    def _getitem(self, k):
+        if isinstance(k, tuple):
+            for _attr in ("text_embeds", "last_hidden_state"):
+                v = getattr(self, _attr, None)
+                if isinstance(v, _t.Tensor):
+                    return v[k]
+            for v in self.to_tuple():
+                if isinstance(v, _t.Tensor):
+                    return v[k]
+        return _orig(self, k)
+    _g.ModelOutput.__getitem__ = _getitem
+    _g.ModelOutput._faily_patched = True
+
 _BUNDLED: dict[str, str] = {
     "AudioLDM2 (diffusion, versatile)": "cvssp/audioldm2",
     "AudioLDM2 Large":                  "cvssp/audioldm2-large",
@@ -44,28 +73,6 @@ def _loader_audioldm2(model_id: str):
         model_id, subfolder="language_model", torch_dtype=dtype,
         ignore_mismatched_sizes=True, cache_dir=str(SFX_MODELS_DIR),
     )
-    # transformers 5.x: ModelOutput no longer supports tensor-style indexing.
-    # diffusers AudioLDM2 encode_prompt slices encoder outputs as [:, None, :].
-    # Patch each encoder's forward to return the correct bare tensor instead of ModelOutput.
-    # CLAP (text_encoder): return text_embeds (projected, 512-dim) — NOT last_hidden_state (768-dim)
-    _clap = getattr(pipe, "text_encoder", None)
-    if _clap is not None:
-        _orig_clap = _clap.forward
-        def _clap_fwd(*a, _f=_orig_clap, **kw):
-            out = _f(*a, **kw)
-            if isinstance(out, torch.Tensor): return out
-            t = getattr(out, "text_embeds", None)
-            return t if t is not None else getattr(out, "last_hidden_state", out)
-        _clap.forward = _clap_fwd
-    # T5 (text_encoder_2): return last_hidden_state sequence tensor
-    _t5 = getattr(pipe, "text_encoder_2", None)
-    if _t5 is not None:
-        _orig_t5 = _t5.forward
-        def _t5_fwd(*a, _f=_orig_t5, **kw):
-            out = _f(*a, **kw)
-            if isinstance(out, torch.Tensor): return out
-            return getattr(out, "last_hidden_state", out)
-        _t5.forward = _t5_fwd
     return pipe.to(manager.device)
 
 
@@ -81,6 +88,7 @@ def generate(
     normalize: bool = False,
     fade: float = 0.0,
 ) -> Path:
+    _patch_model_output()
     if output_dir is None:
         output_dir = SFX_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
