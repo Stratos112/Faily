@@ -236,3 +236,28 @@ def update_character_metadata(name: str, updates: dict) -> dict:
             cfg[k] = v
     p.write_text(json.dumps(cfg, indent=2))
     return cfg
+
+
+def remove_ref_clip(name: str, file_key: str) -> dict:
+    """Remove a ref clip from ref_clips by its file key and delete the file."""
+    p = _cfg(name)
+    if not p.exists():
+        raise FileNotFoundError(f"Character '{name}' not found")
+    cfg = json.loads(p.read_text())
+    cfg["ref_clips"] = [rc for rc in cfg.get("ref_clips", []) if rc["file"] != file_key]
+    p.write_text(json.dumps(cfg, indent=2))
+    audio = CHARACTERS_DIR / name / file_key
+    if audio.exists():
+        audio.unlink()
+    return cfg
+
+
+def set_rvc_model(name: str, model_path: str) -> dict:
+    """Store the trained RVC model path in the character config."""
+    p = _cfg(name)
+    if not p.exists():
+        raise FileNotFoundError(f"Character '{name}' not found")
+    cfg = json.loads(p.read_text())
+    cfg["rvc_model"] = model_path
+    p.write_text(json.dumps(cfg, indent=2))
+    return cfg

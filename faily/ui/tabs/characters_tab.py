@@ -1,10 +1,10 @@
 from pathlib import Path
-from nicegui import ui
+from nicegui import ui, run as ni_run
 from faily.core.characters import (
     list_characters, get_character, get_ref_path, delete_character,
     update_character_metadata,
     list_character_clips, list_character_favorites, rename_character_file,
-    get_ref_chain,
+    get_ref_chain, remove_ref_clip, set_rvc_model,
     CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error
@@ -265,17 +265,24 @@ def build_characters_tab(on_speak, on_change):
                     "text-[#444] font-mono text-[10px] tracking-widest"
                 )
                 for rc in own_refs:
+                    file_key = rc["file"]
                     t = rc.get("transcript", "").strip()
-                    with ui.row().classes("items-start gap-2 w-full px-1 py-0.5"):
-                        ui.icon("mic", size="12px").classes("text-amber-500 mt-0.5 shrink-0")
+                    with ui.row().classes("items-center gap-2 w-full px-1 py-0.5"):
+                        ui.icon("mic", size="12px").classes("text-amber-500 shrink-0")
                         with ui.column().classes("gap-0 flex-grow min-w-0"):
-                            ui.label(rc["file"].split("/")[-1]).classes(
+                            ui.label(file_key.split("/")[-1]).classes(
                                 "text-[#aaa] font-mono text-[10px] truncate"
                             )
                             if t:
                                 ui.label(f'"{t}"').classes(
                                     "text-[#555] font-mono text-[10px] italic leading-tight"
                                 )
+                        def _remove_clip(fk=file_key, n=name):
+                            remove_ref_clip(n, fk)
+                            _rebuild_detail()
+                        ui.button(
+                            icon="close", on_click=_remove_clip,
+                        ).props("flat dense color=grey").classes("shrink-0 opacity-40 hover:opacity-100")
 
             # ── reference chain ───────────────────────────────────────────────
             chain = get_ref_chain(name)
@@ -305,12 +312,55 @@ def build_characters_tab(on_speak, on_change):
 
             # ── actions ──────────────────────────────────────────────────────
             ui.separator().classes("mt-4 mb-3 opacity-20")
-            with ui.row().classes("gap-2"):
+
+            rvc_status = char.get("rvc_model", "")
+            if rvc_status:
+                ui.label("MODEL TRAINED").classes(
+                    "text-indigo-400 font-mono text-[9px] tracking-widest"
+                )
+
+            with ui.row().classes("gap-2 flex-wrap"):
                 (
                     ui.button("TUNE", icon="record_voice_over", on_click=lambda n=name: on_speak(n))
                     .props("color=amber unelevated")
                     .classes(_BTN)
                 )
+
+                train_btn_holder: list = []
+
+                async def _do_train(n=name):
+                    chain = get_ref_chain(n)
+                    if not chain:
+                        ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
+                        return
+                    btn = train_btn_holder[0]
+                    btn.props("loading")
+                    btn.disable()
+                    try:
+                        from faily.modules.rvc import train_rvc
+                        clips = [e["audio"] for e in chain]
+                        model_path = await ni_run.io_bound(
+                            train_rvc, n, clips, CHARACTERS_DIR / n, None
+                        )
+                        set_rvc_model(n, str(model_path))
+                        ui.notify(
+                            f"RVC model trained  ·  {len(clips)} clip{'s' if len(clips) != 1 else ''}",
+                            type="positive", timeout=3000,
+                        )
+                        on_change()
+                        _rebuild_detail()
+                    except Exception as exc:
+                        show_error(exc)
+                        btn.props(remove="loading")
+                        btn.enable()
+
+                train_btn = (
+                    ui.button("TRAIN", icon="model_training", on_click=_do_train)
+                    .props("color=indigo unelevated")
+                    .classes(_BTN)
+                )
+                train_btn_holder.append(train_btn)
+
                 ui.button("EDIT", icon="edit", on_click=lambda n=name: _open_edit(n)).props(
                     "flat color=grey"
                 )
