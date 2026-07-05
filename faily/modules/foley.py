@@ -55,6 +55,35 @@ def get_models() -> dict[str, str]:
     return {**_BUNDLED, **scan_local()}
 
 
+def _patch_generate_lm(pipe):
+    """Windows diffusers uses output.last_hidden_state which doesn't exist on
+    CausalLMOutputWithCrossAttentions; patch to use output.hidden_states[-1].
+    Called after every manager.load() — guarded by flag on the pipe object."""
+    if getattr(pipe, "_faily_lm_patched", False):
+        return
+    import types
+    import torch as _t
+
+    def _prep(inputs_embeds, attention_mask=None, past_key_values=None, **kw):
+        if past_key_values is not None:
+            inputs_embeds = inputs_embeds[:, -1:]
+        return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask,
+                "past_key_values": past_key_values, "use_cache": kw.get("use_cache")}
+
+    def generate_language_model(self, inputs_embeds=None, max_new_tokens=8, **model_kwargs):
+        max_new_tokens = max_new_tokens if max_new_tokens is not None else self.language_model.config.max_new_tokens
+        for _ in range(max_new_tokens):
+            model_inputs = _prep(inputs_embeds, **model_kwargs)
+            output = self.language_model(**model_inputs, output_hidden_states=True, return_dict=True)
+            next_hidden_states = output.hidden_states[-1]
+            inputs_embeds = _t.cat([inputs_embeds, next_hidden_states[:, -1:, :]], dim=1)
+            model_kwargs = self.language_model._update_model_kwargs_for_generation(output, model_kwargs)
+        return inputs_embeds[:, -max_new_tokens:, :]
+
+    pipe.generate_language_model = types.MethodType(generate_language_model, pipe)
+    pipe._faily_lm_patched = True
+
+
 def _loader_audioldm2(model_id: str):
     # diffusers < 0.33 imports FLAX_WEIGHTS_NAME from transformers.utils which was removed in transformers 5.x
     import transformers.utils as _tu
@@ -73,6 +102,7 @@ def _loader_audioldm2(model_id: str):
         model_id, subfolder="language_model", torch_dtype=dtype,
         ignore_mismatched_sizes=True, cache_dir=str(SFX_MODELS_DIR),
     )
+    _patch_generate_lm(pipe)
     return pipe.to(manager.device)
 
 
@@ -94,6 +124,7 @@ def generate(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     pipe = manager.load(model_id, lambda: _loader_audioldm2(model_id))
+    _patch_generate_lm(pipe)
 
     def _cb(step: int, timestep: int, latents):
         if progress_ref is not None:
