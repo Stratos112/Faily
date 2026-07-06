@@ -58,20 +58,28 @@ def get_models() -> dict[str, str]:
 def _patch_generate_lm(pipe):
     """Windows diffusers uses output.last_hidden_state which doesn't exist on
     CausalLMOutputWithCrossAttentions; patch to use output.hidden_states[-1].
+    Also seeds cache_position for transformers 5.x KV-cache handling.
     Called after every manager.load() — guarded by flag on the pipe object."""
     if getattr(pipe, "_faily_lm_patched", False):
         return
     import types
     import torch as _t
 
-    def _prep(inputs_embeds, attention_mask=None, past_key_values=None, **kw):
+    def _prep(inputs_embeds, attention_mask=None, past_key_values=None, cache_position=None, **kw):
         if past_key_values is not None:
             inputs_embeds = inputs_embeds[:, -1:]
-        return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask,
-                "past_key_values": past_key_values, "use_cache": kw.get("use_cache")}
+        result = {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask,
+                  "past_key_values": past_key_values, "use_cache": kw.get("use_cache")}
+        if cache_position is not None:
+            result["cache_position"] = cache_position
+        return result
 
     def generate_language_model(self, inputs_embeds=None, max_new_tokens=8, **model_kwargs):
         max_new_tokens = max_new_tokens if max_new_tokens is not None else self.language_model.config.max_new_tokens
+        if "cache_position" not in model_kwargs:
+            model_kwargs["cache_position"] = _t.arange(
+                inputs_embeds.shape[1], device=inputs_embeds.device
+            )
         for _ in range(max_new_tokens):
             model_inputs = _prep(inputs_embeds, **model_kwargs)
             output = self.language_model(**model_inputs, output_hidden_states=True, return_dict=True)
