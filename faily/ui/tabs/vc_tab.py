@@ -169,6 +169,7 @@ def build_vc_tab():
                 "Upload 5–30 s of clean speech from the target voice. "
                 "Select a clip below to use it. Multiple samples can be stored and switched between.",
             )
+            # TODO: add YouTube URL scraper — paste a link, pull audio automatically
             (
                 ui.upload(on_upload=_on_upload, multiple=True, auto_upload=True)
                 .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Upload'")
@@ -226,6 +227,8 @@ def build_vc_tab():
                 )
             style_prompt_row.set_visibility(False)
 
+            # TODO: refactor — character management (save/delete/list) belongs in the
+            # ONESHOT tab; this tab should focus purely on the cloning/auditioning process
             _section_row(
                 "CHARACTER LIBRARY",
                 "Characters saved here are available in the TUNE tab. "

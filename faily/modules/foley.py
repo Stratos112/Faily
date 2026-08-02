@@ -33,10 +33,18 @@ def _patch_model_output():
     _g.ModelOutput.__getitem__ = _getitem
     _g.ModelOutput._faily_patched = True
 
+
 _BUNDLED: dict[str, str] = {
-    "AudioLDM2 (diffusion, versatile)": "cvssp/audioldm2",
-    "AudioLDM2 Large":                  "cvssp/audioldm2-large",
+    "AudioLDM2":            "cvssp/audioldm2",
+    "AudioLDM2 Large":      "cvssp/audioldm2-large",
+    "Tango 2":              "declare-lab/tango2",
+    "Stable Audio Open":    "stabilityai/stable-audio-open-1.0",
+    "AudioGen Medium":      "facebook/audiogen-medium",
+    "AudioGen Large":       "facebook/audiogen-large",
 }
+
+_STABLE_AUDIO = {"stabilityai/stable-audio-open-1.0"}
+_AUDIOGEN = {"facebook/audiogen-medium", "facebook/audiogen-large"}
 
 SFX_OUTPUT_DIR = Path("outputs/sfx")
 
@@ -54,6 +62,8 @@ def scan_local() -> dict[str, str]:
 def get_models() -> dict[str, str]:
     return {**_BUNDLED, **scan_local()}
 
+
+# ── AudioLDM2 / Tango 2 ───────────────────────────────────────────────────────
 
 def _patch_generate_lm(pipe):
     """Windows diffusers uses output.last_hidden_state which doesn't exist on
@@ -114,6 +124,89 @@ def _loader_audioldm2(model_id: str):
     return pipe.to(manager.device)
 
 
+def _generate_audioldm2(pipe, prompt, duration, steps, guidance, candidates, progress_ref):
+    _patch_generate_lm(pipe)
+
+    def _cb(step, _ts, _lat):
+        if progress_ref is not None:
+            progress_ref[0] = (step + 1) / steps
+
+    result = pipe(
+        prompt,
+        num_inference_steps=steps,
+        audio_length_in_s=duration,
+        guidance_scale=guidance,
+        num_waveforms_per_prompt=candidates,
+        callback=_cb,
+        callback_steps=1,
+    )
+    return result.audios[0], 16000
+
+
+# ── Stable Audio Open ─────────────────────────────────────────────────────────
+
+def _loader_stable_audio(model_id: str):
+    from diffusers import StableAudioPipeline
+    import torch
+    dtype = torch.float16 if manager.device == "cuda" else torch.float32
+    pipe = StableAudioPipeline.from_pretrained(
+        model_id, torch_dtype=dtype, cache_dir=str(SFX_MODELS_DIR)
+    )
+    return pipe.to(manager.device)
+
+
+def _generate_stable_audio(pipe, prompt, duration, steps, guidance, candidates, progress_ref):
+    def _cb(step, _ts, _lat):
+        if progress_ref is not None:
+            progress_ref[0] = (step + 1) / steps
+
+    result = pipe(
+        prompt,
+        audio_end_in_s=duration,
+        num_inference_steps=steps,
+        guidance_scale=guidance,
+        num_waveforms_per_prompt=candidates,
+        callback=_cb,
+        callback_steps=1,
+    )
+    sr = pipe.vae.sampling_rate
+    # audios: (batch, channels, samples) — mix to mono
+    audio = result.audios[0].mean(axis=0) if result.audios[0].ndim > 1 else result.audios[0]
+    return audio, sr
+
+
+# ── AudioGen ──────────────────────────────────────────────────────────────────
+
+def _loader_audiogen(model_id: str):
+    from transformers import AutoProcessor, MusicgenForConditionalGeneration
+    processor = AutoProcessor.from_pretrained(model_id, cache_dir=str(SFX_MODELS_DIR))
+    model = MusicgenForConditionalGeneration.from_pretrained(
+        model_id, cache_dir=str(SFX_MODELS_DIR)
+    )
+    return (processor, model.to(manager.device))
+
+
+def _generate_audiogen(pipe_tuple, prompt, duration, candidates, progress_ref):
+    import torch
+    processor, model = pipe_tuple
+    sr = model.config.audio_encoder.sampling_rate
+    max_new_tokens = int(duration * 50)  # AudioGen uses ~50 tokens/sec
+
+    if progress_ref is not None:
+        progress_ref[0] = 0.1
+    inputs = processor(text=[prompt], padding=True, return_tensors="pt").to(manager.device)
+    with torch.no_grad():
+        audio = model.generate(**inputs, max_new_tokens=max_new_tokens)
+    if progress_ref is not None:
+        progress_ref[0] = 1.0
+
+    # audio: (batch, channels, samples)
+    wav = audio[0, 0].cpu().numpy().astype(np.float32)
+    return wav, sr
+
+
+# ── dispatch ──────────────────────────────────────────────────────────────────
+
 def generate(
     prompt: str,
     model_id: str,
@@ -131,24 +224,15 @@ def generate(
         output_dir = SFX_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    pipe = manager.load(model_id, lambda: _loader_audioldm2(model_id))
-    _patch_generate_lm(pipe)
-
-    def _cb(step: int, timestep: int, latents):
-        if progress_ref is not None:
-            progress_ref[0] = (step + 1) / steps
-
-    result = pipe(
-        prompt,
-        num_inference_steps=steps,
-        audio_length_in_s=duration,
-        guidance_scale=guidance,
-        num_waveforms_per_prompt=candidates,
-        callback=_cb,
-        callback_steps=1,
-    )
-
-    audio: np.ndarray = result.audios[0]
+    if model_id in _STABLE_AUDIO:
+        pipe = manager.load(model_id, lambda: _loader_stable_audio(model_id))
+        audio, sr = _generate_stable_audio(pipe, prompt, duration, steps, guidance, candidates, progress_ref)
+    elif model_id in _AUDIOGEN:
+        pipe_tuple = manager.load(model_id, lambda: _loader_audiogen(model_id))
+        audio, sr = _generate_audiogen(pipe_tuple, prompt, duration, candidates, progress_ref)
+    else:
+        pipe = manager.load(model_id, lambda: _loader_audioldm2(model_id))
+        audio, sr = _generate_audioldm2(pipe, prompt, duration, steps, guidance, candidates, progress_ref)
 
     if normalize:
         peak = np.max(np.abs(audio))
@@ -156,7 +240,6 @@ def generate(
             audio = audio / peak
 
     if fade > 0.0:
-        sr = 16000
         fade_samples = min(int(fade * sr), len(audio) // 2)
         if fade_samples > 0:
             ramp = np.linspace(0.0, 1.0, fade_samples)
@@ -165,5 +248,5 @@ def generate(
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out = output_dir / f"sfx_{ts}.wav"
-    sf.write(str(out), audio, 16000)
+    sf.write(str(out), audio, sr)
     return out

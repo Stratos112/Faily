@@ -60,7 +60,7 @@ def build_foley_tab():
     with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
 
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
-            _section_row("MODEL", "Which AudioLDM2 checkpoint to use. Larger models capture richer textures but take longer to load.")
+            _section_row("MODEL", "SFX generation backend. Stable Audio Open produces the highest quality (44.1kHz stereo). AudioGen is trained specifically on sound effects. AudioLDM2/Tango 2 are versatile diffusion models.")
 
             def _on_model_change(e):
                 new_id = get_models().get(e.value, e.value)
@@ -106,7 +106,7 @@ def build_foley_tab():
                 guid_val = ui.label("3.5").classes("text-[#888] font-mono text-xs w-12 text-right")
             guid_val.bind_text_from(guid_slider, "value", lambda v: f"{v:.1f}")
 
-            _section_row("CANDIDATES", "Generate N audio clips per run and keep the best. AudioLDM2 uses its internal CLAP model to score each clip against your prompt and selects the winner. Higher values improve quality at the cost of proportionally more time.")
+            _section_row("CANDIDATES", "Generate N audio clips per run and keep the best. Diffusion models (AudioLDM2, Tango, Stable Audio) score clips internally and return the winner. Ignored for AudioGen. Higher values improve quality at the cost of proportionally more time.")
             with ui.row().classes("items-center gap-3 w-full"):
                 cand_slider = ui.slider(min=1, max=4, step=1, value=1).classes("flex-grow")
                 cand_val = ui.label("1").classes("text-[#888] font-mono text-xs w-12 text-right")

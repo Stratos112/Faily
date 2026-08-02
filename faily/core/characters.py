@@ -252,6 +252,50 @@ def remove_ref_clip(name: str, file_key: str) -> dict:
     return cfg
 
 
+def rename_ref_audio(name: str, new_stem: str) -> Path:
+    """Rename the primary ref_audio file and update config."""
+    p = _cfg(name)
+    cfg = json.loads(p.read_text())
+    old_file = cfg.get("ref_audio", "")
+    if not old_file:
+        raise ValueError("Character has no ref_audio")
+    old_path = CHARACTERS_DIR / name / old_file
+    if not old_path.exists():
+        raise FileNotFoundError(f"ref_audio not found: {old_path}")
+    new_file = new_stem + old_path.suffix
+    new_path = old_path.parent / new_file
+    if new_path.exists() and new_path != old_path:
+        raise FileExistsError(f"'{new_file}' already exists")
+    old_path.rename(new_path)
+    cfg["ref_audio"] = new_file
+    p.write_text(json.dumps(cfg, indent=2))
+    return new_path
+
+
+def update_ref_clip(name: str, file_key: str, new_stem: str | None = None, new_transcript: str | None = None) -> dict:
+    """Update a ref_clip's filename and/or transcript in-place."""
+    p = _cfg(name)
+    cfg = json.loads(p.read_text())
+    for rc in cfg.get("ref_clips", []):
+        if rc["file"] == file_key:
+            if new_transcript is not None:
+                rc["transcript"] = new_transcript
+            if new_stem is not None:
+                old_path = CHARACTERS_DIR / name / file_key
+                prefix = file_key.rsplit("/", 1)[0] + "/" if "/" in file_key else ""
+                new_rel = prefix + new_stem + old_path.suffix
+                new_path = CHARACTERS_DIR / name / new_rel
+                if new_path.exists() and new_path != old_path:
+                    raise FileExistsError(f"'{new_stem}' already exists")
+                old_path.rename(new_path)
+                rc["file"] = new_rel
+            break
+    else:
+        raise ValueError(f"Ref clip '{file_key}' not found in '{name}'")
+    p.write_text(json.dumps(cfg, indent=2))
+    return cfg
+
+
 def set_rvc_model(name: str, model_path: str) -> dict:
     """Store the trained RVC model path in the character config."""
     p = _cfg(name)

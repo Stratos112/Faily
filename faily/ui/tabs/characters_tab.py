@@ -5,23 +5,23 @@ from faily.core.characters import (
     update_character_metadata,
     list_character_clips, list_character_favorites, rename_character_file,
     get_ref_chain, remove_ref_clip, set_rvc_model,
+    rename_ref_audio, update_ref_clip,
     CHARACTERS_DIR,
 )
-from faily.ui.components import section_label, show_error
+from faily.ui.components import section_label, show_error, send_to_edit
 
 _BTN = "font-mono tracking-widest"
 
 
 def build_characters_tab(on_speak, on_change):
     """
-    on_speak(name): navigate to TUNE tab with this character pre-selected
+    on_speak(name): navigate to SPEAK tab with this character pre-selected
     on_change():    notify app that characters were deleted (refresh other tabs)
     Returns: refresh() callable
     """
     _selected: list[str | None] = [None]
 
     def _grouped() -> tuple[list[dict], dict[str, list[dict]]]:
-        """Return (roots, children_by_parent). Works at arbitrary depth."""
         all_chars = list_characters()
         by_name = {c["name"]: c for c in all_chars}
         roots = [c for c in all_chars if "parent" not in c or c["parent"] not in by_name]
@@ -103,9 +103,56 @@ def build_characters_tab(on_speak, on_change):
                 ui.button("Rename", on_click=_do_rename).props("color=amber unelevated dense")
         dlg.open()
 
+    def _open_ref_edit(char_name: str, audio: Path, is_primary: bool, file_key: str | None, transcript: str):
+        with ui.dialog() as dlg, ui.card().classes(
+            "bg-[#1a1a1a] border border-[#333] min-w-[440px] gap-3"
+        ):
+            ui.label("EDIT REFERENCE").classes("text-white font-mono text-xs tracking-widest")
+
+            ui.label("NAME").classes("text-[#444] font-mono text-[10px] tracking-widest")
+            name_inp = (
+                ui.input(value=audio.stem)
+                .props("outlined dark dense")
+                .classes("w-full font-mono")
+            )
+
+            ui.label("TRANSCRIPT").classes("text-[#444] font-mono text-[10px] tracking-widest mt-2")
+            t_inp = (
+                ui.textarea(value=transcript)
+                .props("outlined dark rows=3")
+                .classes("w-full")
+            )
+
+            def _save():
+                new_stem = name_inp.value.strip()
+                new_t = t_inp.value.strip()
+                if not new_stem:
+                    return
+                try:
+                    if is_primary:
+                        if new_stem != audio.stem:
+                            rename_ref_audio(char_name, new_stem)
+                        update_character_metadata(char_name, {"transcript": new_t})
+                    else:
+                        update_ref_clip(
+                            char_name, file_key,
+                            new_stem if new_stem != audio.stem else None,
+                            new_t,
+                        )
+                    dlg.close()
+                    _rebuild_detail()
+                    ui.notify("saved", type="positive", timeout=2000)
+                except Exception as exc:
+                    show_error(exc)
+
+            name_inp.on("keydown.enter", lambda: _save())
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=dlg.close).props("flat dense color=grey")
+                ui.button("Save", on_click=_save).props("color=amber unelevated dense")
+        dlg.open()
+
     def _clip_section(char_name: str, title: str, icon_name: str, icon_color: str,
                       clips: list[Path], subfolder: str):
-        """Build a browseable, renameable clip list section inside the current context."""
         with ui.row().classes("items-center gap-2"):
             ui.label(title).classes("text-[#444] font-mono text-[10px] tracking-widest")
             ui.label(str(len(clips))).classes(
@@ -137,6 +184,10 @@ def build_characters_tab(on_speak, on_change):
                 ))
                 ui.label(".wav").classes("text-[#333] font-mono text-[10px] shrink-0")
                 ui.button(
+                    icon="tune",
+                    on_click=lambda c=clip: send_to_edit(c, char_name),
+                ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to Edit tab")
+                ui.button(
                     icon="drive_file_rename_outline",
                     on_click=lambda c=clip: _open_rename_dialog(char_name, subfolder, c),
                 ).props("flat dense color=grey").classes("shrink-0")
@@ -158,6 +209,7 @@ def build_characters_tab(on_speak, on_change):
             return
 
         is_base = "parent" not in char
+        char_dir = CHARACTERS_DIR / name
 
         with right_col:
             # ── header ──────────────────────────────────────────────────────
@@ -185,20 +237,6 @@ def build_characters_tab(on_speak, on_change):
             _meta_row("CREATED", created)
 
             if is_base:
-                ref = get_ref_path(name)
-                ref_label = ref.name if (ref and ref.exists()) else "⚠  missing"
-                _meta_row("REF AUDIO", ref_label)
-
-                transcript = char.get("transcript", "").strip()
-                if transcript:
-                    ui.label("TRANSCRIPT").classes(
-                        "text-[#444] font-mono text-[10px] tracking-widest mt-1"
-                    )
-                    ui.label(transcript).classes(
-                        "text-[#aaa] font-mono text-[11px] leading-relaxed "
-                        "bg-[#1a1a1a] rounded px-3 py-2 w-full"
-                    )
-
                 # ── variants ────────────────────────────────────────────────
                 _, children_map = _grouped()
                 children = children_map.get(name, [])
@@ -215,34 +253,6 @@ def build_characters_tab(on_speak, on_change):
                             ui.label(f"↳ {sub['name']}").classes(
                                 "text-[#666] font-mono text-[10px] hover:text-amber-400"
                             )
-
-                # ── ref audio player ─────────────────────────────────────────
-                if ref and ref.exists():
-                    ui.separator().classes("my-3 opacity-20")
-                    ui.label("REFERENCE AUDIO").classes(
-                        "text-[#444] font-mono text-[10px] tracking-widest"
-                    )
-                    rel = ref.relative_to(Path("outputs"))
-                    ui.audio(f"/outputs/{rel.as_posix()}").classes("w-full rounded mt-1")
-
-                # ── personality clips ────────────────────────────────────────
-                clips = list_character_clips(name)
-                if clips:
-                    ui.separator().classes("my-3 opacity-20")
-                    _clip_section(
-                        name, "PERSONALITY CLIPS", "library_music", "text-amber-400",
-                        clips, "clips",
-                    )
-
-                # ── favorites ────────────────────────────────────────────────
-                favs = list_character_favorites(name)
-                if favs:
-                    ui.separator().classes("my-3 opacity-20")
-                    _clip_section(
-                        name, "FAVORITES", "favorite", "text-pink-400",
-                        favs, "favorites",
-                    )
-
             else:
                 _meta_row("PARENT", char.get("parent", "—"))
                 if char.get("backend"):
@@ -257,58 +267,132 @@ def build_characters_tab(on_speak, on_change):
                         "bg-[#1a1a1a] rounded px-3 py-2 w-full"
                     )
 
-            # ── added ref clips (base and sub) ────────────────────────────────
-            own_refs = char.get("ref_clips", [])
-            if own_refs:
-                ui.separator().classes("my-3 opacity-20")
-                ui.label("ADDED REF CLIPS").classes(
-                    "text-[#444] font-mono text-[10px] tracking-widest"
-                )
-                for rc in own_refs:
-                    file_key = rc["file"]
-                    t = rc.get("transcript", "").strip()
-                    with ui.row().classes("items-center gap-2 w-full px-1 py-0.5"):
-                        ui.icon("mic", size="12px").classes("text-amber-500 shrink-0")
-                        with ui.column().classes("gap-0 flex-grow min-w-0"):
-                            ui.label(file_key.split("/")[-1]).classes(
-                                "text-[#aaa] font-mono text-[10px] truncate"
-                            )
-                            if t:
-                                ui.label(f'"{t}"').classes(
-                                    "text-[#555] font-mono text-[10px] italic leading-tight"
-                                )
-                        def _remove_clip(fk=file_key, n=name):
-                            remove_ref_clip(n, fk)
-                            _rebuild_detail()
-                        ui.button(
-                            icon="close", on_click=_remove_clip,
-                        ).props("flat dense color=grey").classes("shrink-0 opacity-40 hover:opacity-100")
+            # ── references (unified) ──────────────────────────────────────
+            own_refs = []
+            if is_base and "ref_audio" in char:
+                ra = char_dir / char["ref_audio"]
+                if ra.exists():
+                    own_refs.append({
+                        "audio": ra, "transcript": char.get("transcript", ""),
+                        "kind": "primary", "file_key": None,
+                    })
+            for rc in char.get("ref_clips", []):
+                rp = char_dir / rc["file"]
+                if rp.exists():
+                    own_refs.append({
+                        "audio": rp, "transcript": rc.get("transcript", ""),
+                        "kind": "clip", "file_key": rc["file"],
+                    })
 
-            # ── reference chain ───────────────────────────────────────────────
-            chain = get_ref_chain(name)
-            if chain:
+            full_chain = get_ref_chain(name)
+            own_paths = {r["audio"] for r in own_refs}
+            inherited = [e for e in full_chain if e["audio"] not in own_paths]
+
+            if own_refs or inherited:
                 ui.separator().classes("my-3 opacity-20")
                 with ui.row().classes("items-center gap-2 w-full"):
-                    ui.label(f"REFERENCE CHAIN  ({len(chain)} clips)").classes(
+                    ui.label("REFERENCES").classes(
                         "text-[#444] font-mono text-[10px] tracking-widest flex-grow"
                     )
-                    ui.button("RELOAD", icon="refresh", on_click=_rebuild_detail).props(
-                        "flat dense color=amber"
-                    ).classes("font-mono text-[10px] tracking-widest shrink-0")
+                    ui.label(str(len(own_refs) + len(inherited))).classes(
+                        "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
+                    )
 
-                for entry in chain:
-                    audio: Path = entry["audio"]
-                    t: str = entry.get("transcript", "").strip()
-                    with ui.row().classes("items-start gap-2 w-full px-1 py-0.5"):
-                        ui.icon("mic", size="12px").classes("text-[#555] mt-0.5 shrink-0")
+                ref_player = ui.audio("").classes("w-full rounded mt-1")
+                ref_player.set_visibility(False)
+
+                for ref in own_refs:
+                    audio = ref["audio"]
+                    rel = audio.relative_to(Path("outputs"))
+                    url = f"/outputs/{rel.as_posix()}"
+                    is_primary = ref["kind"] == "primary"
+
+                    with ui.row().classes(
+                        "w-full items-center gap-1 px-2 py-1 rounded "
+                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
+                    ):
+                        ui.icon("star" if is_primary else "mic", size="12px").classes(
+                            ("text-amber-500" if is_primary else "text-[#555]")
+                            + " shrink-0 cursor-pointer"
+                        ).on("click", lambda u=url: (
+                            ref_player.set_source(u), ref_player.set_visibility(True)
+                        ))
                         with ui.column().classes("gap-0 flex-grow min-w-0"):
-                            ui.label(audio.name).classes(
-                                "text-[#666] font-mono text-[10px] truncate"
-                            )
+                            ui.label(audio.stem).classes(
+                                "text-[#aaa] font-mono text-[10px] truncate cursor-pointer"
+                            ).on("click", lambda u=url: (
+                                ref_player.set_source(u), ref_player.set_visibility(True)
+                            ))
+                            t = ref["transcript"]
                             if t:
                                 ui.label(f'"{t}"').classes(
-                                    "text-[#444] font-mono text-[10px] italic leading-tight"
+                                    "text-[#555] font-mono text-[10px] italic leading-tight truncate"
                                 )
+                        ui.button(
+                            icon="tune",
+                            on_click=lambda r=ref: send_to_edit(r["audio"], name),
+                        ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to Edit tab")
+                        ui.button(
+                            icon="edit",
+                            on_click=lambda r=ref: _open_ref_edit(
+                                name, r["audio"], r["kind"] == "primary",
+                                r.get("file_key"), r["transcript"]
+                            ),
+                        ).props("flat dense color=grey").classes("shrink-0")
+                        if not is_primary:
+                            def _del(fk=ref["file_key"]):
+                                remove_ref_clip(name, fk)
+                                _rebuild_detail()
+                            ui.button(
+                                icon="close", on_click=_del,
+                            ).props("flat dense color=grey").classes(
+                                "shrink-0 opacity-40 hover:opacity-100"
+                            )
+
+                for entry in inherited:
+                    audio = entry["audio"]
+                    if not audio.exists():
+                        continue
+                    rel = audio.relative_to(Path("outputs"))
+                    url = f"/outputs/{rel.as_posix()}"
+                    with ui.row().classes(
+                        "w-full items-center gap-1 px-2 py-1 rounded "
+                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
+                    ):
+                        ui.icon("link", size="12px").classes(
+                            "text-[#333] shrink-0 cursor-pointer"
+                        ).on("click", lambda u=url: (
+                            ref_player.set_source(u), ref_player.set_visibility(True)
+                        ))
+                        with ui.column().classes("gap-0 flex-grow min-w-0"):
+                            ui.label(audio.stem).classes(
+                                "text-[#555] font-mono text-[10px] truncate cursor-pointer"
+                            ).on("click", lambda u=url: (
+                                ref_player.set_source(u), ref_player.set_visibility(True)
+                            ))
+                            if entry.get("transcript"):
+                                ui.label(f'"{entry["transcript"]}"').classes(
+                                    "text-[#333] font-mono text-[10px] italic leading-tight truncate"
+                                )
+                        ui.label("↑ parent").classes("text-[#333] font-mono text-[9px] shrink-0")
+
+            # ── personality clips ────────────────────────────────────────
+            if is_base:
+                clips = list_character_clips(name)
+                if clips:
+                    ui.separator().classes("my-3 opacity-20")
+                    _clip_section(
+                        name, "PERSONALITY CLIPS", "library_music", "text-amber-400",
+                        clips, "clips",
+                    )
+
+                favs = list_character_favorites(name)
+                if favs:
+                    ui.separator().classes("my-3 opacity-20")
+                    _clip_section(
+                        name, "FAVORITES", "favorite", "text-pink-400",
+                        favs, "favorites",
+                    )
 
             # ── actions ──────────────────────────────────────────────────────
             ui.separator().classes("mt-4 mb-3 opacity-20")
@@ -320,12 +404,6 @@ def build_characters_tab(on_speak, on_change):
                 )
 
             with ui.row().classes("gap-2 flex-wrap"):
-                (
-                    ui.button("TUNE", icon="record_voice_over", on_click=lambda n=name: on_speak(n))
-                    .props("color=amber unelevated")
-                    .classes(_BTN)
-                )
-
                 train_btn_holder: list = []
 
                 async def _do_train(n=name):
@@ -449,7 +527,13 @@ def build_characters_tab(on_speak, on_change):
     # ── layout ────────────────────────────────────────────────────────────────
     with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
         with ui.column().classes("gap-2 p-8 border-r border-[#252525] overflow-y-auto"):
-            section_label("CHARACTER LIBRARY")
+            with ui.row().classes("w-full items-center gap-2"):
+                section_label("CHARACTER LIBRARY")
+                ui.space()
+                ui.button(
+                    icon="refresh",
+                    on_click=lambda: (_rebuild_list(), _rebuild_detail()),
+                ).props("flat dense color=grey").tooltip("Reload")
             left_col = ui.column().classes("w-full gap-1 mt-2")
 
         with ui.column().classes("gap-3 p-8 overflow-y-auto"):

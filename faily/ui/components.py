@@ -8,6 +8,28 @@ from nicegui import ui
 _LBL = "text-[#555] font-mono text-[10px] tracking-widest"
 _DIM = "text-[#444] font-mono text-xs"
 
+# registered by build_edit_tab() via set_edit_callback()
+_edit_fn: list = [lambda path, char_name=None: None]
+
+# registered by build_daw_tab() via set_daw_callback()
+_daw_fn: list = [lambda path, char_name=None: None]
+
+
+def set_edit_callback(fn) -> None:
+    _edit_fn[0] = fn
+
+
+def set_daw_callback(fn) -> None:
+    _daw_fn[0] = fn
+
+
+def send_to_edit(path: Path, char_name: str | None = None) -> None:
+    _edit_fn[0](path, char_name)
+
+
+def send_to_daw(path: Path, char_name: str | None = None) -> None:
+    _daw_fn[0](path, char_name)
+
 
 def section_label(text: str):
     ui.label(text).classes(_LBL)
@@ -231,6 +253,18 @@ def output_panel(output_subdir: str, get_char_name=None):
                     ui.button(icon="favorite_border", on_click=lambda p=path: _fav(p)).props(
                         "flat dense color=grey"
                     ).classes("shrink-0").tooltip("Favorite")
+                ui.button(
+                    icon="queue_music",
+                    on_click=lambda p=path: _daw_fn[0](
+                        p, get_char_name() if get_char_name else None
+                    ),
+                ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to DAW")
+                ui.button(
+                    icon="tune",
+                    on_click=lambda p=path: _edit_fn[0](
+                        p, get_char_name() if get_char_name else None
+                    ),
+                ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to Edit tab")
                 ui.button(icon="file_download", on_click=lambda p=path: _download_local(p)).props(
                     "flat dense color=grey"
                 ).classes("shrink-0").tooltip("Copy to Downloads")
