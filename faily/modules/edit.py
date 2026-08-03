@@ -71,8 +71,9 @@ def apply_edits(
 
 
 def mix_tracks(tracks: list[dict], out: Path) -> Path:
-    """tracks: [{"path": Path|None, "vol": float, "muted": bool}]"""
-    arrays: list[np.ndarray] = []
+    """tracks: [{"path": Path|None, "vol": float, "muted": bool, "offset": float}]
+    offset is in seconds; clips are mixed starting at that position."""
+    segments: list[tuple[int, np.ndarray]] = []  # (offset_samples, data)
     target_sr: int | None = None
 
     for t in tracks:
@@ -87,20 +88,21 @@ def mix_tracks(tracks: list[dict], out: Path) -> Path:
             wav = torch.from_numpy(data.T.copy())
             data = F.resample(wav, sr, target_sr).T.numpy()
         data = data * float(t.get("vol", 1.0))
-        arrays.append(data)
+        offset_samples = int(t.get("offset", 0.0) * target_sr)
+        segments.append((offset_samples, data))
 
-    if not arrays or target_sr is None:
+    if not segments or target_sr is None:
         raise ValueError("No unmuted tracks to mix")
 
-    max_len = max(a.shape[0] for a in arrays)
-    max_ch  = max(a.shape[1] for a in arrays)
-    mixed = np.zeros((max_len, max_ch), dtype=np.float32)
+    max_end = max(off + a.shape[0] for off, a in segments)
+    max_ch  = max(a.shape[1] for _, a in segments)
+    mixed = np.zeros((max_end, max_ch), dtype=np.float32)
 
-    for a in arrays:
+    for off, a in segments:
         n, c = a.shape
         if c < max_ch:
             a = np.tile(a, (1, max_ch // c))
-        mixed[:n] += a
+        mixed[off:off + n] += a
 
     peak = np.abs(mixed).max()
     if peak > 1.0:
