@@ -114,7 +114,7 @@ def build_vc_tab():
         ui.notify(f"saved as  {new_path.name}", type="positive", timeout=2000)
 
     async def _generate():
-        if _backend[0] != "kokoro" and (_ref_path[0] is None or not _ref_path[0].exists()):
+        if _ref_path[0] is None or not _ref_path[0].exists():
             ui.notify("Select a reference sample first", type="warning")
             return
         text = text_input.value.strip() or "sample text"
@@ -129,7 +129,6 @@ def build_vc_tab():
             path = await ni_run.io_bound(
                 vc_generate, text, _ref_path[0], _progress, None,
                 _backend[0], _param1[0], _param2[0], ref_text_input.value,
-                style_prompt_input.value,
                 char_name=name_input.value.strip() or None,
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
@@ -158,7 +157,6 @@ def build_vc_tab():
             async def _on_backend(key: str):
                 _backend[0] = key
                 ref_text_row.set_visibility(key == "f5_tts")
-                style_prompt_row.set_visibility(key == "kokoro")
                 _rebuild_params()
                 await _autofill_transcript()
 
@@ -211,21 +209,6 @@ def build_vc_tab():
                     .props("outlined dark")
                 )
             ref_text_row.set_visibility(False)
-
-            with ui.column().classes("w-full gap-2") as style_prompt_row:
-                _section_row(
-                    "VOICE NAME",
-                    "Kokoro voice for the expression pass. If a reference sample is selected above, "
-                    "FreeVC then converts the output to that voice. "
-                    "Examples: af_heart (warm), am_adam (authoritative), af_bella (expressive), af_sky (soft). "
-                    "Leave blank for af_heart.",
-                )
-                style_prompt_input = (
-                    ui.input(placeholder="e.g. af_heart, am_adam, af_bella, af_sky…")
-                    .classes("w-full")
-                    .props("outlined dark")
-                )
-            style_prompt_row.set_visibility(False)
 
             # TODO: refactor — character management (save/delete/list) belongs in the
             # ONESHOT tab; this tab should focus purely on the cloning/auditioning process

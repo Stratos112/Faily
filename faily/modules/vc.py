@@ -102,12 +102,6 @@ BACKENDS = {
         "param1": {"label": "EXAGGERATION", "tooltip": "Emotional intensity. Low = calm and neutral. High = expressive.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
         "param2": {"label": "CFG WEIGHT", "tooltip": "Guidance strength. Higher = more faithful to the reference voice style.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
     },
-    "kokoro": {
-        "label": "Kokoro + FreeVC",
-        "desc": "Kokoro expression pass → FreeVC voice swap. Fast and styleable via voice name. The two-stage approach can garble long inputs — best for short punchy lines. No reference transcript needed.",
-        "param1": {"label": "SPEED", "tooltip": "Speech rate for the Kokoro expression pass. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
-        "param2": {"label": "LANGUAGE", "tooltip": "0 = American English  1 = British English  2 = Japanese  3 = Mandarin Chinese", "min": 0, "max": 3, "step": 1, "default": 0},
-    },
     # styletss2 omitted — dep conflicts with current stack (accelerate<0.26, huggingface-hub<0.20).
 }
 
@@ -133,6 +127,10 @@ EXPRESSION_ENGINES = {
     "parler": {
         "label": "Parler-TTS",
         "desc": "Parler-TTS · Describe tone, pace, and delivery in plain English. Expressive but inconsistent — results vary by phrasing. Lower MAX TOKENS reduces downstream garbling in voice conversion.",
+    },
+    "kokoro": {
+        "label": "Kokoro",
+        "desc": "Fast, styleable via voice name (e.g. af_heart, am_adam). No text description needed — picks a Kokoro intermediate voice then FreeVC converts to character. Best for short punchy lines.",
     },
     # Future — uncomment when CosyVoice 2 loader is implemented:
     # "cosyvoice2": {
@@ -526,6 +524,8 @@ def tune_generate(
     normalize_db: float | None = -18.0,
     max_new_tokens: int = 500,
     stage2_backend: str = "freevc",
+    engine_speed: float = 1.0,
+    engine_lang: int = 0,
 ) -> Path:
     """Two-stage TUNE pipeline: expression engine → voice conversion."""
     if output_dir is None:
@@ -542,6 +542,18 @@ def tune_generate(
     # Stage 1: expression engine → expressive intermediate audio
     if engine == "parler":
         _parler_generate(text, stage1, style_prompt=expression, max_new_tokens=max_new_tokens)
+    elif engine == "kokoro":
+        import numpy as np
+        lang = _KOKORO_LANGS[max(0, min(int(engine_lang), len(_KOKORO_LANGS) - 1))]
+        def _kload():
+            from kokoro import KPipeline
+            return KPipeline(lang_code=lang)
+        pipeline = manager.load(f"kokoro_{lang}", _kload)
+        voice = expression.strip() or "af_heart"
+        chunks = [audio for _, _, audio in pipeline(text, voice=voice, speed=engine_speed)]
+        if not chunks:
+            raise RuntimeError("Kokoro produced no audio output")
+        sf.write(str(stage1), np.concatenate(chunks), 24000)
     else:
         raise ValueError(f"Unknown expression engine: {engine!r}")
 
@@ -588,7 +600,6 @@ def generate(
     param1: float | None = None,
     param2: float | None = None,
     ref_text: str = "",
-    style_prompt: str = "",
     char_name: str | None = None,
 ) -> Path:
     if output_dir is None:
@@ -615,8 +626,6 @@ def generate(
         _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)
     elif backend == "chatterbox":
         _chatterbox_generate(text, ref_path, out, exaggeration=p1, cfg_weight=p2)
-    elif backend == "kokoro":
-        _kokoro_generate(text, out, style_prompt=style_prompt, speed=p1, lang_idx=int(p2), ref_path=ref_path)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 

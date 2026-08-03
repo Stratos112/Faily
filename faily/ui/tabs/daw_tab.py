@@ -315,6 +315,8 @@ def build_daw_tab():
             _show[0] = not _show[0]
             browser_col.set_visibility(_show[0])
             toggle_btn.set_text("CHARACTERS ▲" if _show[0] else "CHARACTERS ▼")
+            if _show[0]:
+                char_pick.set_options({_NO_CHAR: _NO_CHAR, **_char_opts()}, value=_NO_CHAR)
 
         toggle_btn = (
             ui.button("CHARACTERS ▼", on_click=_toggle_browser)
@@ -381,12 +383,6 @@ def build_daw_tab():
                     _clip_chip(f, "♥")
 
             char_pick.on_value_change(lambda e: _on_char_pick(e.value))
-
-            # populate character options when browser is first opened
-            def _init_char_opts():
-                if _show[0]:
-                    char_pick.set_options({_NO_CHAR: _NO_CHAR, **_char_opts()}, value=_NO_CHAR)
-            ui.timer(0.1, _init_char_opts, once=True)
 
         ui.separator().classes("opacity-10 shrink-0")
 

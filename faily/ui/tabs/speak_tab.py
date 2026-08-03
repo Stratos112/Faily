@@ -46,6 +46,8 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     _stage2:       list[str]   = ["freevc"]
     _normalize_db: list[float] = [-18.0]
     _max_tokens:   list[int]   = [500]
+    _kok_speed:    list[float] = [1.0]
+    _kok_lang:     list[int]   = [0]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -71,15 +73,18 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         _progress[0] = 0.0
         _out["model_loader"].set_visibility(True)
         _poll.active = True
+        expression = kok_voice_input.value.strip() if _engine[0] == "kokoro" else expr_input.value.strip()
         with build_ref_audio(char_state[0]) as (ref, _):
             try:
                 path = await ni_run.io_bound(
                     tune_generate,
-                    text, expr_input.value.strip(), _engine[0], ref, _progress,
+                    text, expression, _engine[0], ref, _progress,
                     char_name=char_state[0] if char_state[0] != _NO_CHAR else None,
                     normalize_db=_normalize_db[0],
                     max_new_tokens=_max_tokens[0],
                     stage2_backend=_stage2[0],
+                    engine_speed=_kok_speed[0],
+                    engine_lang=_kok_lang[0],
                 )
                 _out["main_player"].set_source(f"/outputs/vc/{path.name}")
                 _out["status"].set_text(f"✓  {path.name}")
@@ -96,6 +101,11 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 _out["progress_bar"].set_visibility(False)
                 gen_btn.enable()
 
+    def _on_engine(key: str):
+        _engine[0] = key
+        parler_row.set_visibility(key == "parler")
+        kokoro_row.set_visibility(key == "kokoro")
+
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
         _section_row("CHARACTER", "The voice to speak in. Characters are created in the CLONE tab.")
         char_select = (
@@ -105,42 +115,71 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
 
         _section_row("EXPRESSION ENGINE", "Generates expressive intermediate audio. Hover each option for details.")
-        model_picker(EXPRESSION_ENGINES, _DEFAULT_ENGINE, lambda k: _engine.__setitem__(0, k))
+        model_picker(EXPRESSION_ENGINES, _DEFAULT_ENGINE, _on_engine)
 
         _section_row("VOICE CONVERSION", "Applies the character's voice to the intermediate audio.")
         model_picker(STAGE2_BACKENDS, "freevc", lambda k: _stage2.__setitem__(0, k))
 
-        _section_row(
-            "STYLE",
-            "How the line should be delivered — tone, emotion, pacing. "
-            "Examples: 'cold fury, slow and deliberate', 'breathless and panicked'. Leave blank for neutral.",
-        )
-        expr_input = (
-            ui.textarea(placeholder="e.g. cold fury, slow and deliberate…")
-            .classes("w-full").props("outlined dark rows=3")
-        )
-
-        _section_row("LINE", "What the character says.")
-        text_input = (
-            ui.textarea(placeholder="Enter the line…")
-            .classes("w-full").props("outlined dark rows=4")
-        )
-
-        _section_row("MAX TOKENS", "Parler generation length. Raise if lines are getting cut off.")
-        with ui.row().classes("w-full items-center gap-3"):
-            tok_lbl = ui.label("500").classes(
-                "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+        # ── Parler controls ───────────────────────────────────────────────────
+        with ui.column().classes("w-full gap-3") as parler_row:
+            _section_row(
+                "STYLE",
+                "How the line should be delivered — tone, emotion, pacing. "
+                "Examples: 'cold fury, slow and deliberate', 'breathless and panicked'. Leave blank for neutral.",
             )
-            def _on_tok(e): _max_tokens[0] = int(e.value); tok_lbl.set_text(str(int(e.value)))
-            ui.slider(min=50, max=1200, step=50, value=500, on_change=_on_tok).classes("flex-grow").props("color=amber")
+            expr_input = (
+                ui.textarea(placeholder="e.g. cold fury, slow and deliberate…")
+                .classes("w-full").props("outlined dark rows=3")
+            )
+            _section_row("MAX TOKENS", "Parler generation length. Raise if lines are getting cut off.")
+            with ui.row().classes("w-full items-center gap-3"):
+                tok_lbl = ui.label("500").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_tok(e): _max_tokens[0] = int(e.value); tok_lbl.set_text(str(int(e.value)))
+                ui.slider(min=50, max=1200, step=50, value=500, on_change=_on_tok).classes("flex-grow").props("color=amber")
 
-        _section_row("PRE-CONVERT LEVEL", "Normalise Parler output before FreeVC. Consistent level reduces distortion.")
+        # ── Kokoro controls ───────────────────────────────────────────────────
+        with ui.column().classes("w-full gap-3") as kokoro_row:
+            _section_row(
+                "VOICE NAME",
+                "Kokoro voice for the expression pass. Examples: af_heart (warm), am_adam (authoritative), "
+                "af_bella (expressive), af_sky (soft). Leave blank for af_heart.",
+            )
+            kok_voice_input = (
+                ui.input(placeholder="e.g. af_heart, am_adam, af_bella…")
+                .classes("w-full").props("outlined dark dense")
+            )
+            _section_row("SPEED", "Speech rate for the Kokoro pass. 1.0 is natural pace.")
+            with ui.row().classes("w-full items-center gap-3"):
+                spd_lbl = ui.label("1.00×").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_spd(e): _kok_speed[0] = float(e.value); spd_lbl.set_text(f"{e.value:.2f}×")
+                ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_spd).classes("flex-grow").props("color=amber")
+            _section_row("LANGUAGE", "0 = American English  1 = British English  2 = Japanese  3 = Mandarin")
+            with ui.row().classes("w-full items-center gap-3"):
+                lang_lbl = ui.label("0").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_lang(e): _kok_lang[0] = int(e.value); lang_lbl.set_text(str(int(e.value)))
+                ui.slider(min=0, max=3, step=1, value=0, on_change=_on_lang).classes("flex-grow").props("color=amber")
+        kokoro_row.set_visibility(False)
+
+        # ── shared controls ───────────────────────────────────────────────────
+        _section_row("PRE-CONVERT LEVEL", "Normalise stage-1 output before voice conversion. Consistent level reduces distortion.")
         with ui.row().classes("w-full items-center gap-3"):
             norm_lbl = ui.label("-18 dBFS").classes(
                 "font-mono text-[10px] text-amber-400 w-16 shrink-0 text-right"
             )
             def _on_norm(e): _normalize_db[0] = float(e.value); norm_lbl.set_text(f"{int(e.value)} dBFS")
             ui.slider(min=-24, max=-3, step=1, value=-18, on_change=_on_norm).classes("flex-grow").props("color=amber")
+
+        _section_row("LINE", "What the character says.")
+        text_input = (
+            ui.textarea(placeholder="Enter the line…")
+            .classes("w-full").props("outlined dark rows=4")
+        )
 
         ui.space()
         gen_btn = (
@@ -310,7 +349,6 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
     def _on_backend(key: str):
         _backend[0] = key
         ref_text_row.set_visibility(key == "f5_tts")
-        style_prompt_row.set_visibility(key == "kokoro")
         _rebuild_params()
 
     async def _generate():
@@ -332,7 +370,6 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                     text, ref, _progress, None,
                     _backend[0], _param1[0], _param2[0],
                     ref_text_input.value or chain_transcript,
-                    style_prompt_input.value,
                     char_name=char_state[0],
                 )
                 _out["main_player"].set_source(f"/outputs/vc/{path.name}")
@@ -373,14 +410,6 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 .classes("w-full").props("outlined dark")
             )
         ref_text_row.set_visibility(False)
-
-        with ui.column().classes("w-full gap-2") as style_prompt_row:
-            _section_row("VOICE NAME", "Kokoro voice. Examples: af_heart, am_adam, af_bella, af_sky.")
-            style_prompt_input = (
-                ui.input(placeholder="e.g. af_heart, am_adam…")
-                .classes("w-full").props("outlined dark")
-            )
-        style_prompt_row.set_visibility(False)
 
         _section_row("TEXT", "What the character says.")
         text_input = (

@@ -442,6 +442,11 @@ def build_characters_tab(on_speak, on_change):
                 )
                 train_btn_holder.append(train_btn)
 
+                ui.button(
+                    "SPEAK", icon="spatial_audio",
+                    on_click=lambda n=name: on_speak(n),
+                ).props("color=amber unelevated").classes(_BTN)
+
                 ui.button("EDIT", icon="edit", on_click=lambda n=name: _open_edit(n)).props(
                     "flat color=grey"
                 )
