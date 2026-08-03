@@ -116,6 +116,15 @@ def speak_generate(
     model = np.load(str(model_path))
     target_env = model["mean_env"]
 
+    # Auto pitch-match to the character's trained F0 when user hasn't set a manual shift
+    if pitch_shift == 0 and "f0_mean" in model:
+        tts_f0 = _voiced_f0(audio)
+        if len(tts_f0):
+            tts_log_f0 = np.log(tts_f0).mean()
+            target_log_f0 = float(model["f0_mean"][0])
+            auto_semitones = (target_log_f0 - tts_log_f0) * 12.0 / np.log(2)
+            audio = _shift_pitch(audio, auto_semitones)
+
     if index_rate > 0:
         audio = _envelope_transfer(audio, target_env, index_rate, filter_radius)
 
@@ -157,13 +166,14 @@ def _envelope_transfer(
 
 
 def _tts(text: str) -> np.ndarray:
-    """Generate neutral speech; try kokoro then MMS-TTS fallback."""
+    """Generate neutral Kokoro speech; fall back to MMS-TTS if unavailable."""
     import tempfile
 
     tmp_dir = Path(tempfile.mkdtemp())
     try:
-        from faily.modules.vc import generate
-        out = generate(text, ref_path=None, output_dir=tmp_dir, backend="kokoro")
+        from faily.modules.vc import neutral_tts
+        out = tmp_dir / "tts.wav"
+        neutral_tts(text, out)
         audio, sr = sf.read(str(out), dtype="float32", always_2d=False)
         if audio.ndim > 1:
             audio = audio.mean(axis=1)

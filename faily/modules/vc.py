@@ -633,3 +633,8 @@ def generate(
         progress_ref[0] = 1.0
 
     return out
+
+
+def neutral_tts(text: str, out: Path, voice: str = "af_heart", speed: float = 1.0, lang_idx: int = 0) -> None:
+    """Generate neutral Kokoro speech into out (no ref/VC)."""
+    _kokoro_generate(text, out, style_prompt=voice, speed=speed, lang_idx=lang_idx)
