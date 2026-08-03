@@ -82,18 +82,26 @@ pip install chatterbox-tts     # Chatterbox (CFG-guided)
 ```bat
 pip install kokoro             # Kokoro multi-voice TTS
 pip install parler-tts         # Parler-TTS (description-driven style)
-pip install "git+https://github.com/myshell-ai/MeloTTS.git"
 ```
 
-After MeloTTS:
+MeloTTS must be installed `--no-deps` on Windows + Python 3.14 — its pinned `tokenizers` version has no cp314 wheel (needs Rust), and `mecab-python3`/`fugashi` require MeCab C headers (not in the standard Windows MeCab installer). Install the current `tokenizers` first so it's satisfied, then add English-only runtime deps manually:
+
 ```bat
+pip install tokenizers
+pip install --no-deps "git+https://github.com/myshell-ai/MeloTTS.git"
+pip install librosa inflect langdetect
 python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng')"
 ```
 
+> This gives EN-US/BR/AU/INDIA/Default accents. ES/FR/ZH/JP/KR need `mecab-python3` which requires MeCab dev headers — not in the standard Windows MeCab installer.
+
 #### 6. OpenVoice v2 (SPEAK tab, voice conversion stage 2)
 
+Install `--no-deps` for the same tokenizers pin reason:
+
 ```bat
-pip install "git+https://github.com/myshell-ai/OpenVoice.git"
+pip install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"
+pip install wavmark
 ```
 
 > The OpenVoice converter checkpoint (~200 MB) downloads automatically from HuggingFace on first use.
@@ -179,7 +187,7 @@ The expression stage generates intermediate audio in the *style* you describe. V
 |---|---|---|---|
 | **Parler-TTS** | `parler-tts` | Free-text description | "cold fury, slow and deliberate" — expressive but inconsistent |
 | **Kokoro** | `kokoro` | Voice name (e.g. `af_heart`, `am_adam`) | Fast; best for short punchy lines |
-| **MeloTTS** | `MeloTTS` (GitHub) | Accent dropdown | EN-US/BR/AU/INDIA or ES/FR/ZH/JP/KR; very consistent; pairs well with OpenVoice VC |
+| **MeloTTS** | `MeloTTS` (GitHub) | Accent dropdown | EN-US/BR/AU/INDIA; very consistent; pairs well with OpenVoice VC. ES/FR/ZH/JP/KR require `mecab-python3` + system MeCab headers — not installable on stock Windows. |
 
 ---
 

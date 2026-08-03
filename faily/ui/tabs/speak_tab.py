@@ -179,8 +179,8 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         with ui.column().classes("w-full gap-3") as melotts_row:
             _section_row(
                 "ACCENT / SPEAKER",
-                "MeloTTS voice. Pick an English accent or another language — the accent is the stage-1 "
-                "style, and voice conversion applies the character's timbre on top.",
+                "MeloTTS English accent for the expression pass. "
+                "Voice conversion applies the character's timbre on top.",
             )
             melo_opts = {s: s.replace("-", " · ") for s in _MELO_SPEAKERS}
             ui.select(

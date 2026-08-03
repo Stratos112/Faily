@@ -87,11 +87,22 @@ echo   parler-tts...
 "%VENV%\Scripts\pip" install parler-tts --quiet
 if errorlevel 1 ( echo WARNING: parler-tts install failed. )
 
-echo   MeloTTS ^(from GitHub^)...
-"%VENV%\Scripts\pip" install "git+https://github.com/myshell-ai/MeloTTS.git" --quiet
-if errorlevel 1 ( echo WARNING: MeloTTS install failed. )
+:: MeloTTS has two problematic deps on Windows + Python 3.14:
+::   mecab-python3 / fugashi — need MeCab C headers (only used for JP/ZH tokenization)
+::   tokenizers — MeloTTS pins an old version with no cp314 wheel (needs Rust to compile)
+:: Fix: pre-install current tokenizers ^(has cp314 wheel^), then install MeloTTS --no-deps,
+:: then add only the English-compatible runtime deps manually.
+echo   tokenizers ^(pre-install latest to avoid Rust compiler^)...
+"%VENV%\Scripts\pip" install tokenizers --quiet
 
-:: MeloTTS NLTK data (needed at runtime for text processing)
+echo   MeloTTS ^(--no-deps to skip mecab/fugashi; English-only^)...
+"%VENV%\Scripts\pip" install --no-deps "git+https://github.com/myshell-ai/MeloTTS.git"
+if errorlevel 1 ( echo WARNING: MeloTTS install failed. ) else (
+    echo   MeloTTS English deps ^(librosa, inflect, langdetect^)...
+    "%VENV%\Scripts\pip" install librosa inflect langdetect --quiet
+)
+
+:: MeloTTS NLTK data (needed at runtime for English text processing)
 echo   MeloTTS NLTK data...
 "%VENV%\Scripts\python" -c ^
     "import nltk; nltk.download('averaged_perceptron_tagger_eng', quiet=True)" ^
@@ -99,9 +110,13 @@ echo   MeloTTS NLTK data...
 if errorlevel 1 ( echo WARNING: NLTK download failed — run manually: python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng')" )
 
 :: ── OpenVoice v2 ^(SPEAK stage-2 voice conversion^) ──────────────────────────
-echo   OpenVoice v2 ^(from GitHub^)...
-"%VENV%\Scripts\pip" install "git+https://github.com/myshell-ai/OpenVoice.git" --quiet
-if errorlevel 1 ( echo WARNING: OpenVoice install failed. )
+:: OpenVoice also pulls tokenizers but with --no-deps we avoid the pin conflict.
+echo   OpenVoice v2 ^(--no-deps to avoid tokenizers pin conflict^)...
+"%VENV%\Scripts\pip" install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"
+if errorlevel 1 ( echo WARNING: OpenVoice install failed. ) else (
+    :: openvoice runtime deps beyond what's already installed
+    "%VENV%\Scripts\pip" install wavmark --quiet
+)
 
 :: ── Windows environment variable ──────────────────────────────────────────────
 :: Suppresses HuggingFace symlink warnings (irrelevant on Windows)

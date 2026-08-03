@@ -133,7 +133,7 @@ EXPRESSION_ENGINES = {
     },
     "melotts": {
         "label": "MeloTTS",
-        "desc": "MyShell AI · fast neural TTS with accent control. Choose from EN-US, EN-BR, EN-AU, EN-INDIA or other languages (ES/FR/ZH/JP/KR). Very consistent output — good pair with OpenVoice v2 VC.",
+        "desc": "MyShell AI · fast neural TTS with accent control. EN-US, EN-BR, EN-AU, EN-INDIA, EN-Default. Very consistent output — pairs well with OpenVoice v2 VC. (ES/FR/ZH/JP/KR require extra system deps not installable on Windows.)",
     },
     # Future — uncomment when CosyVoice 2 loader is implemented:
     # "cosyvoice2": {
@@ -463,10 +463,10 @@ def _chatterbox_generate(text, ref_path, out, exaggeration, cfg_weight):
 _KOKORO_LANGS = ["a", "b", "j", "z"]
 
 # MeloTTS speaker IDs — first segment before "-" is the MeloTTS language code.
-# Single-language codes (ES/FR/ZH/JP/KR) act as both language and speaker.
+# Non-English languages (ZH/JP/KR) require mecab-python3/fugashi which need MeCab
+# C headers — not installable on Windows without extra tooling. English-only for now.
 _MELO_SPEAKERS = [
     "EN-Default", "EN-US", "EN-BR", "EN-AU", "EN-INDIA",
-    "ES", "FR", "ZH", "JP", "KR",
 ]
 
 
