@@ -6,46 +6,79 @@ set PROJECT_DIR=%SCRIPT_DIR%..
 set VENV=%PROJECT_DIR%\piper_venv
 set CKPT_DIR=%PROJECT_DIR%\piper_checkpoints
 
+:: Default espeak-ng install path — change if you installed elsewhere
+set ESPEAK_DIR=C:\Program Files\eSpeak NG
+
 :: ── Python 3.11 check ────────────────────────────────────────────────────────
-:: piper-train requires Python 3.9-3.11. If py -3.11 is not found, download it
-:: from https://www.python.org/downloads/release/python-3119/ (Windows installer)
-:: then re-run this script.
 py -3.11 --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Python 3.11 not found.
     echo Install from: https://www.python.org/downloads/release/python-3119/
     echo   ^> Check "Add python.exe to PATH" during install.
-    echo Then re-run this script.
     pause
     exit /b 1
 )
 echo Using Python 3.11
 
-:: ── Create venv ─────────────────────────────────────────────────────────────
+:: ── espeak-ng check ──────────────────────────────────────────────────────────
+if not exist "%ESPEAK_DIR%\include\espeak-ng\speak_lib.h" (
+    echo ERROR: espeak-ng headers not found at "%ESPEAK_DIR%"
+    echo If you installed to a different path, edit ESPEAK_DIR at the top of this script.
+    pause
+    exit /b 1
+)
+echo Found espeak-ng at %ESPEAK_DIR%
+
+:: ── Create venv ──────────────────────────────────────────────────────────────
 if exist "%VENV%\Scripts\python.exe" (
-    echo Piper venv already exists — skipping creation.
-    goto :install_train
+    echo Piper venv already exists.
+    goto :install_packages
 )
 echo Creating venv...
 py -3.11 -m venv "%VENV%"
 
-:install_train
-:: Downgrade pip to <24.1 so pytorch-lightning 1.7.x metadata is accepted
-echo Downgrading pip to allow pytorch-lightning 1.7.x install...
+:install_packages
+:: Downgrade pip so pytorch-lightning 1.7.x metadata is accepted
+echo Downgrading pip to allow pytorch-lightning 1.7.x...
 "%VENV%\Scripts\pip" install "pip<24.1" --quiet
 
-:: Install piper-tts (inference binary) and piper-train from GitHub source
-echo Installing piper-tts and piper-train (this may take a few minutes)...
-"%VENV%\Scripts\pip" install piper-tts
+:: ── piper-phonemize (compile from source using local espeak-ng) ──────────────
+:: Point cmake at the espeak-ng install so it finds headers and libs
+echo Installing piper-phonemize (compiling from source)...
+set CMAKE_PREFIX_PATH=%ESPEAK_DIR%
+set ESPEAK_NG_DIR=%ESPEAK_DIR%
+"%VENV%\Scripts\pip" install piper-phonemize
+if errorlevel 1 (
+    echo.
+    echo ERROR: piper-phonemize build failed.
+    echo Make sure Visual Studio Build Tools ^(C++ workload^) are installed and
+    echo that espeak-ng is at "%ESPEAK_DIR%".
+    pause
+    exit /b 1
+)
+
+:: ── piper-train from GitHub source ───────────────────────────────────────────
+echo Installing piper-train...
 "%VENV%\Scripts\pip" install "piper-train @ git+https://github.com/rhasspy/piper.git#subdirectory=src/python"
+if errorlevel 1 (
+    echo ERROR: piper-train install failed.
+    pause
+    exit /b 1
+)
 
-:: ── Replace torch with cu128 for RTX 5070 Ti (Blackwell sm_120) ─────────────
+:: ── piper-tts (inference binary) ─────────────────────────────────────────────
+echo Installing piper-tts...
+"%VENV%\Scripts\pip" install piper-tts --quiet
+
+:: ── Replace torch with cu128 for RTX 5070 Ti (Blackwell) ────────────────────
 :: piper-train pulls torch 1.13.1+cu117 which cannot address Blackwell GPUs.
-:: Force-reinstall torch 2.x with cu128 (pytorch-lightning 1.7 is compatible).
-echo Replacing torch with cu128 build for Blackwell GPU support...
+echo Replacing torch with cu128 build...
 "%VENV%\Scripts\pip" install torch --index-url https://download.pytorch.org/whl/cu128 --force-reinstall --quiet
+if errorlevel 1 (
+    echo WARNING: torch cu128 install failed — training will fall back to CPU.
+)
 
-:: ── Download base checkpoint ─────────────────────────────────────────────────
+:: ── Base checkpoint ───────────────────────────────────────────────────────────
 if not exist "%CKPT_DIR%" mkdir "%CKPT_DIR%"
 
 set CKPT=%CKPT_DIR%\epoch=2164-step=1355540.ckpt
@@ -67,9 +100,7 @@ if not exist "%CFG%" (
 )
 
 echo.
-echo Piper setup complete.
-echo   Venv:       %VENV%
-echo   Checkpoint: %CKPT%
+echo Setup complete.
 echo.
 echo Verify with:
-echo   %VENV%\Scripts\python -c "import piper_train; import torch; print('OK torch', torch.__version__, 'CUDA:', torch.cuda.is_available())"
+echo   %VENV%\Scripts\python -c "import piper_train; import torch; print('OK  torch', torch.__version__, ' CUDA:', torch.cuda.is_available())"

@@ -25,8 +25,26 @@ def _piper_bin() -> Path:
     return PIPER_VENV / ("Scripts/piper.exe" if _IS_WIN else "bin/piper")
 
 
+def can_infer() -> bool:
+    return _piper_bin().exists()
+
+
+def can_train() -> bool:
+    if _IS_WIN:
+        return False
+    try:
+        import subprocess
+        r = subprocess.run(
+            [str(_python()), "-c", "import piper_train"],
+            capture_output=True, timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def is_ready() -> bool:
-    return _python().exists()
+    return can_infer()
 
 
 def _resample_to_22k(src: Path, dest: Path):
@@ -77,9 +95,9 @@ async def train(
     max_epochs: int = 1000,
 ) -> Path:
     """Train piper voice model. Streams log lines via log_cb. Returns .onnx path."""
-    if not is_ready():
+    if not can_train():
         raise RuntimeError(
-            "Piper venv not found — run scripts/setup_piper.bat (Windows) or scripts/setup_piper.sh"
+            "Piper train not set up — run scripts/setup_piper.bat (Windows) or scripts/setup_piper.sh (WSL2)"
         )
 
     usable = [c for c in clips if c.get("transcript", "").strip()]
