@@ -4,7 +4,7 @@ from faily.core.characters import (
     list_characters, get_character, get_ref_path, delete_character,
     update_character_metadata,
     list_character_clips, list_character_favorites, rename_character_file,
-    get_ref_chain, remove_ref_clip, set_rvc_model,
+    get_ref_chain, remove_ref_clip, set_rvc_model, set_piper_model,
     rename_ref_audio, update_ref_clip,
     CHARACTERS_DIR,
 )
@@ -403,44 +403,73 @@ def build_characters_tab(on_speak, on_change):
             # ── actions ──────────────────────────────────────────────────────
             ui.separator().classes("mt-4 mb-3 opacity-20")
 
-            rvc_status = char.get("rvc_model", "")
+            has_model = bool(char.get("piper_model") or char.get("rvc_model"))
 
             with ui.row().classes("gap-2 flex-wrap"):
-                train_btn_holder: list = []
 
                 async def _do_train(n=name):
                     chain = get_ref_chain(n)
                     if not chain:
                         ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
                         return
-                    btn = train_btn_holder[0]
-                    btn.props("loading")
-                    btn.disable()
-                    try:
-                        from faily.modules.rvc import train_rvc
-                        clips = [e["audio"] for e in chain]
-                        model_path = await ni_run.io_bound(
-                            train_rvc, n, clips, CHARACTERS_DIR / n, None
-                        )
-                        set_rvc_model(n, str(model_path))
+
+                    from faily.modules.piper import train, is_ready
+                    if not is_ready():
                         ui.notify(
-                            f"RVC model trained  ·  {len(clips)} clip{'s' if len(clips) != 1 else ''}",
-                            type="positive", timeout=3000,
+                            "Piper not set up — run scripts/setup_piper.bat (Windows) or scripts/setup_piper.sh",
+                            type="warning", timeout=6000,
                         )
+                        return
+
+                    _proc_ref: list = [None]
+
+                    with ui.dialog().classes("w-full max-w-3xl") as dlg, ui.card().classes(
+                        "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
+                    ):
+                        ui.label(f"TRAINING  {n}").classes(
+                            "text-white font-mono text-xs tracking-widest"
+                        )
+                        log = ui.log(max_lines=2000).classes(
+                            "w-full font-mono text-[10px] rounded border border-[#1a1a1a]"
+                        ).style("height:420px; background:#050505")
+                        with ui.row().classes("w-full justify-between items-center"):
+                            status_lbl = ui.label("running…").classes(
+                                "text-[#555] font-mono text-[10px]"
+                            )
+                            with ui.row().classes("gap-2"):
+                                ui.button(
+                                    "STOP",
+                                    on_click=lambda: _proc_ref[0].terminate() if _proc_ref[0] else None,
+                                ).props("flat dense color=negative")
+                                close_btn = (
+                                    ui.button("CLOSE", on_click=dlg.close)
+                                    .props("flat dense color=grey")
+                                )
+                                close_btn.set_visibility(False)
+                    dlg.open()
+
+                    def _log(line: str):
+                        log.push(line)
+
+                    try:
+                        model_path = await train(chain, CHARACTERS_DIR / n, _log, _proc_ref)
+                        set_piper_model(n, str(model_path))
+                        status_lbl.set_text("✓  done")
+                        status_lbl.classes(remove="text-[#555]", add="text-green-400")
+                        ui.notify(f"Piper model trained for {n}", type="positive", timeout=4000)
                         on_change()
                         _rebuild_detail()
                     except Exception as exc:
+                        status_lbl.set_text(f"error")
+                        status_lbl.classes(remove="text-[#555]", add="text-red-400")
                         show_error(exc)
-                        btn.props(remove="loading")
-                        btn.enable()
+                    finally:
+                        close_btn.set_visibility(True)
 
-                train_label = "RETRAIN" if rvc_status else "TRAIN"
-                train_btn = (
-                    ui.button(train_label, icon="model_training", on_click=_do_train)
-                    .props("color=indigo unelevated")
-                    .classes(_BTN)
-                )
-                train_btn_holder.append(train_btn)
+                train_label = "RETRAIN VOICE" if has_model else "TRAIN VOICE"
+                ui.button(train_label, icon="model_training", on_click=_do_train).props(
+                    "color=indigo unelevated"
+                ).classes(_BTN)
 
                 ui.button(
                     "SPEAK", icon="spatial_audio",

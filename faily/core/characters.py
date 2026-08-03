@@ -305,3 +305,14 @@ def set_rvc_model(name: str, model_path: str) -> dict:
     cfg["rvc_model"] = model_path
     p.write_text(json.dumps(cfg, indent=2))
     return cfg
+
+
+def set_piper_model(name: str, model_path: str) -> dict:
+    """Store the trained Piper .onnx model path in the character config."""
+    p = _cfg(name)
+    if not p.exists():
+        raise FileNotFoundError(f"Character '{name}' not found")
+    cfg = json.loads(p.read_text())
+    cfg["piper_model"] = model_path
+    p.write_text(json.dumps(cfg, indent=2))
+    return cfg

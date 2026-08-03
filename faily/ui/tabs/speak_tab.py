@@ -31,10 +31,10 @@ def _all_chars() -> dict[str, str]:
     return opts
 
 
-def _rvc_chars() -> dict[str, str]:
+def _trained_chars() -> dict[str, str]:
     opts = {_NO_CHAR: _NO_CHAR}
     for c in list_characters():
-        if "rvc_model" in c:
+        if "piper_model" in c or "rvc_model" in c:
             opts[c["name"]] = c["name"]
     return opts
 
@@ -211,9 +211,6 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
 
 def _build_character(char_state: list[str], _out: dict, _current_char: list[str]):
     """Left controls for CHARACTER sub-tab. Returns refresh."""
-    _pitch:         list[float] = [0.0]
-    _index_rate:    list[float] = [0.75]
-    _filter_radius: list[int]   = [3]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -221,8 +218,12 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
         if name == _NO_CHAR:
             char_info.set_text(""); return
         char = get_character(name)
-        has_model = bool(char and char.get("rvc_model"))
-        char_info.set_text("model ready" if has_model else "⚠  no model — train from CHARACTERS tab")
+        if char and char.get("piper_model"):
+            char_info.set_text("piper model ready")
+        elif char and char.get("rvc_model"):
+            char_info.set_text("rvc model (legacy)")
+        else:
+            char_info.set_text("⚠  no model — train from CHARACTERS tab")
 
     async def _generate():
         if char_state[0] == _NO_CHAR:
@@ -231,21 +232,24 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
         if not text:
             ui.notify("Enter a line to speak", type="warning"); return
         char = get_character(char_state[0])
-        if not char or "rvc_model" not in char:
-            ui.notify("No RVC model — train one from the CHARACTERS tab", type="warning"); return
+        if not char or (not char.get("piper_model") and not char.get("rvc_model")):
+            ui.notify("No trained model — train one from the CHARACTERS tab", type="warning"); return
         gen_btn.disable()
         _out["status"].set_text("—")
         _out["model_loader"].set_visibility(True)
+        _VC_DIR.mkdir(parents=True, exist_ok=True)
         try:
-            from faily.modules.rvc import speak_generate
-            _VC_DIR.mkdir(parents=True, exist_ok=True)
-            path = await ni_run.io_bound(
-                speak_generate, text, char["rvc_model"], _VC_DIR,
-                pitch_shift=int(_pitch[0]),
-                index_rate=_index_rate[0],
-                filter_radius=int(_filter_radius[0]),
-                char_name=char_state[0],
-            )
+            if char.get("piper_model"):
+                from faily.modules.piper import infer
+                slug = text[:28].strip().replace(" ", "_").replace("/", "-")
+                out_path = _VC_DIR / f"piper_{char_state[0]}_{slug}.wav"
+                path = await ni_run.io_bound(infer, text, Path(char["piper_model"]), out_path)
+            else:
+                from faily.modules.rvc import speak_generate
+                path = await ni_run.io_bound(
+                    speak_generate, text, char["rvc_model"], _VC_DIR,
+                    char_name=char_state[0],
+                )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path, text)
@@ -257,36 +261,12 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
             gen_btn.enable()
 
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
-        _section_row("CHARACTER", "A character with a trained RVC model. Train one from the CHARACTERS tab.")
+        _section_row("CHARACTER", "A character with a trained Piper voice model. Train one from the CHARACTERS tab.")
         char_select = (
-            ui.select(options=_rvc_chars(), value=_NO_CHAR, on_change=lambda e: _update_info(e.value))
+            ui.select(options=_trained_chars(), value=_NO_CHAR, on_change=lambda e: _update_info(e.value))
             .props("outlined dark dense").classes("w-full")
         )
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
-
-        _section_row("PITCH SHIFT", "Shift pitch in semitones. 0 = no change.")
-        with ui.row().classes("w-full items-center gap-3"):
-            pitch_lbl = ui.label("0 st").classes(
-                "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
-            )
-            def _on_pitch(e): _pitch[0] = float(e.value); pitch_lbl.set_text(f"{int(e.value):+d} st")
-            ui.slider(min=-12, max=12, step=1, value=0, on_change=_on_pitch).classes("flex-grow").props("color=amber")
-
-        _section_row("INDEX RATE", "How much the trained voice index influences output. Higher = more faithful.")
-        with ui.row().classes("w-full items-center gap-3"):
-            idx_lbl = ui.label("0.75").classes(
-                "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
-            )
-            def _on_idx(e): _index_rate[0] = float(e.value); idx_lbl.set_text(f"{e.value:.2f}")
-            ui.slider(min=0.0, max=1.0, step=0.05, value=0.75, on_change=_on_idx).classes("flex-grow").props("color=amber")
-
-        _section_row("FILTER RADIUS", "Median filter strength on pitch. Higher = smoother. 0 = off.")
-        with ui.row().classes("w-full items-center gap-3"):
-            filt_lbl = ui.label("3").classes(
-                "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
-            )
-            def _on_filt(e): _filter_radius[0] = int(e.value); filt_lbl.set_text(str(int(e.value)))
-            ui.slider(min=0, max=7, step=1, value=3, on_change=_on_filt).classes("flex-grow").props("color=amber")
 
         _section_row("LINE", "What the character says.")
         text_input = (
@@ -301,7 +281,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
         )
 
     def refresh():
-        opts = _rvc_chars()
+        opts = _trained_chars()
         val = char_state[0] if char_state[0] in opts else _NO_CHAR
         char_select.set_options(opts, value=val)
         char_state[0] = val
