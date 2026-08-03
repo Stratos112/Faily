@@ -49,6 +49,7 @@ _GLOBAL_CSS = """
     .pipeline-tab { border-top: 2px solid rgba(245, 158, 11, 0.28) !important; }
     .pipeline-first { border-left: 2px solid rgba(245, 158, 11, 0.28) !important; border-top-left-radius: 4px !important; }
     .pipeline-last  { border-right: 2px solid rgba(245, 158, 11, 0.28) !important; border-top-right-radius: 4px !important; }
+    .speak-main-tab .q-tab__label { font-size: 14px !important; letter-spacing: 0.22em !important; font-weight: 600 !important; }
 """
 
 
@@ -111,10 +112,10 @@ def run():
         with ui.tabs().classes("w-full") as tabs:
             chars_tab = ui.tab("CHARACTERS", icon="manage_accounts").classes("pipeline-tab pipeline-first")
             vc_tab    = ui.tab("CLONE",      icon="mic").classes("pipeline-tab pipeline-last")
-            speak_tab = ui.tab("SPEAK",      icon="spatial_audio")
-            edit_tab  = ui.tab("EDIT",       icon="tune")
-            daw_tab   = ui.tab("DAW",        icon="piano")
-            foley_tab = ui.tab("FOLEY",      icon="graphic_eq")
+            speak_tab = ui.tab("SPEAK",      icon="spatial_audio").classes("speak-main-tab")
+            edit_tab  = ui.tab("EDIT",       icon="tune").classes("pipeline-tab pipeline-first")
+            daw_tab   = ui.tab("DAW",        icon="piano").classes("pipeline-tab")
+            foley_tab = ui.tab("FOLEY",      icon="graphic_eq").classes("pipeline-tab pipeline-last")
 
         # deferred callbacks — populated after panels are built
         _speak_refresh: list = [lambda: None]
