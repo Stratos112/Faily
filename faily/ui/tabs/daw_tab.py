@@ -227,12 +227,13 @@ def build_daw_tab():
                 mix_lbl.set_text("mixing…")
                 try:
                     import datetime
-                    downloads = Path.home() / "Downloads"
+                    from faily.core.settings import get_download_dir
+                    downloads = get_download_dir()
                     downloads.mkdir(parents=True, exist_ok=True)
                     out = downloads / f"faily_mix_{datetime.datetime.now():%Y%m%d_%H%M%S}.wav"
                     await ni_run.io_bound(mix_tracks, tracks_data, out)
                     mix_lbl.set_text(f"✓  {out.name}")
-                    ui.notify(f"Saved to Downloads/{out.name}", type="positive", timeout=3000)
+                    ui.notify(f"Saved to {downloads.name}/{out.name}", type="positive", timeout=3000)
                 except Exception as exc:
                     show_error(exc)
                     mix_lbl.set_text("error")

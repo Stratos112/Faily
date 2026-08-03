@@ -224,11 +224,12 @@ def output_panel(output_subdir: str, get_char_name=None):
 
     def _download_local(path: Path):
         try:
-            downloads = Path.home() / "Downloads"
+            from faily.core.settings import get_download_dir
+            downloads = get_download_dir()
             downloads.mkdir(parents=True, exist_ok=True)
             dest = downloads / path.name
             shutil.copy2(str(path), str(dest))
-            ui.notify(f"Saved to Downloads/{path.name}", type="positive", timeout=3000)
+            ui.notify(f"Saved to {downloads.name}/{path.name}", type="positive", timeout=3000)
         except Exception as exc:
             show_error(exc)
 

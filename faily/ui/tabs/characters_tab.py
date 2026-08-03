@@ -404,10 +404,6 @@ def build_characters_tab(on_speak, on_change):
             ui.separator().classes("mt-4 mb-3 opacity-20")
 
             rvc_status = char.get("rvc_model", "")
-            if rvc_status:
-                ui.label("MODEL TRAINED").classes(
-                    "text-indigo-400 font-mono text-[9px] tracking-widest"
-                )
 
             with ui.row().classes("gap-2 flex-wrap"):
                 train_btn_holder: list = []
@@ -438,8 +434,9 @@ def build_characters_tab(on_speak, on_change):
                         btn.props(remove="loading")
                         btn.enable()
 
+                train_label = "RETRAIN" if rvc_status else "TRAIN"
                 train_btn = (
-                    ui.button("TRAIN", icon="model_training", on_click=_do_train)
+                    ui.button(train_label, icon="model_training", on_click=_do_train)
                     .props("color=indigo unelevated")
                     .classes(_BTN)
                 )

@@ -217,12 +217,13 @@ def build_edit_tab():
             ui.notify("Generate a preview first", type="warning"); return
         try:
             import datetime
-            downloads = Path.home() / "Downloads"
+            from faily.core.settings import get_download_dir
+            downloads = get_download_dir()
             downloads.mkdir(parents=True, exist_ok=True)
             stem = _src[0].stem if _src[0] else "edit"
             dest = downloads / f"{stem}_edited_{datetime.datetime.now():%H%M%S}.wav"
             shutil.copy2(str(_preview[0]), str(dest))
-            ui.notify(f"Saved to Downloads/{dest.name}", type="positive", timeout=3000)
+            ui.notify(f"Saved to {downloads.name}/{dest.name}", type="positive", timeout=3000)
         except Exception as exc:
             show_error(exc)
 

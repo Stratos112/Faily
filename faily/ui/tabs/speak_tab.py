@@ -98,7 +98,7 @@ def _build_expression(char_state: list[str]):
                 gen_btn.enable()
 
     with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
-        with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
+        with ui.column().classes("gap-3 p-5 border-r border-[#252525] overflow-y-auto"):
             _section_row("CHARACTER", "The voice to speak in. Characters are created in the CLONE tab.")
             char_select = (
                 ui.select(options=_all_chars(), value=_NO_CHAR, on_change=lambda e: _update_info(e.value))
@@ -227,7 +227,7 @@ def _build_character(char_state: list[str]):
             gen_btn.enable()
 
     with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
-        with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
+        with ui.column().classes("gap-3 p-5 border-r border-[#252525] overflow-y-auto"):
             _section_row("CHARACTER", "A character with a trained RVC model. Train one from the CHARACTERS tab.")
             char_select = (
                 ui.select(options=_rvc_chars(), value=_NO_CHAR, on_change=lambda e: _update_info(e.value))
@@ -367,7 +367,7 @@ def _build_oneshot(char_state: list[str]):
                 gen_btn.enable()
 
     with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
-        with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
+        with ui.column().classes("gap-3 p-5 border-r border-[#252525] overflow-y-auto"):
             _section_row("CHARACTER", "Pick a character — uses their full reference chain for one-shot cloning.")
             char_select = (
                 ui.select(options=_all_chars(), value=_NO_CHAR, on_change=lambda e: _update_info(e.value))
@@ -447,8 +447,8 @@ def build_speak_tab():
     _r_shot: list = [lambda: None]
 
     with ui.column().classes("w-full h-full gap-0"):
-        with ui.tabs().classes("w-full").style(
-            "background:#0a0a0a; border-bottom:1px solid #1a1a1a;"
+        with ui.tabs().classes("w-full").props("dense").style(
+            "background:#0a0a0a; border-bottom:1px solid #1a1a1a; min-height:36px;"
         ) as inner_tabs:
             exp_tab  = ui.tab("EXPRESSION",  icon="psychology")
             char_tab = ui.tab("CHARACTER",   icon="model_training")
