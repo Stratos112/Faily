@@ -670,7 +670,7 @@ def generate(
     if progress_ref is not None:
         progress_ref[0] = 0.2
 
-    out = output_dir / _make_clip_name(char_name, style_prompt, text, output_dir)
+    out = output_dir / _make_clip_name(char_name, backend, text, output_dir)
 
     if progress_ref is not None:
         progress_ref[0] = 0.4

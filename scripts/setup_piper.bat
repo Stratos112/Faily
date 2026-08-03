@@ -82,6 +82,27 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: After this step pip's resolver will report several dependency conflicts.
+:: These are ALL expected and handled — do not treat them as errors:
+::
+::   piper-phonemize~=1.1.0 not installed
+::       ^^ Faily writes a pure-Python shim into the venv on first training run.
+::
+::   cython<1 conflict ^(you have cython 3.x^)
+::       ^^ Cython is a build tool only. piper-train never calls it at runtime.
+::
+::   torch<2 conflict ^(you have torch 2.x+cu128^)
+::       ^^ piper-train's pin is conservative; torch 2.x is backward-compatible.
+::
+::   pytorch-lightning DEPRECATION warning
+::       ^^ Non-standard ">=1.9.*" specifier. Treated as warning ^(not error^)
+::          because we downgraded pip to ^<24.1 above.
+::
+:: The verification command at the end is the real pass/fail signal.
+echo.
+echo ^(Expected pip resolver warnings above — see comments in script for details^)
+echo.
+
 :: ── Replace torch with cu128 for RTX 5070 Ti (Blackwell) ────────────────────
 :: piper-train pulls torch 1.13.1+cu117 which cannot run on Blackwell GPUs.
 echo Replacing torch with cu128 build for RTX 5070 Ti...
