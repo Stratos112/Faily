@@ -144,6 +144,7 @@ def output_panel(output_subdir: str, get_char_name=None):
         with compare_section:
             section_label("COMPARE")
             compare_player = ui.audio("").classes("w-full rounded")
+            compare_name = ui.label("").classes("text-[#333] font-mono text-[9px]")
 
         ui.separator().classes("my-1 opacity-20")
 
@@ -272,6 +273,7 @@ def output_panel(output_subdir: str, get_char_name=None):
     def _load_compare(path: Path):
         rel = path.relative_to(Path("outputs"))
         compare_player.set_source(f"/outputs/{rel.as_posix()}")
+        compare_name.set_text(f"▶  {path.stem}")
         compare_section.set_visibility(True)
 
     def add_to_history(path: Path, transcript: str = ""):

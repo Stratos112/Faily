@@ -68,3 +68,44 @@ def apply_edits(
     out.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out), data, sr)
     return out
+
+
+def mix_tracks(tracks: list[dict], out: Path) -> Path:
+    """tracks: [{"path": Path|None, "vol": float, "muted": bool}]"""
+    arrays: list[np.ndarray] = []
+    target_sr: int | None = None
+
+    for t in tracks:
+        if t.get("muted") or not t.get("path"):
+            continue
+        data, sr = sf.read(str(t["path"]), dtype="float32", always_2d=True)
+        if target_sr is None:
+            target_sr = sr
+        elif sr != target_sr:
+            import torch
+            import torchaudio.functional as F
+            wav = torch.from_numpy(data.T.copy())
+            data = F.resample(wav, sr, target_sr).T.numpy()
+        data = data * float(t.get("vol", 1.0))
+        arrays.append(data)
+
+    if not arrays or target_sr is None:
+        raise ValueError("No unmuted tracks to mix")
+
+    max_len = max(a.shape[0] for a in arrays)
+    max_ch  = max(a.shape[1] for a in arrays)
+    mixed = np.zeros((max_len, max_ch), dtype=np.float32)
+
+    for a in arrays:
+        n, c = a.shape
+        if c < max_ch:
+            a = np.tile(a, (1, max_ch // c))
+        mixed[:n] += a
+
+    peak = np.abs(mixed).max()
+    if peak > 1.0:
+        mixed /= peak
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(out), mixed if max_ch > 1 else mixed[:, 0], target_sr)
+    return out

@@ -1,6 +1,6 @@
 from pathlib import Path
 from nicegui import ui, run as ni_run
-from faily.modules.edit import audio_info
+from faily.modules.edit import audio_info, mix_tracks
 from faily.ui.components import section_label, show_error
 
 _BTN = "font-mono tracking-widest"
@@ -200,16 +200,49 @@ def build_daw_tab():
 
         ui.separator().classes("my-5 opacity-20")
 
-        with ui.row().classes("w-full items-center justify-center gap-6"):
-            (
-                ui.button("PLAY ALL", icon="play_arrow", on_click=lambda: ui.run_javascript("FailyDAW.playAll()"))
-                .props("color=amber unelevated")
-                .classes(f"px-10 {_BTN}")
-            )
-            (
-                ui.button("STOP", icon="stop", on_click=lambda: ui.run_javascript("FailyDAW.stopAll()"))
-                .props("flat color=grey")
-                .classes(f"px-8 {_BTN}")
+        with ui.column().classes("w-full items-center gap-2"):
+            with ui.row().classes("items-center justify-center gap-6"):
+                (
+                    ui.button("PLAY ALL", icon="play_arrow", on_click=lambda: ui.run_javascript("FailyDAW.playAll()"))
+                    .props("color=amber unelevated")
+                    .classes(f"px-10 {_BTN}")
+                )
+                (
+                    ui.button("STOP", icon="stop", on_click=lambda: ui.run_javascript("FailyDAW.stopAll()"))
+                    .props("flat color=grey")
+                    .classes(f"px-8 {_BTN}")
+                )
+
+            mix_lbl = ui.label("").classes("text-[#444] font-mono text-[9px]")
+
+            async def _mix_download():
+                tracks_data = [
+                    {"path": _paths[i], "vol": _vols[i], "muted": _muted[i]}
+                    for i in range(3)
+                ]
+                if all(not t["path"] for t in tracks_data):
+                    ui.notify("No tracks loaded", type="warning")
+                    return
+                mix_btn.disable()
+                mix_lbl.set_text("mixing…")
+                try:
+                    import datetime
+                    downloads = Path.home() / "Downloads"
+                    downloads.mkdir(parents=True, exist_ok=True)
+                    out = downloads / f"faily_mix_{datetime.datetime.now():%Y%m%d_%H%M%S}.wav"
+                    await ni_run.io_bound(mix_tracks, tracks_data, out)
+                    mix_lbl.set_text(f"✓  {out.name}")
+                    ui.notify(f"Saved to Downloads/{out.name}", type="positive", timeout=3000)
+                except Exception as exc:
+                    show_error(exc)
+                    mix_lbl.set_text("error")
+                finally:
+                    mix_btn.enable()
+
+            mix_btn = (
+                ui.button("MIX & DOWNLOAD", icon="merge", on_click=_mix_download)
+                .props("flat color=amber")
+                .classes(_BTN)
             )
 
     # ── public callback ───────────────────────────────────────────────────────

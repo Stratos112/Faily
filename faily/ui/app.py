@@ -75,9 +75,9 @@ def run():
             )
 
         with ui.tabs().classes("w-full") as tabs:
-            chars_tab = ui.tab("CHARACTERS", icon="manage_accounts")
-            vc_tab    = ui.tab("CLONE",      icon="mic").classes("pipeline-tab pipeline-first")
-            speak_tab = ui.tab("SPEAK",      icon="spatial_audio").classes("pipeline-tab pipeline-last")
+            chars_tab = ui.tab("CHARACTERS", icon="manage_accounts").classes("pipeline-tab pipeline-first")
+            vc_tab    = ui.tab("CLONE",      icon="mic").classes("pipeline-tab pipeline-last")
+            speak_tab = ui.tab("SPEAK",      icon="spatial_audio")
             edit_tab  = ui.tab("EDIT",       icon="tune")
             daw_tab   = ui.tab("DAW",        icon="piano")
             foley_tab = ui.tab("FOLEY",      icon="graphic_eq")
@@ -105,7 +105,7 @@ def run():
             _speak_refresh[0]()
             _vc_refresh[0]()
 
-        with ui.tab_panels(tabs, value=vc_tab, on_change=_on_tab_change).classes("w-full flex-grow"):
+        with ui.tab_panels(tabs, value=speak_tab, on_change=_on_tab_change).classes("w-full flex-grow"):
             with ui.tab_panel(vc_tab):
                 _vc_refresh[0] = build_vc_tab()
 

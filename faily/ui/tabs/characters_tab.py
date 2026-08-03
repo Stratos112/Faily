@@ -161,27 +161,28 @@ def build_characters_tab(on_speak, on_change):
 
         player = ui.audio("").classes("w-full rounded")
         player.set_visibility(False)
+        now_playing = ui.label("").classes("text-[#333] font-mono text-[9px]")
 
         for clip in clips:
             rel = clip.relative_to(Path("outputs"))
             url = f"/outputs/{rel.as_posix()}"
 
+            def _play(u=url, n=clip.stem):
+                player.set_source(u)
+                player.set_visibility(True)
+                now_playing.set_text(f"▶  {n}")
+
             with ui.row().classes(
                 "w-full items-center gap-1 px-2 py-1 rounded "
                 "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
             ):
-                ui.icon(icon_name, size="12px").classes(
-                    f"{icon_color} shrink-0 cursor-pointer"
-                ).on("click", lambda u=url: (
-                    player.set_source(u),
-                    player.set_visibility(True),
-                ))
+                ui.button(icon="play_arrow", on_click=_play).props(
+                    "flat dense color=amber"
+                ).classes("shrink-0")
+                ui.icon(icon_name, size="12px").classes(f"{icon_color} shrink-0")
                 ui.label(clip.stem).classes(
                     "text-[#666] font-mono text-[10px] truncate flex-grow cursor-pointer"
-                ).on("click", lambda u=url: (
-                    player.set_source(u),
-                    player.set_visibility(True),
-                ))
+                ).on("click", _play)
                 ui.label(".wav").classes("text-[#333] font-mono text-[10px] shrink-0")
                 ui.button(
                     icon="tune",
@@ -299,7 +300,11 @@ def build_characters_tab(on_speak, on_change):
                     )
 
                 ref_player = ui.audio("").classes("w-full rounded mt-1")
-                ref_player.set_visibility(False)
+                ref_now_playing = ui.label("").classes("text-[#333] font-mono text-[9px]")
+
+                def _play_ref(u, n):
+                    ref_player.set_source(u)
+                    ref_now_playing.set_text(f"▶  {n}")
 
                 for ref in own_refs:
                     audio = ref["audio"]
@@ -311,18 +316,19 @@ def build_characters_tab(on_speak, on_change):
                         "w-full items-center gap-1 px-2 py-1 rounded "
                         "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
                     ):
+                        ui.button(
+                            icon="play_arrow",
+                            on_click=lambda u=url, n=audio.stem: _play_ref(u, n),
+                        ).props("flat dense color=amber").classes("shrink-0")
                         ui.icon("star" if is_primary else "mic", size="12px").classes(
-                            ("text-amber-500" if is_primary else "text-[#555]")
-                            + " shrink-0 cursor-pointer"
-                        ).on("click", lambda u=url: (
-                            ref_player.set_source(u), ref_player.set_visibility(True)
-                        ))
-                        with ui.column().classes("gap-0 flex-grow min-w-0"):
+                            ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
+                        )
+                        with ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer").on(
+                            "click", lambda u=url, n=audio.stem: _play_ref(u, n)
+                        ):
                             ui.label(audio.stem).classes(
-                                "text-[#aaa] font-mono text-[10px] truncate cursor-pointer"
-                            ).on("click", lambda u=url: (
-                                ref_player.set_source(u), ref_player.set_visibility(True)
-                            ))
+                                "text-[#aaa] font-mono text-[10px] truncate"
+                            )
                             t = ref["transcript"]
                             if t:
                                 ui.label(f'"{t}"').classes(
@@ -359,17 +365,17 @@ def build_characters_tab(on_speak, on_change):
                         "w-full items-center gap-1 px-2 py-1 rounded "
                         "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
                     ):
-                        ui.icon("link", size="12px").classes(
-                            "text-[#333] shrink-0 cursor-pointer"
-                        ).on("click", lambda u=url: (
-                            ref_player.set_source(u), ref_player.set_visibility(True)
-                        ))
-                        with ui.column().classes("gap-0 flex-grow min-w-0"):
+                        ui.button(
+                            icon="play_arrow",
+                            on_click=lambda u=url, n=audio.stem: _play_ref(u, n),
+                        ).props("flat dense color=grey").classes("shrink-0")
+                        ui.icon("link", size="12px").classes("text-[#333] shrink-0")
+                        with ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer").on(
+                            "click", lambda u=url, n=audio.stem: _play_ref(u, n)
+                        ):
                             ui.label(audio.stem).classes(
-                                "text-[#555] font-mono text-[10px] truncate cursor-pointer"
-                            ).on("click", lambda u=url: (
-                                ref_player.set_source(u), ref_player.set_visibility(True)
-                            ))
+                                "text-[#555] font-mono text-[10px] truncate"
+                            )
                             if entry.get("transcript"):
                                 ui.label(f'"{entry["transcript"]}"').classes(
                                     "text-[#333] font-mono text-[10px] italic leading-tight truncate"

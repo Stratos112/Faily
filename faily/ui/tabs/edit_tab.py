@@ -3,22 +3,39 @@ import time
 from pathlib import Path
 from nicegui import ui, run as ni_run
 from faily.modules.edit import apply_edits, audio_info
-from faily.core.characters import list_characters, add_ref_clip, add_clip_to_character
+from faily.core.characters import (
+    list_characters, get_character, add_ref_clip, add_clip_to_character,
+    CHARACTERS_DIR, list_character_clips, list_character_favorites,
+)
 from faily.ui.components import section_label, show_error
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
 EDIT_DIR = Path("outputs/edit")
 
+_TRIM_JS = """
+<script>
+function faily_trim_update(sp, ep) {
+    var el = document.getElementById('faily-trim-kept');
+    if (!el) return;
+    el.style.left = sp.toFixed(1) + '%';
+    el.style.width = Math.max(0, 100 - sp - ep).toFixed(1) + '%';
+}
+</script>
+"""
+
 
 def build_edit_tab():
     """Returns send_to_edit(path, char_name=None) callable."""
+
+    ui.add_head_html(_TRIM_JS)
 
     # ── state ────────────────────────────────────────────────────────────────
     _src:      list[Path | None] = [None]
     _src_char: list[str | None]  = [None]
     _preview:  list[Path | None] = [None]
     _channels: list[int]         = [1]
+    _duration: list[float]       = [0.0]
 
     _vol_db:       list[float] = [0.0]
     _speed:        list[float] = [1.0]
@@ -35,21 +52,50 @@ def build_edit_tab():
             opts[c["name"]] = c["name"]
         return opts
 
+    def _update_trim_bar():
+        dur = _duration[0]
+        if dur <= 0:
+            ui.run_javascript("faily_trim_update(0, 0)")
+            return
+        sp = min((_trim_start[0] / dur) * 100, 100)
+        ep = min((_trim_end[0] / dur) * 100, 100)
+        if sp + ep > 99:
+            sp = max(0, 99 - ep)
+        ui.run_javascript(f"faily_trim_update({sp:.1f}, {ep:.1f})")
+
     def _load_source(path: Path):
         _src[0] = path
         _preview[0] = None
-        rel = path.relative_to(Path("outputs"))
-        src_player.set_source(f"/outputs/{rel.as_posix()}")
+        try:
+            rel = path.relative_to(Path("outputs"))
+            url = f"/outputs/{rel.as_posix()}"
+        except ValueError:
+            url = f"/outputs/edit/{path.name}"
+        src_player.set_source(url)
+        src_now_playing.set_text(f"▶  {path.stem}")
         try:
             info = audio_info(path)
             _channels[0] = info["channels"]
+            _duration[0] = info["duration"]
             dur = f"{info['duration']:.2f}s"
             ch  = "stereo" if info["channels"] > 1 else "mono"
             src_info.set_text(f"{path.name}  ·  {dur}  ·  {info['sample_rate']} Hz  ·  {ch}")
         except Exception:
             _channels[0] = 1
+            _duration[0] = 0.0
             src_info.set_text(path.name)
         stereo_check.set_enabled(_channels[0] == 1)
+        # update trim sliders
+        dur_max = max(_duration[0], 1.0)
+        trim_s_slider.props(f"max={dur_max:.1f}")
+        trim_e_slider.props(f"max={dur_max:.1f}")
+        trim_s_slider.set_value(0.0)
+        trim_e_slider.set_value(0.0)
+        ts_lbl.set_text("0.0s")
+        te_lbl.set_text("0.0s")
+        _trim_start[0] = 0.0
+        _trim_end[0] = 0.0
+        ui.run_javascript("faily_trim_update(0, 0)")
         preview_player.set_source("")
         preview_status.set_text("—")
         save_col.set_visibility(False)
@@ -68,20 +114,12 @@ def build_edit_tab():
             except ValueError:
                 overwrite_lbl.set_text(str(_src[0]))
 
-    async def _on_upload(e):
-        EDIT_DIR.mkdir(parents=True, exist_ok=True)
-        dest = EDIT_DIR / e.file.name
-        dest.write_bytes(await e.file.read())
-        _src_char[0] = None
-        _load_source(dest)
-
     async def _do_preview():
         if _src[0] is None:
             ui.notify("Load a source file first", type="warning")
             return
         EDIT_DIR.mkdir(parents=True, exist_ok=True)
         out = EDIT_DIR / f"_preview_{int(time.time())}.wav"
-        # clean stale previews
         for old in EDIT_DIR.glob("_preview_*.wav"):
             if old != out:
                 try: old.unlink()
@@ -116,13 +154,14 @@ def build_edit_tab():
             preview_btn.enable()
 
     def _reset():
-        _vol_db[0] = 0.0;     vol_lbl.set_text("0 dB");   vol_slider.set_value(0.0)
-        _speed[0]  = 1.0;     spd_lbl.set_text("1.00×");  spd_slider.set_value(1.0)
-        _pitch[0]  = 0;       pit_lbl.set_text("0 st");    pit_slider.set_value(0)
-        _trim_start[0] = 0.0; trim_s.set_value(0.0)
-        _trim_end[0]   = 0.0; trim_e.set_value(0.0)
-        _trim_silence[0] = False; silence_chk.set_value(False)
-        _stereo[0]       = False; stereo_check.set_value(False)
+        _vol_db[0] = 0.0;  vol_lbl.set_text("0 dB");   vol_slider.set_value(0.0)
+        _speed[0]  = 1.0;  spd_lbl.set_text("1.00×");  spd_slider.set_value(1.0)
+        _pitch[0]  = 0;    pit_lbl.set_text("0 st");    pit_slider.set_value(0)
+        _trim_start[0] = 0.0;  trim_s_slider.set_value(0.0);  ts_lbl.set_text("0.0s")
+        _trim_end[0]   = 0.0;  trim_e_slider.set_value(0.0);  te_lbl.set_text("0.0s")
+        _trim_silence[0] = False;  silence_chk.set_value(False)
+        _stereo[0]       = False;  stereo_check.set_value(False)
+        ui.run_javascript("faily_trim_update(0, 0)")
 
     def _save_as_ref():
         if _preview[0] is None:
@@ -193,17 +232,110 @@ def build_edit_tab():
         # ── left: controls ──────────────────────────────────────────────────
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
 
+            # ── character clip picker ───────────────────────────────────────
+            section_label("LOAD FROM CHARACTER")
+            with ui.row().classes("w-full items-center gap-2"):
+                char_pick = (
+                    ui.select(options=_char_opts(), value=_NO_CHAR)
+                    .props("outlined dark dense")
+                    .classes("flex-grow")
+                )
+                ui.button(
+                    icon="refresh",
+                    on_click=lambda: char_pick.set_options(_char_opts(), value=_NO_CHAR),
+                ).props("flat dense color=grey")
+
+            pick_list = ui.column().classes("w-full gap-0.5 max-h-40 overflow-y-auto")
+
+            def _pick_row(path: Path, prefix: str = "•"):
+                with pick_list:
+                    with ui.row().classes(
+                        "w-full items-center gap-2 px-2 py-0.5 hover:bg-[#1a1a1a] rounded cursor-pointer"
+                    ).on("click", lambda p=path: _load_source(p)):
+                        ui.label(prefix).classes("text-amber-500 font-mono text-[10px] shrink-0 w-3")
+                        ui.label(path.stem).classes(
+                            "text-[#666] font-mono text-[10px] truncate flex-grow"
+                        )
+
+            def _on_char_pick(name: str):
+                pick_list.clear()
+                if name == _NO_CHAR:
+                    return
+                char = get_character(name)
+                if not char:
+                    return
+                char_dir = CHARACTERS_DIR / name
+                if "ref_audio" in char:
+                    ra = char_dir / char["ref_audio"]
+                    if ra.exists():
+                        _pick_row(ra, "★")
+                for rc in char.get("ref_clips", []):
+                    rp = char_dir / rc["file"]
+                    if rp.exists():
+                        _pick_row(rp, "●")
+                for c in list_character_clips(name):
+                    _pick_row(c, "◆")
+                for f in list_character_favorites(name):
+                    _pick_row(f, "♥")
+
+            char_pick.on_value_change(lambda e: _on_char_pick(e.value))
+
+            ui.separator().classes("my-1 opacity-20")
+
+            # ── source info ─────────────────────────────────────────────────
             section_label("SOURCE")
             src_player = ui.audio("").classes("w-full rounded")
-            src_info = ui.label("no file loaded").classes("text-[#444] font-mono text-[10px] tracking-wide")
-            (
-                ui.upload(on_upload=_on_upload, multiple=False, auto_upload=True)
-                .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Upload audio'")
-                .classes("w-full mt-1")
+            src_now_playing = ui.label("").classes("text-[#333] font-mono text-[9px]")
+            src_info = ui.label("no file loaded").classes(
+                "text-[#444] font-mono text-[10px] tracking-wide"
             )
 
             ui.separator().classes("my-1 opacity-20")
 
+            # ── trim ─────────────────────────────────────────────────────────
+            section_label("TRIM")
+            ui.html("""
+<div style="position:relative;height:24px;background:#111;border-radius:3px;overflow:hidden;border:1px solid #1a1a1a;">
+  <div id="faily-trim-kept" style="position:absolute;top:0;left:0;height:100%;width:100%;background:rgba(245,158,11,0.15);border-left:2px solid rgba(245,158,11,0.55);border-right:2px solid rgba(245,158,11,0.55);"></div>
+</div>
+""").classes("w-full")
+
+            with ui.row().classes("w-full items-center gap-3 mt-1"):
+                ts_lbl = ui.label("0.0s").classes(
+                    "font-mono text-[9px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_ts(e):
+                    _trim_start[0] = float(e.value or 0)
+                    ts_lbl.set_text(f"{_trim_start[0]:.1f}s")
+                    _update_trim_bar()
+                trim_s_slider = ui.slider(
+                    min=0.0, max=300.0, step=0.1, value=0.0, on_change=_on_ts,
+                ).classes("flex-grow").props("color=amber label-always")
+
+            with ui.row().classes("w-full items-center gap-3"):
+                te_lbl = ui.label("0.0s").classes(
+                    "font-mono text-[9px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_te(e):
+                    _trim_end[0] = float(e.value or 0)
+                    te_lbl.set_text(f"{_trim_end[0]:.1f}s")
+                    _update_trim_bar()
+                trim_e_slider = ui.slider(
+                    min=0.0, max=300.0, step=0.1, value=0.0, on_change=_on_te,
+                ).classes("flex-grow").props("color=amber label-always")
+
+            with ui.row().classes("w-full items-center gap-4 mt-1"):
+                ui.label("START").classes("text-[#333] font-mono text-[9px] w-10 text-right shrink-0")
+                ui.label("END (from end)").classes("text-[#333] font-mono text-[9px]")
+
+            silence_chk = ui.checkbox(
+                "TRIM SILENCE  (auto-detect quiet edges)",
+                on_change=lambda e: _trim_silence.__setitem__(0, bool(e.value)),
+            ).classes("font-mono text-[10px] text-[#555] mt-1")
+
+            ui.separator().classes("my-1 opacity-20")
+
+            # ── adjustments ──────────────────────────────────────────────────
             section_label("VOLUME")
             with ui.row().classes("w-full items-center gap-3"):
                 vol_lbl = ui.label("0 dB").classes(
@@ -212,9 +344,9 @@ def build_edit_tab():
                 def _on_vol(e):
                     _vol_db[0] = float(e.value)
                     vol_lbl.set_text(f"{e.value:+.1f} dB" if e.value != 0 else "0 dB")
-                vol_slider = ui.slider(min=-20, max=20, step=0.5, value=0, on_change=_on_vol).classes(
-                    "flex-grow"
-                ).props("color=amber")
+                vol_slider = ui.slider(
+                    min=-20, max=20, step=0.5, value=0, on_change=_on_vol,
+                ).classes("flex-grow").props("color=amber")
 
             section_label("SPEED  (changes pitch — tape effect)")
             with ui.row().classes("w-full items-center gap-3"):
@@ -223,9 +355,9 @@ def build_edit_tab():
                 )
                 def _on_spd(e):
                     _speed[0] = float(e.value); spd_lbl.set_text(f"{e.value:.2f}×")
-                spd_slider = ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_spd).classes(
-                    "flex-grow"
-                ).props("color=amber")
+                spd_slider = ui.slider(
+                    min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_spd,
+                ).classes("flex-grow").props("color=amber")
 
             section_label("PITCH  (semitones, preserves duration)")
             with ui.row().classes("w-full items-center gap-3"):
@@ -235,28 +367,9 @@ def build_edit_tab():
                 def _on_pit(e):
                     _pitch[0] = int(e.value)
                     pit_lbl.set_text(f"{int(e.value):+d} st" if e.value != 0 else "0 st")
-                pit_slider = ui.slider(min=-12, max=12, step=1, value=0, on_change=_on_pit).classes(
-                    "flex-grow"
-                ).props("color=amber")
-
-            ui.separator().classes("my-1 opacity-20")
-
-            section_label("TRIM START  (seconds from beginning)")
-            trim_s = ui.number(
-                value=0.0, min=0.0, max=300.0, step=0.1, format="%.1f",
-                on_change=lambda e: _trim_start.__setitem__(0, float(e.value or 0)),
-            ).props("outlined dark dense").classes("w-full")
-
-            section_label("TRIM END  (seconds from end)")
-            trim_e = ui.number(
-                value=0.0, min=0.0, max=300.0, step=0.1, format="%.1f",
-                on_change=lambda e: _trim_end.__setitem__(0, float(e.value or 0)),
-            ).props("outlined dark dense").classes("w-full")
-
-            silence_chk = ui.checkbox(
-                "TRIM SILENCE  (auto-detect quiet edges)",
-                on_change=lambda e: _trim_silence.__setitem__(0, bool(e.value)),
-            ).classes("font-mono text-[10px] text-[#555]")
+                pit_slider = ui.slider(
+                    min=-12, max=12, step=1, value=0, on_change=_on_pit,
+                ).classes("flex-grow").props("color=amber")
 
             ui.separator().classes("my-1 opacity-20")
 
@@ -324,7 +437,9 @@ def build_edit_tab():
         if char_name and char_name != _NO_CHAR:
             opts = _char_opts()
             if char_name in opts:
-                save_char_sel.set_options(opts, value=char_name)
+                char_pick.set_options(opts, value=char_name)
+                _on_char_pick(char_name)
+            save_char_sel.set_options(opts, value=char_name)
         _load_source(path)
         ui.notify("Loaded in Edit tab — switch to EDIT", timeout=2000)
 
