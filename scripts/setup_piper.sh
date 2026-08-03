@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# WSL2 / Linux setup for piper training.
+# Inference runs on CPU in WSL2 (no GPU passthrough for cu128 torch).
+# For GPU training use the Windows setup: scripts/setup_piper.bat
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,26 +17,40 @@ for v in python3.11 python3.10 python3.9; do
     fi
 done
 if [ -z "$PYBIN" ]; then
-    echo "ERROR: Python 3.9-3.11 required. Install with: sudo apt install python3.11"
+    echo "ERROR: Python 3.9-3.11 required."
+    echo "  sudo apt install python3.11 python3.11-venv"
     exit 1
 fi
-echo "Using $PYBIN"
+echo "Using $($PYBIN --version)"
 
-# ── espeak-ng (phonemizer dependency) ───────────────────────────────────────
+# ── espeak-ng ────────────────────────────────────────────────────────────────
 if ! command -v espeak-ng &>/dev/null; then
     echo "Installing espeak-ng..."
     sudo apt-get install -y espeak-ng
 fi
 
-# ── Create venv ──────────────────────────────────────────────────────────────
-if [ -f "$VENV/bin/python" ]; then
-    echo "Piper venv already exists — skipping creation."
-else
-    echo "Creating venv at $VENV"
-    "$PYBIN" -m venv "$VENV"
-    "$VENV/bin/pip" install --upgrade pip
-    "$VENV/bin/pip" install piper-train piper-tts
-    echo "Venv ready."
+# ── Venv ─────────────────────────────────────────────────────────────────────
+if [ -f "$VENV/bin/piper" ] && "$VENV/bin/python" -c "import piper_train" 2>/dev/null; then
+    echo "Piper venv already complete — skipping."
+    SKIP_INSTALL=1
+fi
+
+if [ -z "$SKIP_INSTALL" ]; then
+    if [ ! -f "$VENV/bin/python" ]; then
+        echo "Creating venv..."
+        "$PYBIN" -m venv "$VENV"
+    fi
+
+    # Downgrade pip so pytorch-lightning 1.7.x metadata is accepted
+    echo "Downgrading pip to allow pytorch-lightning 1.7.x..."
+    "$VENV/bin/pip" install "pip<24.1" --quiet
+
+    echo "Installing piper-tts..."
+    "$VENV/bin/pip" install piper-tts --quiet
+
+    echo "Installing piper-train from source (pulls torch, ~2 GB)..."
+    "$VENV/bin/pip" install \
+        "piper-train @ git+https://github.com/rhasspy/piper.git#subdirectory=src/python"
 fi
 
 # ── Download base checkpoint ─────────────────────────────────────────────────
@@ -58,7 +75,8 @@ else
 fi
 
 echo ""
-echo "Piper setup complete."
-echo "  Venv:       $VENV"
-echo "  Checkpoint: $CKPT"
-echo "  Config:     $CFG"
+echo "Verify:"
+"$VENV/bin/python" -c "
+import piper_train, torch
+print(f'piper_train OK | torch {torch.__version__} | CUDA: {torch.cuda.is_available()}')
+"
