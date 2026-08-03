@@ -2,7 +2,7 @@ from nicegui import ui, run as ni_run
 from pathlib import Path
 from faily.modules.vc import (
     tune_generate, EXPRESSION_ENGINES, STAGE2_BACKENDS,
-    generate as vc_generate, BACKENDS,
+    generate as vc_generate, BACKENDS, _MELO_SPEAKERS,
 )
 from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
 from faily.ui.components import output_panel, section_label, show_error, model_picker
@@ -41,13 +41,15 @@ def _trained_chars() -> dict[str, str]:
 
 def _build_expression(char_state: list[str], _out: dict, _current_char: list[str]):
     """Left controls for EXPRESSION sub-tab. Returns (refresh, select)."""
-    _progress:     list[float] = [0.0]
-    _engine:       list[str]   = [_DEFAULT_ENGINE]
-    _stage2:       list[str]   = ["freevc"]
-    _normalize_db: list[float] = [-18.0]
-    _max_tokens:   list[int]   = [500]
-    _kok_speed:    list[float] = [1.0]
-    _kok_lang:     list[int]   = [0]
+    _progress:      list[float] = [0.0]
+    _engine:        list[str]   = [_DEFAULT_ENGINE]
+    _stage2:        list[str]   = ["freevc"]
+    _normalize_db:  list[float] = [-18.0]
+    _max_tokens:    list[int]   = [500]
+    _kok_speed:     list[float] = [1.0]
+    _kok_lang:      list[int]   = [0]
+    _melo_speaker:  list[str]   = ["EN-US"]
+    _melo_speed:    list[float] = [1.0]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -73,9 +75,15 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         _progress[0] = 0.0
         _out["model_loader"].set_visibility(True)
         _poll.active = True
-        expression = kok_voice_input.value.strip() if _engine[0] == "kokoro" else expr_input.value.strip()
+        if _engine[0] == "kokoro":
+            expression = kok_voice_input.value.strip()
+        elif _engine[0] == "melotts":
+            expression = _melo_speaker[0]
+        else:
+            expression = expr_input.value.strip()
         with build_ref_audio(char_state[0]) as (ref, _):
             try:
+                spd = _melo_speed[0] if _engine[0] == "melotts" else _kok_speed[0]
                 path = await ni_run.io_bound(
                     tune_generate,
                     text, expression, _engine[0], ref, _progress,
@@ -83,7 +91,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                     normalize_db=_normalize_db[0],
                     max_new_tokens=_max_tokens[0],
                     stage2_backend=_stage2[0],
-                    engine_speed=_kok_speed[0],
+                    engine_speed=spd,
                     engine_lang=_kok_lang[0],
                 )
                 _out["main_player"].set_source(f"/outputs/vc/{path.name}")
@@ -105,6 +113,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         _engine[0] = key
         parler_row.set_visibility(key == "parler")
         kokoro_row.set_visibility(key == "kokoro")
+        melotts_row.set_visibility(key == "melotts")
 
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
         _section_row("CHARACTER", "The voice to speak in. Characters are created in the CLONE tab.")
@@ -165,6 +174,30 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 def _on_lang(e): _kok_lang[0] = int(e.value); lang_lbl.set_text(str(int(e.value)))
                 ui.slider(min=0, max=3, step=1, value=0, on_change=_on_lang).classes("flex-grow").props("color=amber")
         kokoro_row.set_visibility(False)
+
+        # ── MeloTTS controls ──────────────────────────────────────────────────
+        with ui.column().classes("w-full gap-3") as melotts_row:
+            _section_row(
+                "ACCENT / SPEAKER",
+                "MeloTTS voice. Pick an English accent or another language — the accent is the stage-1 "
+                "style, and voice conversion applies the character's timbre on top.",
+            )
+            melo_opts = {s: s.replace("-", " · ") for s in _MELO_SPEAKERS}
+            ui.select(
+                options=melo_opts,
+                value="EN-US",
+                on_change=lambda e: _melo_speaker.__setitem__(0, e.value),
+            ).props("outlined dark dense").classes("w-full")
+            _section_row("SPEED", "Speech rate for MeloTTS. 1.0 is natural pace.")
+            with ui.row().classes("w-full items-center gap-3"):
+                melo_spd_lbl = ui.label("1.00×").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_melo_spd(e):
+                    _melo_speed[0] = float(e.value)
+                    melo_spd_lbl.set_text(f"{e.value:.2f}×")
+                ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_melo_spd).classes("flex-grow").props("color=amber")
+        melotts_row.set_visibility(False)
 
         # ── shared controls ───────────────────────────────────────────────────
         _section_row("PRE-CONVERT LEVEL", "Normalise stage-1 output before voice conversion. Consistent level reduces distortion.")

@@ -112,8 +112,7 @@ STAGE2_BACKENDS = {
     },
     "openvoice": {
         "label": "OpenVoice v2",
-        "desc": "Zero-shot · built for longer and more expressive inputs than FreeVC. Better prosody preservation. Slower to load. Not yet integrated.",
-        "available": False,
+        "desc": "MyShell AI · zero-shot tone color conversion. Better prosody and naturalness than FreeVC on longer inputs. Downloads ~200 MB converter checkpoint on first use.",
     },
     "seedvc": {
         "label": "Seed-VC",
@@ -131,6 +130,10 @@ EXPRESSION_ENGINES = {
     "kokoro": {
         "label": "Kokoro",
         "desc": "Fast, styleable via voice name (e.g. af_heart, am_adam). No text description needed — picks a Kokoro intermediate voice then FreeVC converts to character. Best for short punchy lines.",
+    },
+    "melotts": {
+        "label": "MeloTTS",
+        "desc": "MyShell AI · fast neural TTS with accent control. Choose from EN-US, EN-BR, EN-AU, EN-INDIA or other languages (ES/FR/ZH/JP/KR). Very consistent output — good pair with OpenVoice v2 VC.",
     },
     # Future — uncomment when CosyVoice 2 loader is implemented:
     # "cosyvoice2": {
@@ -459,6 +462,47 @@ def _chatterbox_generate(text, ref_path, out, exaggeration, cfg_weight):
 
 _KOKORO_LANGS = ["a", "b", "j", "z"]
 
+# MeloTTS speaker IDs — first segment before "-" is the MeloTTS language code.
+# Single-language codes (ES/FR/ZH/JP/KR) act as both language and speaker.
+_MELO_SPEAKERS = [
+    "EN-Default", "EN-US", "EN-BR", "EN-AU", "EN-INDIA",
+    "ES", "FR", "ZH", "JP", "KR",
+]
+
+
+def _load_melotts(lang: str):
+    from melo.api import TTS
+    return TTS(language=lang, device=str(manager.device))
+
+
+def _melotts_generate(text: str, out: Path, speaker: str = "EN-US", speed: float = 1.0):
+    lang = speaker.split("-")[0]
+    model = manager.load(f"melotts_{lang}", lambda: _load_melotts(lang))
+    spk_ids = model.hps.data.spk2id
+    spk_id = spk_ids.get(speaker, next(iter(spk_ids.values())))
+    model.tts_to_file(text, spk_id, str(out), speed=speed, quiet=True)
+
+
+_OPENVOICE_CKPT = VC_MODELS_DIR / "openvoice_v2"
+_OV_CONV_ID = "openvoice_v2_converter"
+
+
+def _load_openvoice_converter():
+    from openvoice.api import ToneColorConverter
+    ckpt_dir = _OPENVOICE_CKPT / "converter"
+    config_path = ckpt_dir / "config.json"
+    ckpt_path   = ckpt_dir / "checkpoint.pth"
+    if not ckpt_path.exists():
+        from huggingface_hub import snapshot_download
+        snapshot_download(
+            "myshell-ai/openvoice-v2",
+            local_dir=str(_OPENVOICE_CKPT),
+            ignore_patterns=["*.md", "*.txt"],
+        )
+    conv = ToneColorConverter(str(config_path), device=str(manager.device))
+    conv.load_ckpt(str(ckpt_path))
+    return conv
+
 
 def _load_freevc():
     _patch_xtts_transformers()
@@ -554,6 +598,9 @@ def tune_generate(
         if not chunks:
             raise RuntimeError("Kokoro produced no audio output")
         sf.write(str(stage1), np.concatenate(chunks), 24000)
+    elif engine == "melotts":
+        speaker = expression.strip() or "EN-US"
+        _melotts_generate(text, stage1, speaker=speaker, speed=engine_speed)
     else:
         raise ValueError(f"Unknown expression engine: {engine!r}")
 
@@ -584,7 +631,17 @@ def tune_generate(
 
 
 def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
-    raise NotImplementedError("OpenVoice v2 not yet integrated")
+    from openvoice import se_extractor
+    conv = manager.load(_OV_CONV_ID, _load_openvoice_converter)
+    src_se, _ = se_extractor.get_se(str(source_wav), conv, vad=True)
+    tgt_se, _ = se_extractor.get_se(str(target_wav), conv, vad=True)
+    conv.convert(
+        audio_src_path=str(source_wav),
+        src_se=src_se,
+        tgt_se=tgt_se,
+        output_path=str(out),
+        tau=0.3,
+    )
 
 
 def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path):
