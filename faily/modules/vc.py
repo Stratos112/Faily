@@ -44,6 +44,14 @@ _patch_ffmpeg_read()
 VC_OUTPUT_DIR = Path("outputs/vc")
 
 
+def _ov_available() -> bool:
+    try:
+        import openvoice  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _make_clip_name(char_name: str | None, style: str, text: str, output_dir: Path) -> str:
     """Build a human-readable clip filename: {char}_{style_word}_{text_word}_{NNN}.wav"""
     def _first_word(s: str) -> str:
@@ -114,6 +122,7 @@ STAGE2_BACKENDS = {
     "openvoice": {
         "label": "OpenVoice v2",
         "desc": "MyShell AI · zero-shot tone color conversion. Better prosody and naturalness than FreeVC on longer inputs. Downloads ~200 MB converter checkpoint on first use.",
+        "available": _ov_available(),
     },
     "seedvc": {
         "label": "Seed-VC",
@@ -633,7 +642,15 @@ def tune_generate(
 
 
 def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
-    from openvoice import se_extractor
+    try:
+        from openvoice import se_extractor
+    except ImportError:
+        raise RuntimeError(
+            "OpenVoice is not installed.\n"
+            'Re-run scripts/setup.bat, or manually:\n'
+            '  pip install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"\n'
+            "  pip install wavmark"
+        )
     conv = manager.load(_OV_CONV_ID, _load_openvoice_converter)
     src_se, _ = se_extractor.get_se(str(source_wav), conv, vad=True)
     tgt_se, _ = se_extractor.get_se(str(target_wav), conv, vad=True)
