@@ -3,6 +3,7 @@ import soundfile as sf
 import torchaudio
 from pathlib import Path
 from faily.core.model_manager import manager, VC_MODELS_DIR
+from faily.modules.edit import ensure_stereo
 
 
 def _patch_torchaudio():
@@ -627,6 +628,7 @@ def tune_generate(
     if progress_ref is not None:
         progress_ref[0] = 1.0
 
+    ensure_stereo(out)
     return out
 
 
@@ -689,6 +691,7 @@ def generate(
     if progress_ref is not None:
         progress_ref[0] = 1.0
 
+    ensure_stereo(out)
     return out
 
 

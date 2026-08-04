@@ -8,6 +8,13 @@ def audio_info(path: Path) -> dict:
     return {"duration": info.duration, "sample_rate": info.samplerate, "channels": info.channels}
 
 
+def ensure_stereo(path: Path):
+    """Duplicate a mono WAV to stereo (L=R) in-place. No-op if already stereo."""
+    data, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    if data.ndim == 1:
+        sf.write(str(path), np.stack([data, data], axis=1), sr)
+
+
 def apply_edits(
     src: Path,
     out: Path,
@@ -18,6 +25,7 @@ def apply_edits(
     trim_end: float = 0.0,
     trim_silence: bool = False,
     stereo: bool = False,
+    mono: bool = False,
 ) -> Path:
     data, sr = sf.read(str(src), dtype="float32", always_2d=False)
     n = data.shape[0]
@@ -61,6 +69,10 @@ def apply_edits(
     # stereo — copy mono to both channels
     if stereo and data.ndim == 1:
         data = np.stack([data, data], axis=1)
+
+    # mono — average stereo channels down
+    if mono and data.ndim > 1:
+        data = data.mean(axis=1)
 
     if len(data) == 0:
         data = np.zeros(sr, dtype=np.float32)

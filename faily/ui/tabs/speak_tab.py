@@ -4,6 +4,7 @@ from faily.modules.vc import (
     tune_generate, EXPRESSION_ENGINES, STAGE2_BACKENDS,
     generate as vc_generate, BACKENDS, _MELO_SPEAKERS,
 )
+from faily.modules.edit import ensure_stereo
 from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
 from faily.ui.components import output_panel, section_label, show_error, model_picker
 
@@ -283,6 +284,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                     speak_generate, text, char["rvc_model"], _VC_DIR,
                     char_name=char_state[0],
                 )
+            await ni_run.io_bound(ensure_stereo, path)
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path, text)

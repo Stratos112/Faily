@@ -43,7 +43,7 @@ def build_edit_tab():
     _trim_start:   list[float] = [0.0]
     _trim_end:     list[float] = [0.0]
     _trim_silence: list[bool]  = [False]
-    _stereo:       list[bool]  = [False]
+    _mono:         list[bool]  = [False]
 
     # ── helpers ───────────────────────────────────────────────────────────────
     def _char_opts() -> dict[str, str]:
@@ -84,7 +84,7 @@ def build_edit_tab():
             _channels[0] = 1
             _duration[0] = 0.0
             src_info.set_text(path.name)
-        stereo_check.set_enabled(_channels[0] == 1)
+        mono_check.set_enabled(_channels[0] > 1)
         # update trim sliders
         dur_max = max(_duration[0], 1.0)
         trim_s_slider.props(f"max={dur_max:.1f}")
@@ -136,7 +136,7 @@ def build_edit_tab():
                 trim_start=_trim_start[0],
                 trim_end=_trim_end[0],
                 trim_silence=_trim_silence[0],
-                stereo=_stereo[0],
+                mono=_mono[0],
             )
             _preview[0] = out
             preview_player.set_source(f"/outputs/edit/{out.name}")
@@ -160,7 +160,7 @@ def build_edit_tab():
         _trim_start[0] = 0.0;  trim_s_slider.set_value(0.0);  ts_lbl.set_text("0.0s")
         _trim_end[0]   = 0.0;  trim_e_slider.set_value(0.0);  te_lbl.set_text("0.0s")
         _trim_silence[0] = False;  silence_chk.set_value(False)
-        _stereo[0]       = False;  stereo_check.set_value(False)
+        _mono[0]         = False;  mono_check.set_value(False)
         ui.run_javascript("faily_trim_update(0, 0)")
 
     def _save_as_ref():
@@ -374,9 +374,9 @@ def build_edit_tab():
 
             ui.separator().classes("my-1 opacity-20")
 
-            stereo_check = ui.checkbox(
-                "MAKE STEREO  (copy mono to both channels)",
-                on_change=lambda e: _stereo.__setitem__(0, bool(e.value)),
+            mono_check = ui.checkbox(
+                "SUM TO MONO  (average L+R into one channel)",
+                on_change=lambda e: _mono.__setitem__(0, bool(e.value)),
             ).classes("font-mono text-[10px] text-[#555]")
 
             ui.space()
