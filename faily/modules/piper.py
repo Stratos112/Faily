@@ -215,7 +215,7 @@ async def _stream(cmd: list[str], log_cb, proc_ref: list):
         log_cb(raw.decode(errors="replace").rstrip())
     await proc.wait()
     proc_ref[0] = None
-    if proc.returncode not in (0, -15, 1):
+    if proc.returncode not in (0, -15):
         raise RuntimeError(f"Process exited {proc.returncode}")
 
 

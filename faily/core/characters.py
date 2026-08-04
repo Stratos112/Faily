@@ -77,6 +77,8 @@ def build_ref_audio(name: str):
     arrays, target_sr = [], None
     for node in chain:
         data, sr = sf.read(str(node["audio"]), dtype="float32", always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
         if target_sr is None:
             target_sr = sr
         elif sr != target_sr:
