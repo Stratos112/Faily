@@ -44,14 +44,6 @@ _patch_ffmpeg_read()
 VC_OUTPUT_DIR = Path("outputs/vc")
 
 
-def _ov_available() -> bool:
-    try:
-        import openvoice  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 def _make_clip_name(char_name: str | None, style: str, text: str, output_dir: Path) -> str:
     """Build a human-readable clip filename: {char}_{style_word}_{text_word}_{NNN}.wav"""
     def _first_word(s: str) -> str:
@@ -122,7 +114,6 @@ STAGE2_BACKENDS = {
     "openvoice": {
         "label": "OpenVoice v2",
         "desc": "MyShell AI · zero-shot tone color conversion. Better prosody and naturalness than FreeVC on longer inputs. Downloads ~200 MB converter checkpoint on first use.",
-        "available": _ov_available(),
     },
     "seedvc": {
         "label": "Seed-VC",

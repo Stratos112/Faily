@@ -110,12 +110,13 @@ echo   MeloTTS NLTK data...
 if errorlevel 1 ( echo WARNING: NLTK download failed — run manually: python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng')" )
 
 :: ── OpenVoice v2 ^(SPEAK stage-2 voice conversion^) ──────────────────────────
-:: OpenVoice also pulls tokenizers but with --no-deps we avoid the pin conflict.
-echo   OpenVoice v2 ^(--no-deps to avoid tokenizers pin conflict^)...
+:: --no-deps avoids pinned version conflicts (gradio 3.x, numpy 1.22, librosa 0.9, etc.)
+:: that would downgrade packages already installed at newer compatible versions.
+echo   OpenVoice v2 ^(--no-deps to skip pinned version conflicts^)...
 "%VENV%\Scripts\pip" install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"
 if errorlevel 1 ( echo WARNING: OpenVoice install failed. ) else (
-    :: openvoice runtime deps beyond what's already installed
-    "%VENV%\Scripts\pip" install wavmark --quiet
+    :: Runtime deps that are genuinely absent ^(skipping pinned conflicts — newer versions work^)
+    "%VENV%\Scripts\pip" install wavmark resampy cn2an eng_to_ipa langid jieba --quiet
 )
 
 :: ── Windows environment variable ──────────────────────────────────────────────
