@@ -56,13 +56,29 @@ def get_ref_chain(name: str) -> list[dict]:
 
 
 @contextmanager
-def build_ref_audio(name: str):
+def build_ref_audio(name: str, require_transcript: bool = False, max_duration: float | None = None):
     """Yield (Path, transcript) for the full ref chain.
 
     Single-entry chains return the existing file directly (no copy).
     Multi-entry chains are concatenated into a temp file that is deleted on exit.
+    require_transcript=True: drop clips without transcripts so audio/text stay aligned (F5-TTS).
+    max_duration: stop accumulating clips once this total duration (seconds) would be exceeded.
+      F5-TTS generates [ref]+[gen] as one sequence and trims by duration — optimal ref is
+      5–15 s; longer refs break the trim and cause the ref speech to bleed into output.
     """
     chain = get_ref_chain(name)
+    if require_transcript:
+        chain = [n for n in chain if n["transcript"].strip()]
+    if max_duration is not None:
+        import soundfile as _sf
+        capped, total = [], 0.0
+        for node in chain:
+            dur = _sf.info(str(node["audio"])).duration
+            if capped and total + dur > max_duration:
+                break
+            capped.append(node)
+            total += dur
+        chain = capped
     if not chain:
         yield None, ""
         return

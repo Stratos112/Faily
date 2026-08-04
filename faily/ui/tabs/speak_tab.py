@@ -399,7 +399,8 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         _progress[0] = 0.0
         _out["model_loader"].set_visibility(True)
         _poll.active = True
-        with build_ref_audio(char_state[0]) as (ref, chain_transcript):
+        _is_f5 = _backend[0] == "f5_tts"
+        with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=15.0 if _is_f5 else None) as (ref, chain_transcript):
             try:
                 path = await ni_run.io_bound(
                     vc_generate,
