@@ -119,6 +119,17 @@ if errorlevel 1 ( echo WARNING: OpenVoice install failed. ) else (
     "%VENV%\Scripts\pip" install wavmark resampy faster-whisper cn2an eng_to_ipa langid jieba --quiet
 )
 
+:: ── Seed-VC ^(SPEAK stage-2 zero-shot voice conversion^) ───────────────────────
+echo   Seed-VC...
+set SEEDVC_DIR=%PROJECT_DIR%\models\vc\seed-vc
+if not exist "%SEEDVC_DIR%" (
+    git clone https://github.com/Plachtaa/seed-vc.git "%SEEDVC_DIR%"
+)
+if exist "%SEEDVC_DIR%\requirements.txt" (
+    "%VENV%\Scripts\pip" install -r "%SEEDVC_DIR%\requirements.txt" --quiet
+    if errorlevel 1 ( echo WARNING: Seed-VC requirements install failed. )
+)
+
 :: ── Windows environment variable ──────────────────────────────────────────────
 :: Suppresses HuggingFace symlink warnings (irrelevant on Windows)
 setx HF_HUB_DISABLE_SYMLINKS_WARNING 1 >nul 2>&1

@@ -52,6 +52,8 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     _melo_speaker:  list[str]   = ["EN-US"]
     _melo_speed:    list[float] = [1.0]
     _ov_tau:        list[float] = [0.3]
+    _svc_steps:     list[int]   = [10]
+    _svc_cfg:       list[float] = [0.7]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -96,6 +98,8 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                     engine_speed=spd,
                     engine_lang=_kok_lang[0],
                     ov_tau=_ov_tau[0],
+                    svc_steps=_svc_steps[0],
+                    svc_cfg=_svc_cfg[0],
                 )
                 _out["main_player"].set_source(f"/outputs/vc/{path.name}")
                 _out["status"].set_text(f"✓  {path.name}")
@@ -121,6 +125,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     def _on_stage2(key: str):
         _stage2[0] = key
         ov_tau_row.set_visibility(key == "openvoice")
+        svc_row.set_visibility(key == "seedvc")
 
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
         _section_row("CHARACTER", "The voice to speak in. Characters are created in the CLONE tab.")
@@ -150,6 +155,32 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 def _on_tau(e): _ov_tau[0] = float(e.value); tau_lbl.set_text(f"{e.value:.2f}")
                 ui.slider(min=0.01, max=0.9, step=0.01, value=0.3, on_change=_on_tau).classes("flex-grow").props("color=amber")
         ov_tau_row.set_visibility(False)
+
+        # ── Seed-VC controls ──────────────────────────────────────────────────
+        with ui.column().classes("w-full gap-3") as svc_row:
+            _section_row(
+                "DIFFUSION STEPS",
+                "Seed-VC denoising steps. More steps = higher quality but slower. "
+                "10 is a good balance; raise to 20-30 for final renders.",
+            )
+            with ui.row().classes("w-full items-center gap-3"):
+                svc_steps_lbl = ui.label("10").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_svc_steps(e): _svc_steps[0] = int(e.value); svc_steps_lbl.set_text(str(int(e.value)))
+                ui.slider(min=4, max=50, step=1, value=10, on_change=_on_svc_steps).classes("flex-grow").props("color=amber")
+            _section_row(
+                "CFG RATE",
+                "Classifier-free guidance scale for Seed-VC. "
+                "Higher values apply the target voice more strongly. 0.7 is a sensible default.",
+            )
+            with ui.row().classes("w-full items-center gap-3"):
+                svc_cfg_lbl = ui.label("0.70").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_svc_cfg(e): _svc_cfg[0] = float(e.value); svc_cfg_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.1, max=1.0, step=0.05, value=0.7, on_change=_on_svc_cfg).classes("flex-grow").props("color=amber")
+        svc_row.set_visibility(False)
 
         # ── Parler controls ───────────────────────────────────────────────────
         with ui.column().classes("w-full gap-3") as parler_row:

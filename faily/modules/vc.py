@@ -117,8 +117,7 @@ STAGE2_BACKENDS = {
     },
     "seedvc": {
         "label": "Seed-VC",
-        "desc": "Diffusion-based · best content and rhythm preservation on complex Parler output. Slowest of the three due to diffusion steps. Not yet integrated.",
-        "available": False,
+        "desc": "Bytedance · diffusion-based zero-shot VC. Uses Whisper for speaker-agnostic content features — prosody and rhythm from the expression engine transfer cleanly regardless of source voice. Slower than FreeVC; 10 diffusion steps is a good quality/speed balance.",
     },
 }
 
@@ -572,6 +571,8 @@ def tune_generate(
     engine_speed: float = 1.0,
     engine_lang: int = 0,
     ov_tau: float = 0.3,
+    svc_steps: int = 10,
+    svc_cfg: float = 0.7,
 ) -> Path:
     """Two-stage TUNE pipeline: expression engine → voice conversion."""
     if output_dir is None:
@@ -624,7 +625,7 @@ def tune_generate(
             _melo_spk = (expression.strip() or "EN-US") if engine == "melotts" else None
             _openvoice_convert(stage1, ref_path, out, tau=ov_tau, melo_speaker=_melo_spk)
         elif stage2_backend == "seedvc":
-            _seedvc_convert(stage1, ref_path, out)
+            _seedvc_convert(stage1, ref_path, out, steps=svc_steps, cfg_rate=svc_cfg)
         else:
             raise ValueError(f"Unknown stage2 backend: {stage2_backend!r}")
     finally:
@@ -724,8 +725,40 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float
     )
 
 
-def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path):
-    raise NotImplementedError("Seed-VC not yet integrated")
+_SEEDVC_DIR = VC_MODELS_DIR / "seed-vc"
+
+
+def _load_seedvc():
+    import sys
+    repo = _SEEDVC_DIR.resolve()
+    if not repo.exists():
+        raise RuntimeError(
+            "Seed-VC repo not found. Clone it first:\n"
+            f'  git clone https://github.com/Plachtaa/seed-vc.git "{repo}"\n'
+            f'  pip install -r "{repo / "requirements.txt"}"'
+        )
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    from seed_vc_wrapper import SeedVCWrapper
+    return SeedVCWrapper(device=str(manager.device))
+
+
+def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
+                    steps: int = 10, cfg_rate: float = 0.7):
+    wrapper = manager.load("seedvc", _load_seedvc)
+    audio = wrapper.convert_voice(
+        source=str(source_wav),
+        target=str(target_wav),
+        diffusion_steps=steps,
+        length_adjust=1.0,
+        inference_cfg_rate=cfg_rate,
+        f0_condition=False,
+        auto_f0_adjust=True,
+        pitch_shift=0,
+        stream_output=False,
+    )
+    import soundfile as _sf
+    _sf.write(str(out), audio, 22050)
 
 
 def generate(
