@@ -571,7 +571,7 @@ def tune_generate(
     stage2_backend: str = "freevc",
     engine_speed: float = 1.0,
     engine_lang: int = 0,
-    ov_tau: float = 0.1,
+    ov_tau: float = 0.3,
 ) -> Path:
     """Two-stage TUNE pipeline: expression engine → voice conversion."""
     if output_dir is None:
@@ -633,7 +633,7 @@ def tune_generate(
     return out
 
 
-def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float = 0.1):
+def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float = 0.3):
     import sys, types, os, shutil, tempfile as _tmp
     # whisper_timestamped is imported at the top of se_extractor.py but only
     # used inside split_audio_whisper, which we patch out below.
@@ -665,28 +665,33 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float
     se_extractor.split_audio_whisper = _passthrough_split
     conv = manager.load(_OV_CONV_ID, _load_openvoice_converter)
 
-    # src_se must be a pre-computed base-speaker embedding, NOT extracted from the
-    # synthesized audio. The ToneColorConverter was trained to convert FROM one of
-    # OpenVoice's own base speakers (EN/ZH/JP/KR/…) to the target voice. Extracting
-    # src_se from Parler/Kokoro/MeloTTS output gives an undefined embedding that the
-    # converter maps toward the nearest base-speaker it can find — often ZH or JP —
-    # producing non-English prosody and cadence. Use en-newest as the canonical EN anchor.
-    import torch as _torch
-    _se_candidates = [
-        _OPENVOICE_CKPT / "base_speakers" / "ses" / "en-newest.pth",
-        _OPENVOICE_CKPT / "base_speakers" / "ses" / "en-us.pth",
-        _OPENVOICE_CKPT / "base_speakers" / "ses" / "en-default.pth",
-    ]
-    src_se = None
-    for _p in _se_candidates:
-        if _p.exists():
-            src_se = _torch.load(str(_p), map_location=conv.device, weights_only=True)
-            break
-    if src_se is None:
-        # fallback: extract from source (will work but may drift non-English)
-        src_se, _ = se_extractor.get_se(str(source_wav), conv, vad=False)
+    # The se_extractor expects mono audio at the model's native sample rate (22050 Hz).
+    # Passing multi-channel or wrong-SR audio gives a distorted speaker embedding that
+    # can map to unexpected regions of the embedding space (heard as non-English prosody).
+    # Write clean mono 22050 Hz temp files for both source and target before extraction.
+    import soundfile as _sf
+    import numpy as _np
 
-    tgt_se, _ = se_extractor.get_se(str(target_wav), conv, vad=False)
+    def _clean_wav(src: Path) -> Path:
+        data, sr = _sf.read(str(src), dtype="float32", always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if sr != 22050:
+            import librosa as _lr
+            data = _lr.resample(data, orig_sr=sr, target_sr=22050)
+        tmp_path = Path(_tmp.mktemp(suffix=".wav"))
+        _sf.write(str(tmp_path), data, 22050)
+        return tmp_path
+
+    src_clean = _clean_wav(source_wav)
+    tgt_clean = _clean_wav(target_wav)
+    try:
+        src_se, _ = se_extractor.get_se(str(src_clean), conv, vad=False)
+        tgt_se, _ = se_extractor.get_se(str(tgt_clean), conv, vad=False)
+    finally:
+        for _p in (src_clean, tgt_clean):
+            try: _p.unlink()
+            except OSError: pass
     conv.convert(
         audio_src_path=str(source_wav),
         src_se=src_se,

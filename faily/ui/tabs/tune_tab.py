@@ -29,7 +29,7 @@ def build_tune_tab():
     _stage2: list[str] = ["freevc"]
     _normalize_db: list[float] = [-18.0]
     _max_tokens: list[int] = [500]
-    _ov_tau: list[float] = [0.1]
+    _ov_tau: list[float] = [0.3]
     _out: dict = {}
 
     def _update_char_info(name: str):
@@ -140,11 +140,11 @@ def build_tune_tab():
                     "Higher = stronger voice character but may distort intelligibility. Default 0.10.",
                 )
                 with ui.row().classes("w-full items-center gap-3"):
-                    ov_tau_lbl = ui.label("0.10").classes(
+                    ov_tau_lbl = ui.label("0.30").classes(
                         "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
                     )
                     def _on_ov_tau(e): _ov_tau[0] = float(e.value); ov_tau_lbl.set_text(f"{e.value:.2f}")
-                    ui.slider(min=0.01, max=0.5, step=0.01, value=0.1, on_change=_on_ov_tau).classes(
+                    ui.slider(min=0.01, max=0.9, step=0.01, value=0.3, on_change=_on_ov_tau).classes(
                         "flex-grow"
                     ).props("color=amber")
             ov_tau_row.set_visibility(False)
