@@ -571,6 +571,7 @@ def tune_generate(
     stage2_backend: str = "freevc",
     engine_speed: float = 1.0,
     engine_lang: int = 0,
+    ov_tau: float = 0.1,
 ) -> Path:
     """Two-stage TUNE pipeline: expression engine → voice conversion."""
     if output_dir is None:
@@ -616,7 +617,7 @@ def tune_generate(
         if stage2_backend == "freevc":
             _freevc_convert(stage1, ref_path, out)
         elif stage2_backend == "openvoice":
-            _openvoice_convert(stage1, ref_path, out)
+            _openvoice_convert(stage1, ref_path, out, tau=ov_tau)
         elif stage2_backend == "seedvc":
             _seedvc_convert(stage1, ref_path, out)
         else:
@@ -632,7 +633,7 @@ def tune_generate(
     return out
 
 
-def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
+def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float = 0.1):
     import sys, types, os, shutil, tempfile as _tmp
     # whisper_timestamped is imported at the top of se_extractor.py but only
     # used inside split_audio_whisper, which we patch out below.
@@ -670,7 +671,7 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
         src_se=src_se,
         tgt_se=tgt_se,
         output_path=str(out),
-        tau=0.3,
+        tau=tau,
     )
 
 

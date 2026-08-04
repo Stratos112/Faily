@@ -51,6 +51,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     _kok_lang:      list[int]   = [0]
     _melo_speaker:  list[str]   = ["EN-US"]
     _melo_speed:    list[float] = [1.0]
+    _ov_tau:        list[float] = [0.1]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -94,6 +95,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                     stage2_backend=_stage2[0],
                     engine_speed=spd,
                     engine_lang=_kok_lang[0],
+                    ov_tau=_ov_tau[0],
                 )
                 _out["main_player"].set_source(f"/outputs/vc/{path.name}")
                 _out["status"].set_text(f"✓  {path.name}")
@@ -116,6 +118,10 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         kokoro_row.set_visibility(key == "kokoro")
         melotts_row.set_visibility(key == "melotts")
 
+    def _on_stage2(key: str):
+        _stage2[0] = key
+        ov_tau_row.set_visibility(key == "openvoice")
+
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
         _section_row("CHARACTER", "The voice to speak in. Characters are created in the CLONE tab.")
         char_select = (
@@ -128,7 +134,22 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         model_picker(EXPRESSION_ENGINES, _DEFAULT_ENGINE, _on_engine)
 
         _section_row("VOICE CONVERSION", "Applies the character's voice to the intermediate audio.")
-        model_picker(STAGE2_BACKENDS, "freevc", lambda k: _stage2.__setitem__(0, k))
+        model_picker(STAGE2_BACKENDS, "freevc", _on_stage2)
+
+        # ── OpenVoice tau control ─────────────────────────────────────────────
+        with ui.column().classes("w-full gap-3") as ov_tau_row:
+            _section_row(
+                "TAU",
+                "OpenVoice voice identity strength. Lower = cleaner speech, more original content. "
+                "Higher = stronger voice character but may distort intelligibility. Default 0.10.",
+            )
+            with ui.row().classes("w-full items-center gap-3"):
+                tau_lbl = ui.label("0.10").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_tau(e): _ov_tau[0] = float(e.value); tau_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.01, max=0.5, step=0.01, value=0.1, on_change=_on_tau).classes("flex-grow").props("color=amber")
+        ov_tau_row.set_visibility(False)
 
         # ── Parler controls ───────────────────────────────────────────────────
         with ui.column().classes("w-full gap-3") as parler_row:
