@@ -42,9 +42,20 @@ echo Creating piper venv...
 py -3.11 -m venv "%VENV%"
 
 :install_packages
-:: Downgrade pip so pytorch-lightning 1.7.x metadata is accepted
+:: Downgrade pip so pytorch-lightning 1.7.x metadata is accepted.
+:: pip 24.1+ blocks self-modification through the pip script — must use python -m pip.
 echo Downgrading pip to allow pytorch-lightning 1.7.x...
-"%VENV%\Scripts\pip" install "pip<24.1" --quiet
+"%VENV%\Scripts\python" -m pip install "pip<24.1" --quiet
+if errorlevel 1 (
+    echo WARNING: pip downgrade failed — see note above.
+    echo   Run manually if errors follow:
+    echo   "%VENV%\Scripts\python" -m pip install "pip^<24.1"
+)
+
+:: Remove any existing pytorch-lightning before reinstalling.
+:: pip 24.1+ refuses to process packages already in site-packages with
+:: invalid requirement specs (>=1.9.*), so a stale install blocks everything.
+"%VENV%\Scripts\python" -m pip uninstall pytorch-lightning -y 2>nul
 
 :: ── piper-tts (inference binary) ──────────────────────────────────────────────
 echo Installing piper-tts...
