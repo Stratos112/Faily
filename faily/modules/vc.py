@@ -633,13 +633,11 @@ def tune_generate(
 
 
 def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
-    import sys, types
-    # se_extractor.py imports faster_whisper and whisper_timestamped at module
-    # level but only uses them on the vad=True code path. Stub them so the
-    # full whisper stack isn't required — Faily calls get_se with vad=False.
+    import sys, types, os, shutil, tempfile as _tmp
+    # whisper_timestamped is imported at the top of se_extractor.py but only
+    # used inside split_audio_whisper, which we patch out below.
     for _name, _attrs in [
-        ("faster_whisper",               ["WhisperModel"]),
-        ("whisper_timestamped",          []),
+        ("whisper_timestamped",            []),
         ("whisper_timestamped.transcribe", ["get_audio_tensor", "get_vad_segments"]),
     ]:
         if _name not in sys.modules:
@@ -654,8 +652,16 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
             f"OpenVoice dependency missing: {_e}\n"
             'Re-run scripts/setup.bat, or manually:\n'
             '  pip install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"\n'
-            "  pip install wavmark resampy cn2an eng_to_ipa langid jieba"
+            "  pip install wavmark resampy faster-whisper cn2an eng_to_ipa langid jieba"
         ) from _e
+    # split_audio_whisper always runs (even with vad=False in this OV version)
+    # and requires WhisperModel for VAD segment detection. We don't need that —
+    # replace it with a passthrough that treats the whole clip as one segment.
+    def _passthrough_split(audio_path, target_dir=None, audio_name=None):
+        d = _tmp.mkdtemp()
+        shutil.copy2(audio_path, os.path.join(d, "seg_0.wav"))
+        return d
+    se_extractor.split_audio_whisper = _passthrough_split
     conv = manager.load(_OV_CONV_ID, _load_openvoice_converter)
     src_se, _ = se_extractor.get_se(str(source_wav), conv, vad=False)
     tgt_se, _ = se_extractor.get_se(str(target_wav), conv, vad=False)
