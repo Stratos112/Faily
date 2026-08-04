@@ -113,7 +113,7 @@ STAGE2_BACKENDS = {
     },
     "openvoice": {
         "label": "OpenVoice v2",
-        "desc": "MyShell AI · zero-shot tone color conversion. Better prosody and naturalness than FreeVC on longer inputs. Downloads ~200 MB converter checkpoint on first use.",
+        "desc": "MyShell AI · zero-shot tone color conversion. Best results when paired with MeloTTS as the expression engine — they share the same base speaker model and the voice transfer is exact. Parler/Kokoro as stage 1 may produce non-English prosody artefacts.",
     },
     "seedvc": {
         "label": "Seed-VC",
@@ -617,7 +617,12 @@ def tune_generate(
         if stage2_backend == "freevc":
             _freevc_convert(stage1, ref_path, out)
         elif stage2_backend == "openvoice":
-            _openvoice_convert(stage1, ref_path, out, tau=ov_tau)
+            # When stage1 was MeloTTS, pass the speaker name so _openvoice_convert
+            # can load the matching pre-computed SE instead of extracting from source.
+            # MeloTTS and OpenVoice v2 share the same base speaker model family —
+            # each MeloTTS speaker has an exact .pth in base_speakers/ses/.
+            _melo_spk = (expression.strip() or "EN-US") if engine == "melotts" else None
+            _openvoice_convert(stage1, ref_path, out, tau=ov_tau, melo_speaker=_melo_spk)
         elif stage2_backend == "seedvc":
             _seedvc_convert(stage1, ref_path, out)
         else:
@@ -633,7 +638,7 @@ def tune_generate(
     return out
 
 
-def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float = 0.3):
+def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float = 0.3, melo_speaker: str | None = None):
     import sys, types, os, shutil, tempfile as _tmp
     # whisper_timestamped is imported at the top of se_extractor.py but only
     # used inside split_audio_whisper, which we patch out below.
@@ -683,15 +688,33 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float
         _sf.write(str(tmp_path), data, 22050)
         return tmp_path
 
-    src_clean = _clean_wav(source_wav)
+    # src_se: for MeloTTS source audio, load the exact matching pre-computed speaker
+    # embedding. MeloTTS IS OpenVoice v2's base speaker TTS — every MeloTTS speaker
+    # (EN-US, EN-BR, …) has a corresponding .pth in base_speakers/ses/. Using it lets
+    # the flow correctly strip the MeloTTS voice and leaves clean content for tgt_se.
+    # For Parler/Kokoro we must extract from the audio, but that path is imperfect —
+    # OpenVoice's speaker encoder can map arbitrary TTS to non-English regions.
+    # Recommend MeloTTS as expression engine when using OpenVoice VC.
+    src_se = None
+    if melo_speaker is not None:
+        import torch as _torch
+        _se_path = _OPENVOICE_CKPT / "base_speakers" / "ses" / f"{melo_speaker.lower()}.pth"
+        if _se_path.exists():
+            src_se = _torch.load(str(_se_path), map_location=conv.device, weights_only=True)
+
     tgt_clean = _clean_wav(target_wav)
     try:
-        src_se, _ = se_extractor.get_se(str(src_clean), conv, vad=False)
+        if src_se is None:
+            src_clean = _clean_wav(source_wav)
+            try:
+                src_se, _ = se_extractor.get_se(str(src_clean), conv, vad=False)
+            finally:
+                try: src_clean.unlink()
+                except OSError: pass
         tgt_se, _ = se_extractor.get_se(str(tgt_clean), conv, vad=False)
     finally:
-        for _p in (src_clean, tgt_clean):
-            try: _p.unlink()
-            except OSError: pass
+        try: tgt_clean.unlink()
+        except OSError: pass
     conv.convert(
         audio_src_path=str(source_wav),
         src_se=src_se,
