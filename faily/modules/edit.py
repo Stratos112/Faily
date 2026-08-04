@@ -20,7 +20,7 @@ def apply_edits(
     out: Path,
     volume_db: float = 0.0,
     speed: float = 1.0,
-    pitch_semitones: int = 0,
+    pitch_semitones: float = 0.0,
     trim_start: float = 0.0,
     trim_end: float = 0.0,
     trim_silence: bool = False,
@@ -59,12 +59,15 @@ def apply_edits(
 
     # pitch shift — independent of speed, preserves duration
     if pitch_semitones != 0 and len(data) > 0:
-        import torch
-        import torchaudio.functional as F
-        mono = data.ndim == 1
-        t = torch.from_numpy(data[np.newaxis] if mono else data.T.copy())
-        t = F.pitch_shift(t, sr, n_steps=float(pitch_semitones))
-        data = t.squeeze(0).numpy() if mono else t.T.numpy()
+        import librosa
+        if data.ndim == 1:
+            data = librosa.effects.pitch_shift(data, sr=sr, n_steps=float(pitch_semitones)).astype(np.float32)
+        else:
+            channels = [
+                librosa.effects.pitch_shift(data[:, c], sr=sr, n_steps=float(pitch_semitones)).astype(np.float32)
+                for c in range(data.shape[1])
+            ]
+            data = np.stack(channels, axis=1)
 
     # stereo — copy mono to both channels
     if stereo and data.ndim == 1:

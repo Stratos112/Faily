@@ -24,6 +24,54 @@ function faily_trim_update(sp, ep) {
 </script>
 """
 
+_WF_H = 68  # waveform canvas height px
+_WF_N = 500  # number of RMS columns
+
+
+def _waveform_html(path=None) -> str:
+    """Filled SVG waveform + trim overlay div. path=None → empty placeholder."""
+    overlay = (
+        '<div id="faily-trim-kept" style="position:absolute;top:0;left:0;height:100%;width:100%;'
+        'background:rgba(245,158,11,0.10);border-left:2px solid rgba(245,158,11,0.45);'
+        'border-right:2px solid rgba(245,158,11,0.45);pointer-events:none;"></div>'
+    )
+    wrap_open = (
+        f'<div style="position:relative;height:{_WF_H}px;background:#0d0d0d;'
+        f'border-radius:3px;overflow:hidden;border:1px solid #1a1a1a;">'
+    )
+    if path is None or not Path(path).exists():
+        return wrap_open + overlay + '</div>'
+    try:
+        import numpy as np
+        import soundfile as sf
+        data, _ = sf.read(str(path), dtype="float32", always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        n = min(_WF_N, max(1, len(data)))
+        chunks = np.array_split(data, n)
+        peaks = np.array([float(np.sqrt(np.mean(c ** 2))) if len(c) else 0.0 for c in chunks])
+        mx = peaks.max()
+        if mx > 0:
+            peaks /= mx
+        W, H = 500, _WF_H
+        mid = H / 2
+        margin = 4
+        top_pts = [(i * W / n + W / n / 2, mid - max(1.0, peaks[i] * (mid - margin))) for i in range(n)]
+        bot_pts = [(i * W / n + W / n / 2, mid + max(1.0, peaks[i] * (mid - margin))) for i in range(n)]
+        poly_pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in top_pts + list(reversed(bot_pts)))
+        svg = (
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+            f'preserveAspectRatio="none" width="100%" height="{H}" '
+            f'style="position:absolute;top:0;left:0;">'
+            f'<line x1="0" y1="{mid:.1f}" x2="{W}" y2="{mid:.1f}" '
+            f'stroke="rgba(80,80,80,0.25)" stroke-width="0.5"/>'
+            f'<polygon points="{poly_pts}" fill="rgba(160,120,40,0.45)"/>'
+            f'</svg>'
+        )
+        return wrap_open + svg + overlay + '</div>'
+    except Exception:
+        return wrap_open + overlay + '</div>'
+
 
 def build_edit_tab():
     """Returns send_to_edit(path, char_name=None) callable."""
@@ -39,11 +87,12 @@ def build_edit_tab():
 
     _vol_db:       list[float] = [0.0]
     _speed:        list[float] = [1.0]
-    _pitch:        list[int]   = [0]
+    _pitch:        list[float] = [0.0]
     _trim_start:   list[float] = [0.0]
     _trim_end:     list[float] = [0.0]
     _trim_silence: list[bool]  = [False]
     _mono:         list[bool]  = [False]
+    _stereo:       list[bool]  = [False]
 
     # ── helpers ───────────────────────────────────────────────────────────────
     def _char_opts() -> dict[str, str]:
@@ -84,7 +133,17 @@ def build_edit_tab():
             _channels[0] = 1
             _duration[0] = 0.0
             src_info.set_text(path.name)
-        mono_check.set_enabled(_channels[0] > 1)
+        # dynamic mono/stereo checkbox
+        _mono[0] = False
+        _stereo[0] = False
+        mono_check.set_value(False)
+        if _channels[0] > 1:
+            mono_check._props['label'] = "SUM TO MONO  (average L+R into one channel)"
+        else:
+            mono_check._props['label'] = "COPY TO STEREO  (duplicate to both channels)"
+        mono_check.update()
+        # waveform
+        waveform_el.set_content(_waveform_html(path))
         # update trim sliders
         dur_max = max(_duration[0], 1.0)
         trim_s_slider.props(f"max={dur_max:.1f}")
@@ -137,6 +196,7 @@ def build_edit_tab():
                 trim_end=_trim_end[0],
                 trim_silence=_trim_silence[0],
                 mono=_mono[0],
+                stereo=_stereo[0],
             )
             _preview[0] = out
             preview_player.set_source(f"/outputs/edit/{out.name}")
@@ -156,11 +216,11 @@ def build_edit_tab():
     def _reset():
         _vol_db[0] = 0.0;  vol_lbl.set_text("0 dB");   vol_slider.set_value(0.0)
         _speed[0]  = 1.0;  spd_lbl.set_text("1.00×");  spd_slider.set_value(1.0)
-        _pitch[0]  = 0;    pit_lbl.set_text("0 st");    pit_slider.set_value(0)
+        _pitch[0]  = 0.0;  pit_lbl.set_text("0.0 st");  pit_slider.set_value(0.0)
         _trim_start[0] = 0.0;  trim_s_slider.set_value(0.0);  ts_lbl.set_text("0.0s")
         _trim_end[0]   = 0.0;  trim_e_slider.set_value(0.0);  te_lbl.set_text("0.0s")
         _trim_silence[0] = False;  silence_chk.set_value(False)
-        _mono[0]         = False;  mono_check.set_value(False)
+        _mono[0]  = False;  _stereo[0] = False;  mono_check.set_value(False)
         ui.run_javascript("faily_trim_update(0, 0)")
 
     def _save_as_ref():
@@ -295,11 +355,7 @@ def build_edit_tab():
 
             # ── trim ─────────────────────────────────────────────────────────
             section_label("TRIM")
-            ui.html("""
-<div style="position:relative;height:24px;background:#111;border-radius:3px;overflow:hidden;border:1px solid #1a1a1a;">
-  <div id="faily-trim-kept" style="position:absolute;top:0;left:0;height:100%;width:100%;background:rgba(245,158,11,0.15);border-left:2px solid rgba(245,158,11,0.55);border-right:2px solid rgba(245,158,11,0.55);"></div>
-</div>
-""").classes("w-full")
+            waveform_el = ui.html(_waveform_html()).classes("w-full")
 
             with ui.row().classes("w-full items-center gap-3 mt-1"):
                 ts_lbl = ui.label("0.0s").classes(
@@ -357,26 +413,33 @@ def build_edit_tab():
                 def _on_spd(e):
                     _speed[0] = float(e.value); spd_lbl.set_text(f"{e.value:.2f}×")
                 spd_slider = ui.slider(
-                    min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_spd,
+                    min=0.5, max=2.0, step=0.01, value=1.0, on_change=_on_spd,
                 ).classes("flex-grow").props("color=amber")
 
             section_label("PITCH  (semitones, preserves duration)")
             with ui.row().classes("w-full items-center gap-3"):
-                pit_lbl = ui.label("0 st").classes(
+                pit_lbl = ui.label("0.0 st").classes(
                     "font-mono text-[10px] text-amber-400 w-14 shrink-0 text-right"
                 )
                 def _on_pit(e):
-                    _pitch[0] = int(e.value)
-                    pit_lbl.set_text(f"{int(e.value):+d} st" if e.value != 0 else "0 st")
+                    _pitch[0] = float(e.value)
+                    pit_lbl.set_text(f"{e.value:+.1f} st" if e.value != 0 else "0.0 st")
                 pit_slider = ui.slider(
-                    min=-12, max=12, step=1, value=0, on_change=_on_pit,
+                    min=-12.0, max=12.0, step=0.1, value=0.0, on_change=_on_pit,
                 ).classes("flex-grow").props("color=amber")
 
             ui.separator().classes("my-1 opacity-20")
 
+            def _on_mono_stereo(e):
+                val = bool(e.value)
+                if _channels[0] > 1:
+                    _mono[0] = val;  _stereo[0] = False
+                else:
+                    _stereo[0] = val;  _mono[0] = False
+
             mono_check = ui.checkbox(
                 "SUM TO MONO  (average L+R into one channel)",
-                on_change=lambda e: _mono.__setitem__(0, bool(e.value)),
+                on_change=_on_mono_stereo,
             ).classes("font-mono text-[10px] text-[#555]")
 
             ui.space()
@@ -442,6 +505,5 @@ def build_edit_tab():
                 _on_char_pick(char_name)
             save_char_sel.set_options(opts, value=char_name)
         _load_source(path)
-        ui.notify("Loaded in Edit tab — switch to EDIT", timeout=2000)
 
     return send_to_edit

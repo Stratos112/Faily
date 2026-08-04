@@ -291,11 +291,24 @@ def build_characters_tab(on_speak, on_change):
 
             if own_refs or inherited:
                 ui.separator().classes("my-3 opacity-20")
+                all_refs = own_refs + inherited
+                total_dur = 0.0
+                try:
+                    import soundfile as _sf
+                    for _r in all_refs:
+                        try:
+                            total_dur += _sf.info(str(_r["audio"])).duration
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                dur_str = (f"{total_dur:.0f}s" if total_dur < 60
+                           else f"{total_dur / 60:.1f}m")
                 with ui.row().classes("items-center gap-2 w-full"):
                     ui.label("REFERENCES").classes(
                         "text-[#444] font-mono text-[10px] tracking-widest flex-grow"
                     )
-                    ui.label(str(len(own_refs) + len(inherited))).classes(
+                    ui.label(f"{len(all_refs)} clips  ·  {dur_str}").classes(
                         "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
                     )
 

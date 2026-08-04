@@ -154,7 +154,11 @@ def run():
                 _speak_refresh[0], _speak_select[0] = build_speak_tab()
 
             with ui.tab_panel(edit_tab):
-                set_edit_callback(build_edit_tab())
+                _edit_fn = build_edit_tab()
+                def _send_to_edit_and_nav(path, char_name=None, _fn=_edit_fn):
+                    tabs.set_value("EDIT")
+                    _fn(path, char_name)
+                set_edit_callback(_send_to_edit_and_nav)
 
             with ui.tab_panel(daw_tab):
                 set_daw_callback(build_daw_tab())
