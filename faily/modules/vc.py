@@ -739,6 +739,16 @@ def _load_seedvc():
         )
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
+
+    # BigVGAN._from_pretrained doesn't accept proxies/resume_download kwargs
+    # that newer huggingface_hub passes — wrap it to absorb them.
+    import bigvgan as _bvg
+    _orig = _bvg.BigVGAN._from_pretrained.__func__
+    @classmethod  # type: ignore[misc]
+    def _compat(cls, *args, proxies=None, resume_download=False, **kw):
+        return _orig(cls, *args, **kw)
+    _bvg.BigVGAN._from_pretrained = _compat
+
     from seed_vc_wrapper import SeedVCWrapper
     return SeedVCWrapper(device=str(manager.device))
 
