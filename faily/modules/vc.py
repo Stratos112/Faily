@@ -633,18 +633,32 @@ def tune_generate(
 
 
 def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path):
+    import sys, types
+    # se_extractor.py imports faster_whisper and whisper_timestamped at module
+    # level but only uses them on the vad=True code path. Stub them so the
+    # full whisper stack isn't required — Faily calls get_se with vad=False.
+    for _name, _attrs in [
+        ("faster_whisper",               ["WhisperModel"]),
+        ("whisper_timestamped",          []),
+        ("whisper_timestamped.transcribe", ["get_audio_tensor", "get_vad_segments"]),
+    ]:
+        if _name not in sys.modules:
+            m = types.ModuleType(_name)
+            for a in _attrs:
+                setattr(m, a, None)
+            sys.modules[_name] = m
     try:
         from openvoice import se_extractor
-    except ImportError:
+    except ImportError as _e:
         raise RuntimeError(
-            "OpenVoice is not installed.\n"
+            f"OpenVoice dependency missing: {_e}\n"
             'Re-run scripts/setup.bat, or manually:\n'
             '  pip install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"\n'
-            "  pip install wavmark"
-        )
+            "  pip install wavmark resampy cn2an eng_to_ipa langid jieba"
+        ) from _e
     conv = manager.load(_OV_CONV_ID, _load_openvoice_converter)
-    src_se, _ = se_extractor.get_se(str(source_wav), conv, vad=True)
-    tgt_se, _ = se_extractor.get_se(str(target_wav), conv, vad=True)
+    src_se, _ = se_extractor.get_se(str(source_wav), conv, vad=False)
+    tgt_se, _ = se_extractor.get_se(str(target_wav), conv, vad=False)
     conv.convert(
         audio_src_path=str(source_wav),
         src_se=src_se,

@@ -116,7 +116,7 @@ echo   OpenVoice v2 ^(--no-deps to skip pinned version conflicts^)...
 "%VENV%\Scripts\pip" install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"
 if errorlevel 1 ( echo WARNING: OpenVoice install failed. ) else (
     :: Runtime deps that are genuinely absent ^(skipping pinned conflicts — newer versions work^)
-    "%VENV%\Scripts\pip" install wavmark resampy cn2an eng_to_ipa langid jieba --quiet
+    "%VENV%\Scripts\pip" install wavmark resampy faster-whisper cn2an eng_to_ipa langid jieba --quiet
 )
 
 :: ── Windows environment variable ──────────────────────────────────────────────
