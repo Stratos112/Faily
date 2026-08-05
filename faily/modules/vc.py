@@ -740,59 +740,19 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
-    import bigvgan as _bvg, inspect
+    import bigvgan as _bvg
 
-    # --- diagnostics ----------------------------------------------------------
-    print("MRO w/ _from_pretrained:", [c.__name__ for c in _bvg.BigVGAN.__mro__ if '_from_pretrained' in vars(c)])
-    print("from_pretrained SIG:", inspect.signature(_bvg.BigVGAN.from_pretrained))
-    fn = _bvg.BigVGAN._from_pretrained
-    print("_from_pretrained kwdefaults:", fn.__func__.__kwdefaults__)
-    # Direct call test — local_files_only=True means it will fail on missing model,
-    # NOT on argument count if defaults are present.
-    try:
-        fn(model_id="__probe__", revision="main", cache_dir=None,
-           force_download=False, local_files_only=True, token=None)
-    except TypeError as _te:
-        print("PROBE TypeError:", _te)
-    except Exception:
-        print("PROBE non-TypeError (defaults work)")
-    # --------------------------------------------------------------------------
-
-    # Force-replace _from_pretrained on ALL MRO classes that have it, so no matter
-    # which version from_pretrained dispatches to, proxies/resume_download are optional.
-    import huggingface_hub.hub_mixin as _hm
-    _orig_fp = _bvg.BigVGAN._from_pretrained.__func__
-    def _compat_fp(cls, *, model_id, revision="main", cache_dir=None,
-                   force_download=False, proxies=None, resume_download=False,
-                   local_files_only=False, token=None, **kw):
-        print("COMPAT WRAPPER CALLED for", cls.__name__)
-        return _orig_fp(cls, model_id=model_id, revision=revision,
-                        cache_dir=cache_dir, force_download=force_download,
-                        proxies=proxies, resume_download=resume_download,
-                        local_files_only=local_files_only, token=token, **kw)
-
-    for _klass in _bvg.BigVGAN.__mro__:
-        if '_from_pretrained' in vars(_klass):
-            _klass_orig = vars(_klass)['_from_pretrained'].__func__
-            def _make_wrapper(_orig):
-                def _w(cls, *, proxies=None, resume_download=False, **kw):
-                    print("WRAPPER CALLED ON", cls.__name__, "via", _orig.__qualname__)
-                    return _orig(cls, proxies=proxies, resume_download=resume_download, **kw)
-                return _w
-            setattr(_klass, '_from_pretrained', classmethod(_make_wrapper(_klass_orig)))
-            print(f"Patched {_klass.__name__}._from_pretrained")
-
-    _bvg.BigVGAN._from_pretrained = classmethod(_compat_fp)
-    print("BigVGAN wrapper set; in dict:", '_from_pretrained' in vars(_bvg.BigVGAN))
-
-    # Test calling through from_pretrained itself (same path as seed_vc_wrapper uses)
-    print("Testing from_pretrained chain...")
-    try:
-        _bvg.BigVGAN.from_pretrained("__fp_probe__", use_cuda_kernel=False, local_files_only=True)
-    except TypeError as _te2:
-        print("FP-CHAIN TypeError:", _te2)
-    except Exception as _e2:
-        print("FP-CHAIN other:", type(_e2).__name__)
+    # HF Hub ≥0.24 removed `proxies` and `resume_download` from the
+    # `from_pretrained` → `_from_pretrained` forwarding path, but bigvgan's
+    # `_from_pretrained` still declares them as required keyword-only args.
+    # Wrapping `from_pretrained` on BigVGAN injects them into **model_kwargs
+    # so they reach `_from_pretrained` as explicit kwargs — no default needed.
+    _orig_fpt = _bvg.BigVGAN.from_pretrained.__func__
+    def _fpt_compat(cls, pretrained_model_name_or_path, **kw):
+        kw.setdefault("proxies", None)
+        kw.setdefault("resume_download", False)
+        return _orig_fpt(cls, pretrained_model_name_or_path, **kw)
+    _bvg.BigVGAN.from_pretrained = classmethod(_fpt_compat)
 
     import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=str(manager.device))
