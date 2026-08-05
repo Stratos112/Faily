@@ -760,19 +760,32 @@ def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
         f0_condition=False,
         auto_f0_adjust=True,
         pitch_shift=0,
-        stream_output=True,
+        stream_output=False,
     )
 
-    # convert_voice is a generator; collect and concatenate all chunks
+    # stream_output=False uses `return` (not `yield`) in the generator,
+    # so the audio lands in StopIteration.value — capture it manually.
+    audio = None
     chunks = []
-    for chunk in gen:
-        if hasattr(chunk, "detach"):
-            chunk = chunk.detach().cpu().numpy()
-        chunks.append(_np.asarray(chunk, dtype=_np.float32))
+    try:
+        while True:
+            val = next(gen)
+            if val is not None:
+                chunks.append(val)
+    except StopIteration as _si:
+        if _si.value is not None:
+            audio = _si.value
 
-    if not chunks:
-        raise RuntimeError("Seed-VC convert_voice yielded no audio")
-    audio = _np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+    if audio is None and chunks:
+        # fallback: it yielded values directly
+        audio = chunks[-1]  # last chunk is the full audio in some versions
+
+    if audio is None:
+        raise RuntimeError("Seed-VC convert_voice returned no audio")
+
+    # unwrap (sr, array) tuple if present
+    if isinstance(audio, (tuple, list)) and len(audio) == 2:
+        _, audio = audio
 
     if audio.ndim == 1:
         audio = audio[:, None]
