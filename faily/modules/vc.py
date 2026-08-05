@@ -760,7 +760,7 @@ def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
         f0_condition=False,
         auto_f0_adjust=True,
         pitch_shift=0,
-        stream_output=False,
+        stream_output=True,
     )
 
     # convert_voice is a generator; collect and concatenate all chunks
