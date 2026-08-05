@@ -94,15 +94,44 @@ if errorlevel 1 ( echo WARNING: OpenVoice install failed. ) else (
 )
 
 :: ── Seed-VC ^(SPEAK stage-2 zero-shot voice conversion^) ───────────────────────
-echo   Seed-VC...
+:: Clone repo — used as a local import, not installed as a package.
+echo   Seed-VC repo...
 set SEEDVC_DIR=%PROJECT_DIR%\models\vc\seed-vc
 if not exist "%SEEDVC_DIR%" (
     git clone https://github.com/Plachtaa/seed-vc.git "%SEEDVC_DIR%"
+    if errorlevel 1 ( echo WARNING: Seed-VC clone failed. )
+) else (
+    echo   Seed-VC repo already present.
 )
-if exist "%SEEDVC_DIR%\requirements.txt" (
-    "%VENV%\Scripts\pip" install -r "%SEEDVC_DIR%\requirements.txt" --quiet
-    if errorlevel 1 ( echo WARNING: Seed-VC requirements install failed. )
-)
+
+:: Seed-VC deps — install selectively; the repo's requirements.txt pins torch==2.4,
+:: numpy==1.26.4, transformers==4.46.3 which would downgrade our cu128 stack.
+:: Only install packages that aren't already covered by the core Faily install.
+echo   Seed-VC deps ^(bigvgan, munch, einops, descript-audio-codec, resemblyzer, pydub, hydra-core, sounddevice^)...
+"%VENV%\Scripts\pip" install ^
+    bigvgan ^
+    munch ^
+    einops ^
+    descript-audio-codec ^
+    resemblyzer ^
+    pydub ^
+    hydra-core ^
+    python-dotenv ^
+    sounddevice ^
+    jiwer ^
+    --quiet
+if errorlevel 1 ( echo WARNING: one or more Seed-VC deps failed — check output above. )
+
+:: ── Patch bigvgan + huggingface_hub ────────────────────────────────────────────
+:: bigvgan._from_pretrained declares proxies/resume_download as required kwargs,
+:: but HF Hub >=0.24 no longer passes them. These one-time patches fix the mismatch.
+echo Patching bigvgan...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_bigvgan.py"
+if errorlevel 1 ( echo WARNING: bigvgan patch failed — Seed-VC may not load. )
+
+echo Patching huggingface_hub hub_mixin...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_hub_mixin.py"
+if errorlevel 1 ( echo WARNING: hub_mixin patch failed — Seed-VC may not load. )
 
 :: ── Windows environment variable ──────────────────────────────────────────────
 :: Suppresses HuggingFace symlink warnings (irrelevant on Windows)

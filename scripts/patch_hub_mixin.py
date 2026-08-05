@@ -4,17 +4,18 @@ resume_download when calling cls._from_pretrained(), so that bigvgan's
 implementation (which still requires them as keyword-only args) doesn't
 raise TypeError.
 
-Run once:
-    C:\Python314\python.exe scripts\patch_hub_mixin.py
+Run once after installing bigvgan:
+    .venv\Scripts\python scripts\patch_hub_mixin.py
 """
 import re
 import shutil
 import pathlib
+import importlib.util
 
-HM_PATH = pathlib.Path(
-    r"C:\Users\Sky\AppData\Roaming\Python\Python314\site-packages"
-    r"\huggingface_hub\hub_mixin.py"
-)
+_spec = importlib.util.find_spec("huggingface_hub")
+if _spec is None:
+    raise RuntimeError("huggingface_hub is not installed in the current Python environment")
+HM_PATH = pathlib.Path(_spec.submodule_search_locations[0]) / "hub_mixin.py"
 BAK = HM_PATH.with_suffix(".py.bak")
 
 if not HM_PATH.exists():

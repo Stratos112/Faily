@@ -1,7 +1,7 @@
 from nicegui import ui, run as ni_run
 from pathlib import Path
 from faily.modules.vc import (
-    tune_generate, EXPRESSION_ENGINES, STAGE2_BACKENDS,
+    tune_generate, STAGE2_BACKENDS,
     generate as vc_generate, BACKENDS,
 )
 from faily.modules.edit import ensure_stereo
@@ -10,7 +10,6 @@ from faily.ui.components import output_panel, section_label, show_error, model_p
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
-_DEFAULT_ENGINE = next(iter(EXPRESSION_ENGINES))
 _VC_DIR = Path("outputs/vc")
 
 
@@ -43,7 +42,7 @@ def _trained_chars() -> dict[str, str]:
 def _build_expression(char_state: list[str], _out: dict, _current_char: list[str]):
     """Left controls for EXPRESSION sub-tab. Returns (refresh, select)."""
     _progress:      list[float] = [0.0]
-    _engine:        list[str]   = [_DEFAULT_ENGINE]
+    _engine:        list[str]   = ["parler"]
     _stage2:        list[str]   = ["freevc"]
     _normalize_db:  list[float] = [-18.0]
     _max_tokens:    list[int]   = [500]
@@ -104,10 +103,6 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 _out["progress_bar"].set_visibility(False)
                 gen_btn.enable()
 
-    def _on_engine(key: str):
-        _engine[0] = key
-        parler_row.set_visibility(key == "parler")
-
     def _on_stage2(key: str):
         _stage2[0] = key
         ov_tau_row.set_visibility(key == "openvoice")
@@ -120,9 +115,6 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
             .props("outlined dark dense").classes("w-full")
         )
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
-
-        _section_row("EXPRESSION ENGINE", "Generates expressive intermediate audio. Hover each option for details.")
-        model_picker(EXPRESSION_ENGINES, _DEFAULT_ENGINE, _on_engine)
 
         _section_row("VOICE CONVERSION", "Applies the character's voice to the intermediate audio.")
         model_picker(STAGE2_BACKENDS, "freevc", _on_stage2)

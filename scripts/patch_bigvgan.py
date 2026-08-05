@@ -6,16 +6,18 @@ The original signature already ends with **model_kwargs, so the fix is:
   - DELETE the proxies and resume_download lines from the signature
   - Extract them from model_kwargs at the top of the body
 
-Run once:
-    C:\Python314\python.exe scripts\patch_bigvgan.py
+Run once after installing bigvgan:
+    .venv\Scripts\python scripts\patch_bigvgan.py
 """
 import re
 import shutil
 import pathlib
+import importlib.util
 
-BIGVGAN_PATH = pathlib.Path(
-    r"C:\Users\Sky\AppData\Roaming\Python\Python314\site-packages\bigvgan\bigvgan.py"
-)
+_spec = importlib.util.find_spec("bigvgan")
+if _spec is None:
+    raise RuntimeError("bigvgan is not installed in the current Python environment")
+BIGVGAN_PATH = pathlib.Path(_spec.origin)
 BAK = BIGVGAN_PATH.with_suffix(".py.bak")
 
 # ── Restore from backup if one exists ─────────────────────────────────────
