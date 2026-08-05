@@ -740,6 +740,9 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
+    import bigvgan as _bvg, inspect
+    print("BIGVGAN FILE:", inspect.getfile(_bvg.BigVGAN))
+    print("BIGVGAN SIG:", inspect.signature(_bvg.BigVGAN._from_pretrained))
     import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=str(manager.device))
 
