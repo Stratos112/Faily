@@ -743,6 +743,7 @@ def _load_seedvc():
     import bigvgan as _bvg, inspect
     print("BIGVGAN FILE:", inspect.getfile(_bvg.BigVGAN))
     print("BIGVGAN SIG:", inspect.signature(_bvg.BigVGAN._from_pretrained))
+    print("BIGVGAN KWDEFAULTS:", _bvg.BigVGAN._from_pretrained.__func__.__kwdefaults__)
     import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=str(manager.device))
 
