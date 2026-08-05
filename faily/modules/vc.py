@@ -740,8 +740,118 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
-    import seed_vc_wrapper as _svc_mod
-    return _svc_mod.SeedVCWrapper(device=str(manager.device))
+    # ── Diagnostics ────────────────────────────────────────────────────────
+    import inspect as _inspect
+    import io as _io
+    import traceback as _tb
+    _D: list[str] = []
+
+    def _d(label, val=""):
+        line = f"{label}: {val}" if val != "" else label
+        _D.append(line)
+        print(f"[DIAG] {line}")
+
+    _d("Python", sys.version)
+    _d("sys.path[0]", sys.path[0])
+
+    try:
+        import bigvgan as _bvg
+        _d("bigvgan file", _inspect.getfile(_bvg.BigVGAN))
+        _d("BigVGAN metaclass", type(_bvg.BigVGAN).__name__)
+        _d("BigVGAN metaclass.__setattr__", type(_bvg.BigVGAN).__setattr__)
+
+        mro_fp  = [c.__name__ for c in _bvg.BigVGAN.__mro__ if '_from_pretrained' in vars(c)]
+        mro_fpt = [c.__name__ for c in _bvg.BigVGAN.__mro__ if 'from_pretrained'  in vars(c)]
+        _d("_from_pretrained in MRO", mro_fp)
+        _d("from_pretrained  in MRO", mro_fpt)
+
+        # Descriptor types for every class that owns either method
+        for _k in _bvg.BigVGAN.__mro__:
+            for _attr in ("_from_pretrained", "from_pretrained"):
+                if _attr in vars(_k):
+                    _desc = vars(_k)[_attr]
+                    _kwd  = getattr(getattr(_desc, "__func__", None), "__kwdefaults__", "N/A")
+                    _d(f"  {_k.__name__}.{_attr}", f"type={type(_desc).__name__} kwdefaults={_kwd}")
+
+        # setattr probe — can we add an attribute at all?
+        def _probe_fn(cls, **kw): pass
+        _bvg.BigVGAN._svc_probe = classmethod(_probe_fn)
+        _d("setattr probe in vars(BigVGAN)", "_svc_probe" in vars(_bvg.BigVGAN))
+        try: del _bvg.BigVGAN._svc_probe
+        except Exception: pass
+
+        # Try overriding from_pretrained, then check what's actually in __dict__
+        _orig_fpt = _bvg.BigVGAN.from_pretrained.__func__
+        def _fpt_probe(cls, m, **kw):
+            kw.setdefault("proxies", None)
+            kw.setdefault("resume_download", False)
+            return _orig_fpt(cls, m, **kw)
+        _bvg.BigVGAN.from_pretrained = classmethod(_fpt_probe)
+        _after_desc = vars(_bvg.BigVGAN).get("from_pretrained")
+        _d("from_pretrained in vars(BigVGAN) after setattr", "from_pretrained" in vars(_bvg.BigVGAN))
+        _d("descriptor type after setattr", type(_after_desc).__name__)
+        if hasattr(_after_desc, "__func__"):
+            _d("__func__ is _fpt_probe", _after_desc.__func__ is _fpt_probe)
+
+        # Test direct _from_pretrained call (no proxies/resume_download)
+        try:
+            _bvg.BigVGAN._from_pretrained(
+                model_id="__probe__", revision="main", cache_dir=None,
+                force_download=False, local_files_only=True, token=None)
+        except TypeError as _e:
+            _d("direct _fp call", f"TypeError: {_e}")
+        except Exception as _e:
+            _d("direct _fp call", f"{type(_e).__name__} (non-TypeError — defaults work)")
+
+        # Test full from_pretrained chain
+        try:
+            _bvg.BigVGAN.from_pretrained("__probe2__", local_files_only=True)
+        except TypeError as _e:
+            _d("from_pretrained chain", f"TypeError: {_e}")
+        except Exception as _e:
+            _d("from_pretrained chain", f"{type(_e).__name__} (non-TypeError)")
+
+        # HF hub_mixin version
+        try:
+            import huggingface_hub as _hfh
+            _d("huggingface_hub version", _hfh.__version__)
+            import huggingface_hub.hub_mixin as _hm
+            _d("hub_mixin._from_pretrained kwdefaults",
+               getattr(getattr(vars(_hm.ModelHubMixin).get("_from_pretrained"), "__func__", None), "__kwdefaults__", "not found"))
+        except Exception as _e:
+            _d("hfh diag error", _e)
+
+        # Patch _load_additional_modules to see bigvgan reference at call time
+        import seed_vc_wrapper as _svc_mod
+        _orig_lam = _svc_mod.SeedVCWrapper._load_additional_modules
+        def _wrapped_lam(self):
+            import bigvgan as _bvg2
+            _d("== inside _load_additional_modules ==")
+            _d("bigvgan module id", id(sys.modules.get("bigvgan")))
+            _d("_bvg id", id(_bvg))
+            _d("same module?", id(sys.modules.get("bigvgan")) == id(_bvg))
+            _d("BigVGAN id", id(_bvg2.BigVGAN))
+            _d("from_pretrained in BigVGAN.__dict__ at call time",
+               "from_pretrained" in vars(_bvg2.BigVGAN))
+            _desc2 = vars(_bvg2.BigVGAN).get("from_pretrained")
+            _d("descriptor type at call time", type(_desc2).__name__)
+            if hasattr(_desc2, "__func__"):
+                _d("__func__ is _fpt_probe at call time", _desc2.__func__ is _fpt_probe)
+            _orig_lam(self)
+        _svc_mod.SeedVCWrapper._load_additional_modules = _wrapped_lam
+
+    except Exception as _diag_err:
+        _D.append(f"DIAG EXCEPTION: {_tb.format_exc()}")
+
+    # ── Load ────────────────────────────────────────────────────────────────
+    try:
+        import seed_vc_wrapper as _svc_mod2
+        return _svc_mod2.SeedVCWrapper(device=str(manager.device))
+    except Exception as _exc:
+        _diag_block = "\n".join(_D)
+        raise RuntimeError(
+            f"{_exc}\n\n{'='*60}\nDIAGNOSTICS\n{'='*60}\n{_diag_block}"
+        ) from _exc
 
 
 def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
