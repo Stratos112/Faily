@@ -740,17 +740,20 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
-    # BigVGAN._from_pretrained doesn't accept proxies/resume_download kwargs
-    # that newer huggingface_hub passes — wrap it to absorb them.
-    import bigvgan as _bvg
-    _orig = _bvg.BigVGAN._from_pretrained.__func__
-    @classmethod  # type: ignore[misc]
-    def _compat(cls, *args, proxies=None, resume_download=False, **kw):
-        return _orig(cls, *args, **kw)
-    _bvg.BigVGAN._from_pretrained = _compat
+    # Import wrapper first so bigvgan lands in sys.modules as a side effect
+    import seed_vc_wrapper as _svc_mod
 
-    from seed_vc_wrapper import SeedVCWrapper
-    return SeedVCWrapper(device=str(manager.device))
+    # Patch BigVGAN._from_pretrained — newer huggingface_hub passes proxies /
+    # resume_download kwargs that BigVGAN's implementation doesn't accept.
+    _bvg = sys.modules.get("bigvgan")
+    if _bvg is not None:
+        _orig = _bvg.BigVGAN._from_pretrained.__func__
+        @classmethod  # type: ignore[misc]
+        def _compat(cls, *args, proxies=None, resume_download=False, **kw):
+            return _orig(cls, *args, **kw)
+        _bvg.BigVGAN._from_pretrained = _compat
+
+    return _svc_mod.SeedVCWrapper(device=str(manager.device))
 
 
 def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
