@@ -740,20 +740,6 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
-    import bigvgan as _bvg
-
-    # HF Hub ≥0.24 removed `proxies` and `resume_download` from the
-    # `from_pretrained` → `_from_pretrained` forwarding path, but bigvgan's
-    # `_from_pretrained` still declares them as required keyword-only args.
-    # Wrapping `from_pretrained` on BigVGAN injects them into **model_kwargs
-    # so they reach `_from_pretrained` as explicit kwargs — no default needed.
-    _orig_fpt = _bvg.BigVGAN.from_pretrained.__func__
-    def _fpt_compat(cls, pretrained_model_name_or_path, **kw):
-        kw.setdefault("proxies", None)
-        kw.setdefault("resume_download", False)
-        return _orig_fpt(cls, pretrained_model_name_or_path, **kw)
-    _bvg.BigVGAN.from_pretrained = classmethod(_fpt_compat)
-
     import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=str(manager.device))
 
