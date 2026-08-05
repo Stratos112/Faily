@@ -740,8 +740,9 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
+    import torch as _torch
     import seed_vc_wrapper as _svc_mod
-    return _svc_mod.SeedVCWrapper(device=str(manager.device))
+    return _svc_mod.SeedVCWrapper(device=_torch.device(str(manager.device)))
 
 
 def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
