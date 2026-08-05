@@ -740,20 +740,18 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
-    # Pre-import bigvgan and patch _from_pretrained before SeedVCWrapper.__init__
-    # calls it — newer huggingface_hub passes proxies/resume_download kwargs that
-    # BigVGAN's implementation doesn't accept.
     import bigvgan as _bvg
-    if not getattr(_bvg.BigVGAN, "_hf_compat_patched", False):
-        _orig = _bvg.BigVGAN._from_pretrained.__func__
-        @classmethod  # type: ignore[misc]
-        def _compat(cls, *args, proxies=None, resume_download=False, **kw):
-            return _orig(cls, *args, **kw)
-        _bvg.BigVGAN._from_pretrained = _compat
-        _bvg.BigVGAN._hf_compat_patched = True
-
     import seed_vc_wrapper as _svc_mod
-    return _svc_mod.SeedVCWrapper(device=str(manager.device))
+    from unittest.mock import patch
+
+    # BigVGAN._from_pretrained requires proxies/resume_download as keyword-only
+    # args that this version of huggingface_hub doesn't supply — inject defaults.
+    _orig_fp = _bvg.BigVGAN._from_pretrained.__func__
+    def _compat_fp(cls, *args, proxies=None, resume_download=False, **kw):
+        return _orig_fp(cls, *args, proxies=proxies, resume_download=resume_download, **kw)
+
+    with patch.object(_bvg.BigVGAN, "_from_pretrained", classmethod(_compat_fp)):
+        return _svc_mod.SeedVCWrapper(device=str(manager.device))
 
 
 def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
