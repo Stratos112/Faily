@@ -166,23 +166,7 @@ def _envelope_transfer(
 
 
 def _tts(text: str) -> np.ndarray:
-    """Generate neutral Kokoro speech; fall back to MMS-TTS if unavailable."""
-    import tempfile
-
-    tmp_dir = Path(tempfile.mkdtemp())
-    try:
-        from faily.modules.vc import neutral_tts
-        out = tmp_dir / "tts.wav"
-        neutral_tts(text, out)
-        audio, sr = sf.read(str(out), dtype="float32", always_2d=False)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
-        if sr != _SR:
-            audio = sps.resample_poly(audio, _SR, sr).astype(np.float32)
-        return audio
-    except Exception:
-        pass
-
+    """Generate neutral speech via MMS-TTS."""
     from transformers import pipeline as hf_pipeline
     pipe = hf_pipeline("text-to-speech", model="facebook/mms-tts-eng")
     result = pipe(text)

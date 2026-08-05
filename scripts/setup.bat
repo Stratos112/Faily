@@ -79,35 +79,9 @@ if errorlevel 1 ( echo WARNING: chatterbox-tts install failed. )
 
 :: ── Expression engines (SPEAK stage-1) ───────────────────────────────────────
 echo Installing expression engines...
-echo   kokoro...
-"%VENV%\Scripts\pip" install kokoro --quiet
-if errorlevel 1 ( echo WARNING: kokoro install failed. )
-
 echo   parler-tts...
 "%VENV%\Scripts\pip" install parler-tts --quiet
 if errorlevel 1 ( echo WARNING: parler-tts install failed. )
-
-:: MeloTTS has two problematic deps on Windows + Python 3.14:
-::   mecab-python3 / fugashi — need MeCab C headers (only used for JP/ZH tokenization)
-::   tokenizers — MeloTTS pins an old version with no cp314 wheel (needs Rust to compile)
-:: Fix: pre-install current tokenizers ^(has cp314 wheel^), then install MeloTTS --no-deps,
-:: then add only the English-compatible runtime deps manually.
-echo   tokenizers ^(pre-install latest to avoid Rust compiler^)...
-"%VENV%\Scripts\pip" install tokenizers --quiet
-
-echo   MeloTTS ^(--no-deps to skip mecab/fugashi; English-only^)...
-"%VENV%\Scripts\pip" install --no-deps "git+https://github.com/myshell-ai/MeloTTS.git"
-if errorlevel 1 ( echo WARNING: MeloTTS install failed. ) else (
-    echo   MeloTTS English deps ^(librosa, inflect, langdetect^)...
-    "%VENV%\Scripts\pip" install librosa inflect langdetect --quiet
-)
-
-:: MeloTTS NLTK data (needed at runtime for English text processing)
-echo   MeloTTS NLTK data...
-"%VENV%\Scripts\python" -c ^
-    "import nltk; nltk.download('averaged_perceptron_tagger_eng', quiet=True)" ^
-    >nul 2>&1
-if errorlevel 1 ( echo WARNING: NLTK download failed — run manually: python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng')" )
 
 :: ── OpenVoice v2 ^(SPEAK stage-2 voice conversion^) ──────────────────────────
 :: --no-deps avoids pinned version conflicts (gradio 3.x, numpy 1.22, librosa 0.9, etc.)

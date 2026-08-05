@@ -127,14 +127,6 @@ EXPRESSION_ENGINES = {
         "label": "Parler-TTS",
         "desc": "Parler-TTS · Describe tone, pace, and delivery in plain English. Expressive but inconsistent — results vary by phrasing. Lower MAX TOKENS reduces downstream garbling in voice conversion.",
     },
-    "kokoro": {
-        "label": "Kokoro",
-        "desc": "Fast, styleable via voice name (e.g. af_heart, am_adam). No text description needed — picks a Kokoro intermediate voice then FreeVC converts to character. Best for short punchy lines.",
-    },
-    "melotts": {
-        "label": "MeloTTS",
-        "desc": "MyShell AI · fast neural TTS with accent control. EN-US, EN-BR, EN-AU, EN-INDIA, EN-Default. Very consistent output — pairs well with OpenVoice v2 VC. (ES/FR/ZH/JP/KR require extra system deps not installable on Windows.)",
-    },
     # Future — uncomment when CosyVoice 2 loader is implemented:
     # "cosyvoice2": {
     #     "label": "CosyVoice 2",
@@ -460,28 +452,6 @@ def _chatterbox_generate(text, ref_path, out, exaggeration, cfg_weight):
     sf.write(str(out), wav.squeeze().cpu().float().numpy(), model.sr)
 
 
-_KOKORO_LANGS = ["a", "b", "j", "z"]
-
-# MeloTTS speaker IDs — first segment before "-" is the MeloTTS language code.
-# Non-English languages (ZH/JP/KR) require mecab-python3/fugashi which need MeCab
-# C headers — not installable on Windows without extra tooling. English-only for now.
-_MELO_SPEAKERS = [
-    "EN-Default", "EN-US", "EN-BR", "EN-AU", "EN-INDIA",
-]
-
-
-def _load_melotts(lang: str):
-    from melo.api import TTS
-    return TTS(language=lang, device=str(manager.device))
-
-
-def _melotts_generate(text: str, out: Path, speaker: str = "EN-US", speed: float = 1.0):
-    lang = speaker.split("-")[0]
-    model = manager.load(f"melotts_{lang}", lambda: _load_melotts(lang))
-    spk_ids = model.hps.data.spk2id
-    spk_id = spk_ids.get(speaker, next(iter(spk_ids.values())))
-    model.tts_to_file(text, spk_id, str(out), speed=speed, quiet=True)
-
 
 _OPENVOICE_CKPT = VC_MODELS_DIR / "openvoice_v2"
 _OV_CONV_ID = "openvoice_v2_converter"
@@ -520,41 +490,6 @@ def _freevc_convert(source_wav: Path, target_wav: Path, out: Path):
     )
 
 
-def _kokoro_generate(
-    text: str,
-    out: Path,
-    style_prompt: str,
-    speed: float,
-    lang_idx: int,
-    ref_path: Path | None = None,
-):
-    import numpy as np
-    lang = _KOKORO_LANGS[max(0, min(int(lang_idx), len(_KOKORO_LANGS) - 1))]
-
-    def _load():
-        from kokoro import KPipeline
-        return KPipeline(lang_code=lang)
-
-    pipeline = manager.load(f"kokoro_{lang}", _load)
-    voice = style_prompt.strip() or "af_heart"
-    chunks = []
-    for _, _, audio in pipeline(text, voice=voice, speed=speed):
-        chunks.append(audio)
-    if not chunks:
-        raise RuntimeError("Kokoro produced no audio output")
-    audio = np.concatenate(chunks)
-
-    if ref_path is not None and ref_path.exists():
-        # Two-stage: Kokoro expression pass → FreeVC character voice conversion
-        tmp = out.with_name(f"_tmp_{out.name}")
-        sf.write(str(tmp), audio, 24000)
-        try:
-            _freevc_convert(tmp, ref_path, out)
-        finally:
-            if tmp.exists():
-                tmp.unlink()
-    else:
-        sf.write(str(out), audio, 24000)
 
 
 def tune_generate(
@@ -568,8 +503,6 @@ def tune_generate(
     normalize_db: float | None = -18.0,
     max_new_tokens: int = 500,
     stage2_backend: str = "freevc",
-    engine_speed: float = 1.0,
-    engine_lang: int = 0,
     ov_tau: float = 0.3,
     svc_steps: int = 10,
     svc_cfg: float = 0.7,
@@ -589,21 +522,6 @@ def tune_generate(
     # Stage 1: expression engine → expressive intermediate audio
     if engine == "parler":
         _parler_generate(text, stage1, style_prompt=expression, max_new_tokens=max_new_tokens)
-    elif engine == "kokoro":
-        import numpy as np
-        lang = _KOKORO_LANGS[max(0, min(int(engine_lang), len(_KOKORO_LANGS) - 1))]
-        def _kload():
-            from kokoro import KPipeline
-            return KPipeline(lang_code=lang)
-        pipeline = manager.load(f"kokoro_{lang}", _kload)
-        voice = expression.strip() or "af_heart"
-        chunks = [audio for _, _, audio in pipeline(text, voice=voice, speed=engine_speed)]
-        if not chunks:
-            raise RuntimeError("Kokoro produced no audio output")
-        sf.write(str(stage1), np.concatenate(chunks), 24000)
-    elif engine == "melotts":
-        speaker = expression.strip() or "EN-US"
-        _melotts_generate(text, stage1, speaker=speaker, speed=engine_speed)
     else:
         raise ValueError(f"Unknown expression engine: {engine!r}")
 
@@ -618,12 +536,7 @@ def tune_generate(
         if stage2_backend == "freevc":
             _freevc_convert(stage1, ref_path, out)
         elif stage2_backend == "openvoice":
-            # When stage1 was MeloTTS, pass the speaker name so _openvoice_convert
-            # can load the matching pre-computed SE instead of extracting from source.
-            # MeloTTS and OpenVoice v2 share the same base speaker model family —
-            # each MeloTTS speaker has an exact .pth in base_speakers/ses/.
-            _melo_spk = (expression.strip() or "EN-US") if engine == "melotts" else None
-            _openvoice_convert(stage1, ref_path, out, tau=ov_tau, melo_speaker=_melo_spk)
+            _openvoice_convert(stage1, ref_path, out, tau=ov_tau)
         elif stage2_backend == "seedvc":
             _seedvc_convert(stage1, ref_path, out, steps=svc_steps, cfg_rate=svc_cfg)
         else:
@@ -639,7 +552,7 @@ def tune_generate(
     return out
 
 
-def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float = 0.3, melo_speaker: str | None = None):
+def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float = 0.3):
     import sys, types, os, shutil, tempfile as _tmp
     # whisper_timestamped is imported at the top of se_extractor.py but only
     # used inside split_audio_whisper, which we patch out below.
@@ -689,33 +602,15 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float
         _sf.write(str(tmp_path), data, 22050)
         return tmp_path
 
-    # src_se: for MeloTTS source audio, load the exact matching pre-computed speaker
-    # embedding. MeloTTS IS OpenVoice v2's base speaker TTS — every MeloTTS speaker
-    # (EN-US, EN-BR, …) has a corresponding .pth in base_speakers/ses/. Using it lets
-    # the flow correctly strip the MeloTTS voice and leaves clean content for tgt_se.
-    # For Parler/Kokoro we must extract from the audio, but that path is imperfect —
-    # OpenVoice's speaker encoder can map arbitrary TTS to non-English regions.
-    # Recommend MeloTTS as expression engine when using OpenVoice VC.
-    src_se = None
-    if melo_speaker is not None:
-        import torch as _torch
-        _se_path = _OPENVOICE_CKPT / "base_speakers" / "ses" / f"{melo_speaker.lower()}.pth"
-        if _se_path.exists():
-            src_se = _torch.load(str(_se_path), map_location=conv.device, weights_only=True)
-
     tgt_clean = _clean_wav(target_wav)
+    src_clean = _clean_wav(source_wav)
     try:
-        if src_se is None:
-            src_clean = _clean_wav(source_wav)
-            try:
-                src_se, _ = se_extractor.get_se(str(src_clean), conv, vad=False)
-            finally:
-                try: src_clean.unlink()
-                except OSError: pass
+        src_se, _ = se_extractor.get_se(str(src_clean), conv, vad=False)
         tgt_se, _ = se_extractor.get_se(str(tgt_clean), conv, vad=False)
     finally:
-        try: tgt_clean.unlink()
-        except OSError: pass
+        for _p in (src_clean, tgt_clean):
+            try: _p.unlink()
+            except OSError: pass
     conv.convert(
         audio_src_path=str(source_wav),
         src_se=src_se,
@@ -841,6 +736,3 @@ def generate(
     return out
 
 
-def neutral_tts(text: str, out: Path, voice: str = "af_heart", speed: float = 1.0, lang_idx: int = 0) -> None:
-    """Generate neutral Kokoro speech into out (no ref/VC)."""
-    _kokoro_generate(text, out, style_prompt=voice, speed=speed, lang_idx=lang_idx)
