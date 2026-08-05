@@ -746,8 +746,11 @@ def _load_seedvc():
 
 def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
                     steps: int = 10, cfg_rate: float = 0.7):
+    import soundfile as _sf
+    import numpy as _np
+
     wrapper = manager.load("seedvc", _load_seedvc)
-    audio = wrapper.convert_voice(
+    gen = wrapper.convert_voice(
         source=str(source_wav),
         target=str(target_wav),
         diffusion_steps=steps,
@@ -758,13 +761,20 @@ def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
         pitch_shift=0,
         stream_output=False,
     )
-    import soundfile as _sf
-    import numpy as _np
-    if hasattr(audio, "detach"):        # torch tensor → numpy
-        audio = audio.detach().cpu().numpy()
-    audio = _np.asarray(audio, dtype=_np.float32)
+
+    # convert_voice is a generator; collect and concatenate all chunks
+    chunks = []
+    for chunk in gen:
+        if hasattr(chunk, "detach"):
+            chunk = chunk.detach().cpu().numpy()
+        chunks.append(_np.asarray(chunk, dtype=_np.float32))
+
+    if not chunks:
+        raise RuntimeError("Seed-VC convert_voice yielded no audio")
+    audio = _np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+
     if audio.ndim == 1:
-        audio = audio[:, None]          # (frames,) → (frames, 1) for soundfile
+        audio = audio[:, None]
     elif audio.ndim > 2:
         audio = audio.squeeze()
         if audio.ndim == 1:
