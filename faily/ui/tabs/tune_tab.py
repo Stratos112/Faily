@@ -126,6 +126,19 @@ def build_tune_tab():
             )
             model_picker(STAGE2_BACKENDS, "freevc", _on_stage2)
 
+            _section_row(
+                "STYLE DESCRIPTION",
+                "Describe how this line should be delivered — tone, emotion, pacing, manner. "
+                "This is passed directly to the expression engine as a style prompt. "
+                "Examples: 'sing-song and playful', 'cold fury, slow and deliberate', "
+                "'breathless and panicked', 'warm but exhausted'. Leave blank for neutral.",
+            )
+            expression_input = (
+                ui.textarea(placeholder="e.g. cold fury, slow and deliberate…")
+                .classes("w-full")
+                .props("outlined dark rows=3")
+            )
+
             # ── OpenVoice tau control ─────────────────────────────────────────
             with ui.column().classes("w-full gap-3") as ov_tau_row:
                 _section_row(
@@ -170,26 +183,6 @@ def build_tune_tab():
             svc_row.set_visibility(False)
 
             _section_row(
-                "STYLE DESCRIPTION",
-                "Describe how this line should be delivered — tone, emotion, pacing, manner. "
-                "This is passed directly to the expression engine as a style prompt. "
-                "Examples: 'sing-song and playful', 'cold fury, slow and deliberate', "
-                "'breathless and panicked', 'warm but exhausted'. Leave blank for neutral.",
-            )
-            expression_input = (
-                ui.textarea(placeholder="e.g. cold fury, slow and deliberate…")
-                .classes("w-full")
-                .props("outlined dark rows=3")
-            )
-
-            _section_row("LINE", "What the character says.")
-            text_input = (
-                ui.textarea(placeholder="Enter the line…")
-                .classes("w-full")
-                .props("outlined dark rows=4")
-            )
-
-            _section_row(
                 "MAX TOKENS",
                 "Parler generation length. Lower values produce shorter output that FreeVC handles more cleanly. "
                 "Raise if lines are getting cut off.",
@@ -220,6 +213,13 @@ def build_tune_tab():
                 ui.slider(min=-24, max=-3, step=1, value=-18, on_change=_on_norm).classes(
                     "flex-grow"
                 ).props("color=amber")
+
+            _section_row("LINE", "What the character says.")
+            text_input = (
+                ui.textarea(placeholder="Enter the line…")
+                .classes("w-full")
+                .props("outlined dark rows=4")
+            )
 
             ui.space()
             gen_btn = (

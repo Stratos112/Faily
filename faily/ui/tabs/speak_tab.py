@@ -119,6 +119,16 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         _section_row("VOICE CONVERSION", "Applies the character's voice to the intermediate audio.")
         model_picker(STAGE2_BACKENDS, "freevc", _on_stage2)
 
+        _section_row(
+            "STYLE",
+            "How the line should be delivered — tone, emotion, pacing. "
+            "Examples: 'cold fury, slow and deliberate', 'breathless and panicked'. Leave blank for neutral.",
+        )
+        expr_input = (
+            ui.textarea(placeholder="e.g. cold fury, slow and deliberate…")
+            .classes("w-full").props("outlined dark rows=3")
+        )
+
         # ── OpenVoice tau control ─────────────────────────────────────────────
         with ui.column().classes("w-full gap-3") as ov_tau_row:
             _section_row(
@@ -160,26 +170,14 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 ui.slider(min=0.1, max=1.0, step=0.05, value=0.7, on_change=_on_svc_cfg).classes("flex-grow").props("color=amber")
         svc_row.set_visibility(False)
 
-        # ── Parler controls ───────────────────────────────────────────────────
-        with ui.column().classes("w-full gap-3") as parler_row:
-            _section_row(
-                "STYLE",
-                "How the line should be delivered — tone, emotion, pacing. "
-                "Examples: 'cold fury, slow and deliberate', 'breathless and panicked'. Leave blank for neutral.",
+        _section_row("MAX TOKENS", "Parler generation length. Raise if lines are getting cut off.")
+        with ui.row().classes("w-full items-center gap-3"):
+            tok_lbl = ui.label("500").classes(
+                "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
             )
-            expr_input = (
-                ui.textarea(placeholder="e.g. cold fury, slow and deliberate…")
-                .classes("w-full").props("outlined dark rows=3")
-            )
-            _section_row("MAX TOKENS", "Parler generation length. Raise if lines are getting cut off.")
-            with ui.row().classes("w-full items-center gap-3"):
-                tok_lbl = ui.label("500").classes(
-                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
-                )
-                def _on_tok(e): _max_tokens[0] = int(e.value); tok_lbl.set_text(str(int(e.value)))
-                ui.slider(min=50, max=1200, step=50, value=500, on_change=_on_tok).classes("flex-grow").props("color=amber")
+            def _on_tok(e): _max_tokens[0] = int(e.value); tok_lbl.set_text(str(int(e.value)))
+            ui.slider(min=50, max=1200, step=50, value=500, on_change=_on_tok).classes("flex-grow").props("color=amber")
 
-        # ── shared controls ───────────────────────────────────────────────────
         _section_row("PRE-CONVERT LEVEL", "Normalise stage-1 output before voice conversion. Consistent level reduces distortion.")
         with ui.row().classes("w-full items-center gap-3"):
             norm_lbl = ui.label("-18 dBFS").classes(
