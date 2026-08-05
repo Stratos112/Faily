@@ -741,9 +741,46 @@ def _load_seedvc():
         sys.path.insert(0, str(repo))
 
     import bigvgan as _bvg, inspect
-    print("BIGVGAN FILE:", inspect.getfile(_bvg.BigVGAN))
-    print("BIGVGAN SIG:", inspect.signature(_bvg.BigVGAN._from_pretrained))
-    print("BIGVGAN KWDEFAULTS:", _bvg.BigVGAN._from_pretrained.__func__.__kwdefaults__)
+
+    # --- diagnostics ----------------------------------------------------------
+    print("MRO w/ _from_pretrained:", [c.__name__ for c in _bvg.BigVGAN.__mro__ if '_from_pretrained' in vars(c)])
+    print("from_pretrained SIG:", inspect.signature(_bvg.BigVGAN.from_pretrained))
+    fn = _bvg.BigVGAN._from_pretrained
+    print("_from_pretrained kwdefaults:", fn.__func__.__kwdefaults__)
+    # Direct call test — local_files_only=True means it will fail on missing model,
+    # NOT on argument count if defaults are present.
+    try:
+        fn(model_id="__probe__", revision="main", cache_dir=None,
+           force_download=False, local_files_only=True, token=None)
+    except TypeError as _te:
+        print("PROBE TypeError:", _te)
+    except Exception:
+        print("PROBE non-TypeError (defaults work)")
+    # --------------------------------------------------------------------------
+
+    # Force-replace _from_pretrained with a freshly compiled wrapper whose
+    # defaults are baked in at Python compile time, bypassing any __kwdefaults__
+    # strangeness in Python 3.14.
+    _orig_fp = _bvg.BigVGAN._from_pretrained.__func__
+    def _compat_fp(cls, *, model_id, revision="main", cache_dir=None,
+                   force_download=False, proxies=None, resume_download=False,
+                   local_files_only=False, token=None, **kw):
+        return _orig_fp(cls, model_id=model_id, revision=revision,
+                        cache_dir=cache_dir, force_download=force_download,
+                        proxies=proxies, resume_download=resume_download,
+                        local_files_only=local_files_only, token=token, **kw)
+    _bvg.BigVGAN._from_pretrained = classmethod(_compat_fp)
+    print("Wrapper assigned; in dict:", '_from_pretrained' in vars(_bvg.BigVGAN))
+    # Verify wrapper can be called without proxies/resume_download
+    fn2 = _bvg.BigVGAN._from_pretrained
+    try:
+        fn2(model_id="__probe2__", revision="main", cache_dir=None,
+            force_download=False, local_files_only=True, token=None)
+    except TypeError as _te2:
+        print("PROBE2 TypeError:", _te2)
+    except Exception:
+        print("PROBE2 non-TypeError (wrapper works)")
+
     import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=str(manager.device))
 
