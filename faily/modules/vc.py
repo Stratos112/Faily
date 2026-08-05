@@ -740,19 +740,19 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
-    # Import wrapper first so bigvgan lands in sys.modules as a side effect
-    import seed_vc_wrapper as _svc_mod
-
-    # Patch BigVGAN._from_pretrained — newer huggingface_hub passes proxies /
-    # resume_download kwargs that BigVGAN's implementation doesn't accept.
-    _bvg = sys.modules.get("bigvgan")
-    if _bvg is not None:
+    # Pre-import bigvgan and patch _from_pretrained before SeedVCWrapper.__init__
+    # calls it — newer huggingface_hub passes proxies/resume_download kwargs that
+    # BigVGAN's implementation doesn't accept.
+    import bigvgan as _bvg
+    if not getattr(_bvg.BigVGAN, "_hf_compat_patched", False):
         _orig = _bvg.BigVGAN._from_pretrained.__func__
         @classmethod  # type: ignore[misc]
         def _compat(cls, *args, proxies=None, resume_download=False, **kw):
             return _orig(cls, *args, **kw)
         _bvg.BigVGAN._from_pretrained = _compat
+        _bvg.BigVGAN._hf_compat_patched = True
 
+    import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=str(manager.device))
 
 
