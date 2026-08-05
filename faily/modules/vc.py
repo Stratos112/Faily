@@ -758,28 +758,41 @@ def _load_seedvc():
         print("PROBE non-TypeError (defaults work)")
     # --------------------------------------------------------------------------
 
-    # Force-replace _from_pretrained with a freshly compiled wrapper whose
-    # defaults are baked in at Python compile time, bypassing any __kwdefaults__
-    # strangeness in Python 3.14.
+    # Force-replace _from_pretrained on ALL MRO classes that have it, so no matter
+    # which version from_pretrained dispatches to, proxies/resume_download are optional.
+    import huggingface_hub.hub_mixin as _hm
     _orig_fp = _bvg.BigVGAN._from_pretrained.__func__
     def _compat_fp(cls, *, model_id, revision="main", cache_dir=None,
                    force_download=False, proxies=None, resume_download=False,
                    local_files_only=False, token=None, **kw):
+        print("COMPAT WRAPPER CALLED for", cls.__name__)
         return _orig_fp(cls, model_id=model_id, revision=revision,
                         cache_dir=cache_dir, force_download=force_download,
                         proxies=proxies, resume_download=resume_download,
                         local_files_only=local_files_only, token=token, **kw)
+
+    for _klass in _bvg.BigVGAN.__mro__:
+        if '_from_pretrained' in vars(_klass):
+            _klass_orig = vars(_klass)['_from_pretrained'].__func__
+            def _make_wrapper(_orig):
+                def _w(cls, *, proxies=None, resume_download=False, **kw):
+                    print("WRAPPER CALLED ON", cls.__name__, "via", _orig.__qualname__)
+                    return _orig(cls, proxies=proxies, resume_download=resume_download, **kw)
+                return _w
+            setattr(_klass, '_from_pretrained', classmethod(_make_wrapper(_klass_orig)))
+            print(f"Patched {_klass.__name__}._from_pretrained")
+
     _bvg.BigVGAN._from_pretrained = classmethod(_compat_fp)
-    print("Wrapper assigned; in dict:", '_from_pretrained' in vars(_bvg.BigVGAN))
-    # Verify wrapper can be called without proxies/resume_download
-    fn2 = _bvg.BigVGAN._from_pretrained
+    print("BigVGAN wrapper set; in dict:", '_from_pretrained' in vars(_bvg.BigVGAN))
+
+    # Test calling through from_pretrained itself (same path as seed_vc_wrapper uses)
+    print("Testing from_pretrained chain...")
     try:
-        fn2(model_id="__probe2__", revision="main", cache_dir=None,
-            force_download=False, local_files_only=True, token=None)
+        _bvg.BigVGAN.from_pretrained("__fp_probe__", use_cuda_kernel=False, local_files_only=True)
     except TypeError as _te2:
-        print("PROBE2 TypeError:", _te2)
-    except Exception:
-        print("PROBE2 non-TypeError (wrapper works)")
+        print("FP-CHAIN TypeError:", _te2)
+    except Exception as _e2:
+        print("FP-CHAIN other:", type(_e2).__name__)
 
     import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=str(manager.device))
