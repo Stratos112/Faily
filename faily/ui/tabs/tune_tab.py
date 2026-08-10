@@ -228,7 +228,7 @@ def build_tune_tab():
                 .props("color=amber unelevated")
             )
 
-        pb, ml, mp, st, _, _, ath = output_panel(
+        pb, ml, mp, st, _, _, ath, _ = output_panel(
             "vc",
             get_char_name=lambda: _char_name[0] if _char_name[0] != _NO_CHAR else None,
         )

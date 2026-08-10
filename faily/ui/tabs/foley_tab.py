@@ -126,7 +126,7 @@ def build_foley_tab():
                 "color=amber unelevated"
             )
 
-        pb, ml, mp, st, _, _, ath = output_panel("sfx")
+        pb, ml, mp, st, _, _, ath, _ = output_panel("sfx")
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
     def _tick():

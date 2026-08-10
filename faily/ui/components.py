@@ -102,12 +102,16 @@ def model_picker(options: dict, default: str, on_change) -> ui.column:
     return col
 
 
-def output_panel(output_subdir: str, get_char_name=None):
+def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = False):
     """
     Builds the right-hand output column.
 
+    tile_output: when True, CURRENT OUTPUT renders generated candidates as a
+    grid of square tiles (with the same per-clip actions as history rows)
+    instead of a single wide audio bar. Use set_candidates() to populate it.
+
     Returns (progress_bar, model_loader, main_player, status_label,
-             compare_player, compare_section, add_history_fn).
+             compare_player, compare_section, add_history_fn, set_candidates_fn).
     """
     with ui.column().classes("gap-4 p-8 w-full h-full overflow-hidden"):
 
@@ -133,8 +137,15 @@ def output_panel(output_subdir: str, get_char_name=None):
 
         # ── current output ────────────────────────────────────────────────
         section_label("CURRENT OUTPUT")
-        main_player = ui.audio("").classes("w-full rounded")
-        status = ui.label("—").classes(_DIM)
+        if tile_output:
+            main_player = None
+            status = ui.label("—").classes(_DIM)
+            candidates_grid = ui.element("div").classes("w-full grid gap-3").style(
+                "grid-template-columns: repeat(auto-fill, minmax(120px, 1fr))"
+            )
+        else:
+            main_player = ui.audio("").classes("w-full rounded")
+            status = ui.label("—").classes(_DIM)
 
         ui.separator().classes("my-1 opacity-20")
 
@@ -280,7 +291,65 @@ def output_panel(output_subdir: str, get_char_name=None):
     def add_to_history(path: Path, transcript: str = ""):
         _make_row(path, transcript)
 
+    def _make_tile(path: Path, transcript: str = ""):
+        playing = [False]
+        rel = path.relative_to(Path("outputs"))
+        with ui.column().classes(
+            "relative aspect-square w-full items-center justify-between rounded-lg "
+            "border border-[#1e1e1e] hover:border-[#333] bg-[#111] p-2 gap-1"
+        ):
+            audio_el = ui.audio(f"/outputs/{rel.as_posix()}").props("controls=false").classes("hidden")
+            play_btn = ui.button(icon="play_arrow").props("round flat color=amber size=lg")
+
+            def _toggle(a=audio_el, b=play_btn, st=playing):
+                if st[0]:
+                    a.pause(); b.props("icon=play_arrow"); st[0] = False
+                else:
+                    a.play(); b.props("icon=pause"); st[0] = True
+            play_btn.on_click(_toggle)
+
+            def _on_ended(b=play_btn, st=playing):
+                st[0] = False
+                b.props("icon=play_arrow")
+            audio_el.on("ended", _on_ended)
+
+            ui.label(path.stem).classes(
+                "text-[#888] font-mono text-[9px] truncate w-full text-center"
+            )
+            with ui.row().classes("gap-0 justify-center flex-wrap"):
+                if get_char_name is not None:
+                    ui.button(
+                        icon="add_reaction",
+                        on_click=lambda p=path, t=transcript: _open_ref_dialog(p, t),
+                    ).props("flat dense color=grey size=sm").classes("shrink-0").tooltip(
+                        "Add to character reference pool"
+                    )
+                    ui.button(icon="favorite_border", on_click=lambda p=path: _fav(p)).props(
+                        "flat dense color=grey size=sm"
+                    ).classes("shrink-0").tooltip("Favorite")
+                ui.button(
+                    icon="tune",
+                    on_click=lambda p=path: _edit_fn[0](
+                        p, get_char_name() if get_char_name else None
+                    ),
+                ).props("flat dense color=grey size=sm").classes("shrink-0").tooltip("Send to Edit tab")
+                ui.button(icon="file_download", on_click=lambda p=path: _download_local(p)).props(
+                    "flat dense color=grey size=sm"
+                ).classes("shrink-0").tooltip("Copy to Downloads")
+
+    def set_candidates(items: list[tuple[Path, str]]):
+        """Populate CURRENT OUTPUT with a grid of square tiles (tile_output mode only)."""
+        if not tile_output:
+            return
+        candidates_grid.clear()
+        with candidates_grid:
+            for path, transcript in items:
+                _make_tile(path, transcript)
+
     for p in existing[:30]:
         _make_row(p)
 
-    return progress_bar, model_loader, main_player, status, compare_player, compare_section, add_to_history
+    return (
+        progress_bar, model_loader, main_player, status,
+        compare_player, compare_section, add_to_history, set_candidates,
+    )

@@ -211,7 +211,7 @@ def build_vc_tab():
             ref_text_row.set_visibility(False)
 
             # TODO: refactor — character management (save/delete/list) belongs in the
-            # ONESHOT tab; this tab should focus purely on the cloning/auditioning process
+            # ZERO SHOT tab; this tab should focus purely on the cloning/auditioning process
             _section_row(
                 "CHARACTER LIBRARY",
                 "Characters saved here are available in the TUNE tab. "
@@ -275,7 +275,7 @@ def build_vc_tab():
                     f"flex-1 {_BTN}"
                 ).props("color=amber unelevated")
 
-        pb, ml, mp, st, _, _, ath = output_panel("vc", get_char_name=lambda: name_input.value.strip() or None)
+        pb, ml, mp, st, _, _, ath, _ = output_panel("vc", get_char_name=lambda: name_input.value.strip() or None)
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
     _rebuild_list()

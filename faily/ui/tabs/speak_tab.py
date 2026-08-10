@@ -49,6 +49,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     _ov_tau:        list[float] = [0.3]
     _svc_steps:     list[int]   = [10]
     _svc_cfg:       list[float] = [0.7]
+    _candidates:    list[int]   = [1]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -70,31 +71,36 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         if not get_ref_chain(char_state[0]):
             ui.notify("Character has no reference audio — save from CLONE first", type="warning"); return
         gen_btn.disable()
-        _out["status"].set_text("—")
-        _progress[0] = 0.0
+        n = _candidates[0]
+        results: list[tuple[Path, str]] = []
         _out["model_loader"].set_visibility(True)
         _poll.active = True
         expression = expr_input.value.strip()
         with build_ref_audio(char_state[0]) as (ref, _):
             try:
-                path = await ni_run.io_bound(
-                    tune_generate,
-                    text, expression, _engine[0], ref, _progress,
-                    char_name=char_state[0] if char_state[0] != _NO_CHAR else None,
-                    normalize_db=_normalize_db[0],
-                    max_new_tokens=_max_tokens[0],
-                    stage2_backend=_stage2[0],
-                    ov_tau=_ov_tau[0],
-                    svc_steps=_svc_steps[0],
-                    svc_cfg=_svc_cfg[0],
-                )
-                _out["main_player"].set_source(f"/outputs/vc/{path.name}")
-                _out["status"].set_text(f"✓  {path.name}")
-                _out["add_to_history"](path, text)
+                for i in range(n):
+                    _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
+                    _progress[0] = 0.0
+                    path = await ni_run.io_bound(
+                        tune_generate,
+                        text, expression, _engine[0], ref, _progress,
+                        char_name=char_state[0] if char_state[0] != _NO_CHAR else None,
+                        normalize_db=_normalize_db[0],
+                        max_new_tokens=_max_tokens[0],
+                        stage2_backend=_stage2[0],
+                        ov_tau=_ov_tau[0],
+                        svc_steps=_svc_steps[0],
+                        svc_cfg=_svc_cfg[0],
+                    )
+                    results.append((path, text))
+                    _out["add_to_history"](path, text)
+                _out["status"].set_text(f"✓  {n} candidate{'s' if n != 1 else ''}")
             except Exception as exc:
                 show_error(exc)
                 _out["status"].set_text("error")
             finally:
+                if results:
+                    _out["set_candidates"](results)
                 _poll.active = False
                 _out["model_loader"].set_visibility(False)
                 _out["progress_bar"].set_value(1.0)
@@ -192,6 +198,14 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
             .classes("w-full").props("outlined dark rows=4")
         )
 
+        _section_row("CANDIDATES", "Generate multiple takes in one pass. Each appears as a tile in CURRENT OUTPUT and in HISTORY.")
+        with ui.row().classes("w-full items-center gap-3"):
+            cand_lbl = ui.label("1").classes(
+                "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
+            )
+            def _on_cand(e): _candidates[0] = int(e.value); cand_lbl.set_text(str(int(e.value)))
+            ui.slider(min=1, max=6, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
+
         ui.space()
         gen_btn = (
             ui.button("GENERATE", on_click=_generate)
@@ -222,6 +236,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
 
 def _build_character(char_state: list[str], _out: dict, _current_char: list[str]):
     """Left controls for CHARACTER sub-tab. Returns refresh."""
+    _candidates: list[int] = [1]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -246,29 +261,39 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
         if not char or (not char.get("piper_model") and not char.get("rvc_model")):
             ui.notify("No trained model — train one from the CHARACTERS tab", type="warning"); return
         gen_btn.disable()
-        _out["status"].set_text("—")
+        n = _candidates[0]
+        results: list[tuple[Path, str]] = []
         _out["model_loader"].set_visibility(True)
         _VC_DIR.mkdir(parents=True, exist_ok=True)
         try:
-            if char.get("piper_model"):
-                from faily.modules.piper import infer
-                slug = text[:28].strip().replace(" ", "_").replace("/", "-")
-                out_path = _VC_DIR / f"piper_{char_state[0]}_{slug}.wav"
-                path = await ni_run.io_bound(infer, text, Path(char["piper_model"]), out_path)
-            else:
-                from faily.modules.rvc import speak_generate
-                path = await ni_run.io_bound(
-                    speak_generate, text, char["rvc_model"], _VC_DIR,
-                    char_name=char_state[0],
-                )
-            await ni_run.io_bound(ensure_stereo, path)
-            _out["main_player"].set_source(f"/outputs/vc/{path.name}")
-            _out["status"].set_text(f"✓  {path.name}")
-            _out["add_to_history"](path, text)
+            for i in range(n):
+                _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
+                if char.get("piper_model"):
+                    from faily.modules.piper import infer
+                    slug = text[:28].strip().replace(" ", "_").replace("/", "-")
+                    suffix = f"_{i + 1:02d}" if n > 1 else ""
+                    out_path = _VC_DIR / f"piper_{char_state[0]}_{slug}{suffix}.wav"
+                    path = await ni_run.io_bound(infer, text, Path(char["piper_model"]), out_path)
+                else:
+                    from faily.modules.rvc import speak_generate
+                    path = await ni_run.io_bound(
+                        speak_generate, text, char["rvc_model"], _VC_DIR,
+                        char_name=char_state[0],
+                    )
+                    if n > 1:
+                        new_path = path.with_name(f"{path.stem}_{i + 1:02d}{path.suffix}")
+                        path.rename(new_path)
+                        path = new_path
+                await ni_run.io_bound(ensure_stereo, path)
+                results.append((path, text))
+                _out["add_to_history"](path, text)
+            _out["status"].set_text(f"✓  {n} candidate{'s' if n != 1 else ''}")
         except Exception as exc:
             show_error(exc)
             _out["status"].set_text("error")
         finally:
+            if results:
+                _out["set_candidates"](results)
             _out["model_loader"].set_visibility(False)
             gen_btn.enable()
 
@@ -286,6 +311,14 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
             .classes("w-full").props("outlined dark rows=5")
         )
 
+        _section_row("CANDIDATES", "Generate multiple takes in one pass. Each appears as a tile in CURRENT OUTPUT and in HISTORY.")
+        with ui.row().classes("w-full items-center gap-3"):
+            cand_lbl = ui.label("1").classes(
+                "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
+            )
+            def _on_cand(e): _candidates[0] = int(e.value); cand_lbl.set_text(str(int(e.value)))
+            ui.slider(min=1, max=6, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
+
         ui.space()
         gen_btn = (
             ui.button("GENERATE", on_click=_generate)
@@ -302,11 +335,12 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
 
 
 def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
-    """Left controls for ONE SHOT sub-tab. Returns refresh."""
-    _progress: list[float] = [0.0]
-    _backend:  list[str]   = ["xtts_v2"]
-    _param1:   list[float] = [BACKENDS["xtts_v2"]["param1"]["default"]]
-    _param2:   list[float] = [BACKENDS["xtts_v2"]["param2"]["default"]]
+    """Left controls for ZERO SHOT sub-tab. Returns refresh."""
+    _progress:   list[float] = [0.0]
+    _backend:    list[str]   = ["xtts_v2"]
+    _param1:     list[float] = [BACKENDS["xtts_v2"]["param1"]["default"]]
+    _param2:     list[float] = [BACKENDS["xtts_v2"]["param2"]["default"]]
+    _candidates: list[int]   = [1]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -351,27 +385,32 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         if not chain:
             ui.notify("Character has no reference audio", type="warning"); return
         gen_btn.disable()
-        _out["status"].set_text("—")
-        _progress[0] = 0.0
+        n = _candidates[0]
+        results: list[tuple[Path, str]] = []
         _out["model_loader"].set_visibility(True)
         _poll.active = True
         _is_f5 = _backend[0] == "f5_tts"
         with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=15.0 if _is_f5 else None) as (ref, chain_transcript):
             try:
-                path = await ni_run.io_bound(
-                    vc_generate,
-                    text, ref, _progress, None,
-                    _backend[0], _param1[0], _param2[0],
-                    ref_text_input.value or chain_transcript,
-                    char_name=char_state[0],
-                )
-                _out["main_player"].set_source(f"/outputs/vc/{path.name}")
-                _out["status"].set_text(f"✓  {path.name}")
-                _out["add_to_history"](path, text)
+                for i in range(n):
+                    _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
+                    _progress[0] = 0.0
+                    path = await ni_run.io_bound(
+                        vc_generate,
+                        text, ref, _progress, None,
+                        _backend[0], _param1[0], _param2[0],
+                        ref_text_input.value or chain_transcript,
+                        char_name=char_state[0],
+                    )
+                    results.append((path, text))
+                    _out["add_to_history"](path, text)
+                _out["status"].set_text(f"✓  {n} candidate{'s' if n != 1 else ''}")
             except Exception as exc:
                 show_error(exc)
                 _out["status"].set_text("error")
             finally:
+                if results:
+                    _out["set_candidates"](results)
                 _poll.active = False
                 _out["model_loader"].set_visibility(False)
                 _out["progress_bar"].set_value(1.0)
@@ -381,7 +420,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 gen_btn.enable()
 
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
-        _section_row("CHARACTER", "Pick a character — uses their full reference chain for one-shot cloning.")
+        _section_row("CHARACTER", "Pick a character — uses their full reference chain for zero-shot cloning.")
         char_select = (
             ui.select(options=_all_chars(), value=_NO_CHAR, on_change=lambda e: _update_info(e.value))
             .props("outlined dark dense").classes("w-full")
@@ -409,6 +448,14 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
             ui.textarea(placeholder="Enter the line…")
             .classes("w-full").props("outlined dark rows=5")
         )
+
+        _section_row("CANDIDATES", "Generate multiple takes in one pass. Each appears as a tile in CURRENT OUTPUT and in HISTORY.")
+        with ui.row().classes("w-full items-center gap-3"):
+            cand_lbl = ui.label("1").classes(
+                "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
+            )
+            def _on_cand(e): _candidates[0] = int(e.value); cand_lbl.set_text(str(int(e.value)))
+            ui.slider(min=1, max=6, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
 
         ui.space()
         gen_btn = (
@@ -452,7 +499,7 @@ def build_speak_tab():
             ) as inner_tabs:
                 exp_tab  = ui.tab("EXPRESSION",  icon="psychology")
                 char_tab = ui.tab("CHARACTER",   icon="model_training")
-                shot_tab = ui.tab("ONE SHOT",    icon="flash_on")
+                shot_tab = ui.tab("ZERO SHOT",   icon="flash_on")
 
             with ui.tab_panels(inner_tabs, value=exp_tab).classes("w-full flex-grow"):
                 with ui.tab_panel(exp_tab):
@@ -463,11 +510,15 @@ def build_speak_tab():
                     r_shot = _build_oneshot(_shot_state, _out, _current_char)
 
         # ── RIGHT: shared output panel ────────────────────────────────────────
-        pb, ml, mp, st, _, _, ath = output_panel(
+        pb, ml, mp, st, _, _, ath, sc = output_panel(
             "vc",
             get_char_name=lambda: _current_char[0] if _current_char[0] != _NO_CHAR else None,
+            tile_output=True,
         )
-        _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
+        _out.update(
+            progress_bar=pb, model_loader=ml, main_player=mp, status=st,
+            add_to_history=ath, set_candidates=sc,
+        )
 
     def refresh_all():
         r_exp()
