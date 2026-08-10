@@ -1,6 +1,7 @@
 """Piper TTS training and inference via isolated subprocess."""
 import asyncio
 import csv
+import os
 import shutil
 import subprocess
 import sys
@@ -392,7 +393,13 @@ async def train(
     n = _prep_dataset(usable, dataset_dir)
     log_cb(f"Dataset ready: {n} clips")
 
-    log_cb("Preprocessing (phonemization)…")
+    # preprocess.py computes batch_size = num_utterances // (max_workers * 2)
+    # and errors out ("n must be at least one") if that hits 0 — which it does
+    # for small datasets (a handful of ref clips) on any machine with more than
+    # a few CPU cores, since it defaults max_workers to os.cpu_count(). Cap it
+    # so batch_size always comes out >= 1.
+    max_workers = max(1, min(os.cpu_count() or 4, n // 2))
+    log_cb(f"Preprocessing (phonemization)… max-workers={max_workers}")
     await _stream([
         py, "-m", "piper_train.preprocess",
         "--language", "en-us",
@@ -401,6 +408,7 @@ async def train(
         "--sample-rate", str(_SR),
         "--dataset-format", "ljspeech",
         "--single-speaker",
+        "--max-workers", str(max_workers),
     ], log_cb, proc_ref)
     log_cb("Preprocessing done")
 

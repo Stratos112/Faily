@@ -109,6 +109,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: piper-train's setup.py doesn't declare norm_audio/models/*.onnx as package
+:: data, so pip's wheel build silently drops it even though it's a real file
+:: in the repo. Without it, preprocessing crashes trying to load the VAD model.
+set VAD_DIR=%VENV%\Lib\site-packages\piper_train\norm_audio\models
+set VAD_FILE=%VAD_DIR%\silero_vad.onnx
+if not exist "%VAD_FILE%" (
+    echo Downloading silero_vad.onnx ^(missing from piper-train package^)...
+    if not exist "%VAD_DIR%" mkdir "%VAD_DIR%"
+    curl -L -o "%VAD_FILE%" ^
+      "https://raw.githubusercontent.com/rhasspy/piper/master/src/python/piper_train/norm_audio/models/silero_vad.onnx"
+)
+
 :: After this step pip's resolver will report several dependency conflicts.
 :: These are ALL expected and handled — do not treat them as errors:
 ::

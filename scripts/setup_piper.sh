@@ -72,6 +72,20 @@ if [ -z "$SKIP_INSTALL" ]; then
     echo "Installing piper-train from source (pulls torch, ~2 GB)..."
     "$VENV/bin/pip" install \
         "piper-train @ git+https://github.com/rhasspy/piper.git#subdirectory=src/python"
+
+    # piper-train's setup.py doesn't declare norm_audio/models/*.onnx as
+    # package data, so pip's wheel build silently drops it even though it's a
+    # real file in the repo. Without it, preprocessing crashes trying to load
+    # the VAD model.
+    SITE_PACKAGES=$("$VENV/bin/python" -c "import site; print(site.getsitepackages()[0])")
+    VAD_DIR="$SITE_PACKAGES/piper_train/norm_audio/models"
+    VAD_FILE="$VAD_DIR/silero_vad.onnx"
+    if [ ! -f "$VAD_FILE" ]; then
+        echo "Downloading silero_vad.onnx (missing from piper-train package)..."
+        mkdir -p "$VAD_DIR"
+        curl -L -o "$VAD_FILE" \
+          "https://raw.githubusercontent.com/rhasspy/piper/master/src/python/piper_train/norm_audio/models/silero_vad.onnx"
+    fi
 fi
 
 # ── Download base checkpoint ─────────────────────────────────────────────────
