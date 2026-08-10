@@ -106,6 +106,16 @@ if errorlevel 1 (
 echo Patching pytorch-lightning for NumPy 2.x compatibility...
 "%VENV%\Scripts\python" -c "import pathlib; d = pathlib.Path(r'%VENV%\Lib\site-packages\pytorch_lightning'); [f.write_text(f.read_text(encoding='utf-8').replace('np.Inf', 'np.inf'), encoding='utf-8') for f in d.rglob('*.py') if 'np.Inf' in f.read_text(encoding='utf-8')]"
 
+:: PyTorch 2.6 flipped torch.load's default from weights_only=False to True.
+:: pytorch-lightning 1.7.x's checkpoint loader (cloud_io.py) was written
+:: before that change and doesn't pass weights_only itself, so loading any
+:: checkpoint containing non-tensor objects (e.g. a pathlib.PosixPath, which
+:: the Windows-downloaded base checkpoint has since it was originally saved
+:: on Linux) fails under the new secure-by-default behavior. Restore the old
+:: behavior explicitly — this checkpoint is from our own pinned HF download.
+echo Patching pytorch-lightning for torch 2.6+ weights_only default...
+"%VENV%\Scripts\python" -c "import pathlib; p = pathlib.Path(r'%VENV%\Lib\site-packages\pytorch_lightning\utilities\cloud_io.py'); t = p.read_text(encoding='utf-8'); t = t.replace('torch.load(path_or_url, map_location=map_location)', 'torch.load(path_or_url, map_location=map_location, weights_only=False)').replace('torch.load(f, map_location=map_location)', 'torch.load(f, map_location=map_location, weights_only=False)'); p.write_text(t, encoding='utf-8')"
+
 :: ── piper-train from GitHub (--no-deps skips piper-phonemize requirement) ─────
 echo Installing piper-train ^(no-deps^)...
 "%VENV%\Scripts\pip" install --no-deps ^
@@ -207,7 +217,21 @@ if not exist "%CFG%" (
     echo Voice config already present.
 )
 
+:: ── Diagnostics — installed versions + pip's own conflict check ─────────────
+:: The pins above (torchmetrics, numpy patches, etc.) exist because pip's
+:: normal resolver doesn't catch these — `pip check` only flags conflicts
+:: between DECLARED requirements, not runtime API incompatibilities like
+:: np.Inf/weights_only. Still useful as a first signal if something's off.
 echo.
+echo ── Installed package versions ──────────────────────────────────────────────
+for %%P in (torch torchaudio torchmetrics pytorch-lightning numpy cython six piper-tts) do (
+    "%VENV%\Scripts\pip" show %%P 2>nul | findstr /B "Name: Version:"
+    echo.
+)
+echo ── pip check ^(flags declared-requirement conflicts, if any^) ───────────────
+"%VENV%\Scripts\pip" check
+echo.
+
 echo Setup complete.
 echo.
 echo Verify with:

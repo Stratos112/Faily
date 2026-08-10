@@ -101,6 +101,28 @@ for f in d.rglob('*.py'):
         f.write_text(t.replace('np.Inf', 'np.inf'), encoding='utf-8')
 "
 
+    # PyTorch 2.6 flipped torch.load's default from weights_only=False to
+    # True. pytorch-lightning 1.7.x's checkpoint loader (cloud_io.py) was
+    # written before that change and doesn't pass weights_only itself, so
+    # loading any checkpoint containing non-tensor objects (e.g. a
+    # pathlib.PosixPath/WindowsPath baked in at save time) fails under the
+    # new secure-by-default behavior. Restore the old behavior explicitly —
+    # this checkpoint is from our own pinned HF download.
+    echo "Patching pytorch-lightning for torch 2.6+ weights_only default..."
+    "$VENV/bin/python" -c "
+import pathlib
+p = pathlib.Path('$SITE_PACKAGES/pytorch_lightning/utilities/cloud_io.py')
+t = p.read_text(encoding='utf-8')
+t = t.replace(
+    'torch.load(path_or_url, map_location=map_location)',
+    'torch.load(path_or_url, map_location=map_location, weights_only=False)',
+).replace(
+    'torch.load(f, map_location=map_location)',
+    'torch.load(f, map_location=map_location, weights_only=False)',
+)
+p.write_text(t, encoding='utf-8')
+"
+
     # monotonic_align is a Cython extension piper-train ships as source
     # (.pyx) but never builds — same package-data gap as above drops core.pyx
     # entirely, and its own nested setup.py is never invoked by pip. Fetch
@@ -153,7 +175,21 @@ else
     echo "Voice config already present."
 fi
 
+# ── Diagnostics — installed versions + pip's own conflict check ─────────────
+# The pins above (torchmetrics, numpy patches, etc.) exist because pip's
+# normal resolver doesn't catch these — `pip check` only flags conflicts
+# between DECLARED requirements, not runtime API incompatibilities like
+# np.Inf/weights_only. Still useful as a first signal if something's off.
 echo ""
+echo "── Installed package versions ──────────────────────────────────────────────"
+for pkg in torch torchaudio torchmetrics pytorch-lightning numpy cython six piper-tts; do
+    "$VENV/bin/pip" show "$pkg" 2>/dev/null | grep -E "^(Name|Version):"
+    echo ""
+done
+echo "── pip check (flags declared-requirement conflicts, if any) ────────────────"
+"$VENV/bin/pip" check
+echo ""
+
 echo "Verify:"
 "$VENV/bin/python" -c "
 import piper_train, torch
