@@ -433,6 +433,7 @@ def build_characters_tab(on_speak, on_change):
                         return
 
                     _proc_ref: list = [None]
+                    _log_lines: list[str] = []
 
                     with ui.dialog().classes("w-full max-w-3xl") as dlg, ui.card().classes(
                         "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
@@ -449,6 +450,10 @@ def build_characters_tab(on_speak, on_change):
                             )
                             with ui.row().classes("gap-2"):
                                 ui.button(
+                                    "Copy log", icon="content_copy",
+                                    on_click=lambda: ui.clipboard.write("\n".join(_log_lines)),
+                                ).props("flat dense color=amber")
+                                ui.button(
                                     "STOP",
                                     on_click=lambda: _proc_ref[0].terminate() if _proc_ref[0] else None,
                                 ).props("flat dense color=negative")
@@ -460,6 +465,7 @@ def build_characters_tab(on_speak, on_change):
                     dlg.open()
 
                     def _log(line: str):
+                        _log_lines.append(line)
                         log.push(line)
 
                     try:

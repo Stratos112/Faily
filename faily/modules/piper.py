@@ -231,12 +231,21 @@ async def _stream(cmd: list[str], log_cb, proc_ref: list):
         stderr=asyncio.subprocess.STDOUT,
     )
     proc_ref[0] = proc
+    tail: list[str] = []
     async for raw in proc.stdout:
-        log_cb(raw.decode(errors="replace").rstrip())
+        line = raw.decode(errors="replace").rstrip()
+        log_cb(line)
+        tail.append(line)
+        if len(tail) > 40:
+            tail.pop(0)
     await proc.wait()
     proc_ref[0] = None
     if proc.returncode not in (0, -15):
-        raise RuntimeError(f"Process exited {proc.returncode}")
+        detail = "\n".join(tail).strip()
+        step = cmd[2] if len(cmd) > 2 and cmd[1] == "-m" else cmd[0]
+        raise RuntimeError(
+            f"{step} exited {proc.returncode}" + (f":\n{detail}" if detail else "")
+        )
 
 
 # ── public API ────────────────────────────────────────────────────────────────
