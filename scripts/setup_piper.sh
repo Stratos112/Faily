@@ -86,6 +86,36 @@ if [ -z "$SKIP_INSTALL" ]; then
         curl -L -o "$VAD_FILE" \
           "https://raw.githubusercontent.com/rhasspy/piper/master/src/python/piper_train/norm_audio/models/silero_vad.onnx"
     fi
+
+    # monotonic_align is a Cython extension piper-train ships as source
+    # (.pyx) but never builds — same package-data gap as above drops core.pyx
+    # entirely, and its own nested setup.py is never invoked by pip. Fetch
+    # the source and build it in place. Must run with cwd = site-packages
+    # root: cythonize infers the fully-qualified module name
+    # (piper_train.vits.monotonic_align.core) by walking up through parent
+    # __init__.py files, and `build_ext --inplace` writes to that path
+    # relative to cwd — running it from inside the module's own directory
+    # makes it try to create piper_train/vits/monotonic_align/ *inside*
+    # itself and fail.
+    MONO_DIR="$SITE_PACKAGES/piper_train/vits/monotonic_align"
+    if [ ! -f "$MONO_DIR/core.pyx" ]; then
+        echo "Downloading monotonic_align Cython source..."
+        curl -L -o "$MONO_DIR/core.pyx" \
+          "https://raw.githubusercontent.com/rhasspy/piper/master/src/python/piper_train/vits/monotonic_align/core.pyx"
+    fi
+    echo "Building monotonic_align Cython extension..."
+    ( cd "$SITE_PACKAGES" && "$VENV/bin/python" piper_train/vits/monotonic_align/setup.py build_ext --inplace )
+
+    # piper-train's monotonic_align/__init__.py has a stale relative import
+    # (from .monotonic_align.core import ...) that doesn't match where the
+    # extension we just built actually lands (.core, one level up) — a bug
+    # in piper-train itself. Patch it.
+    "$VENV/bin/python" -c "
+from pathlib import Path
+p = Path('$MONO_DIR/__init__.py')
+t = p.read_text()
+p.write_text(t.replace('from .monotonic_align.core import', 'from .core import'))
+"
 fi
 
 # ── Download base checkpoint ─────────────────────────────────────────────────

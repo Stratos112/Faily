@@ -121,6 +121,35 @@ if not exist "%VAD_FILE%" (
       "https://raw.githubusercontent.com/rhasspy/piper/master/src/python/piper_train/norm_audio/models/silero_vad.onnx"
 )
 
+:: monotonic_align is a Cython extension piper-train ships as source (.pyx)
+:: but never builds — same package-data gap as above drops core.pyx entirely,
+:: and its own nested setup.py is never invoked by pip. We fetch the source
+:: and build it in place ourselves. Requires a C++ compiler (MSVC).
+set MONO_DIR=%VENV%\Lib\site-packages\piper_train\vits\monotonic_align
+if not exist "%MONO_DIR%\core.pyx" (
+    echo Downloading monotonic_align Cython source...
+    curl -L -o "%MONO_DIR%\core.pyx" ^
+      "https://raw.githubusercontent.com/rhasspy/piper/master/src/python/piper_train/vits/monotonic_align/core.pyx"
+)
+echo Building monotonic_align Cython extension...
+pushd "%VENV%\Lib\site-packages"
+"%VENV%\Scripts\python" piper_train\vits\monotonic_align\setup.py build_ext --inplace
+if errorlevel 1 (
+    popd
+    echo ERROR: monotonic_align build failed - a C++ compiler is required.
+    echo   Install Build Tools for Visual Studio, "Desktop development with C++" workload:
+    echo   https://visualstudio.microsoft.com/visual-cpp-build-tools/
+    pause
+    exit /b 1
+)
+popd
+
+:: piper-train's monotonic_align/__init__.py has a stale relative import
+:: (from .monotonic_align.core import ...) that doesn't match where the
+:: extension we just built actually lands (.core, one level up) — a bug in
+:: piper-train itself, not something the build step can fix. Patch it.
+"%VENV%\Scripts\python" -c "from pathlib import Path; p = Path(r'%MONO_DIR%\__init__.py'); t = p.read_text(); p.write_text(t.replace('from .monotonic_align.core import', 'from .core import'))"
+
 :: After this step pip's resolver will report several dependency conflicts.
 :: These are ALL expected and handled — do not treat them as errors:
 ::

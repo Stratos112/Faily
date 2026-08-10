@@ -343,6 +343,20 @@ async def _stream(cmd: list[str], log_cb, proc_ref: list):
         )
 
 
+def _probe(py: str, label: str, code: str, log_cb) -> None:
+    """Run a quick `python -c <code>` in the piper venv and log the outcome.
+    Used for pre-flight checks so import-chain breaks show up immediately
+    with a clear label, instead of surfacing later inside a much longer
+    preprocess/train subprocess log."""
+    r = subprocess.run([py, "-c", code], capture_output=True, timeout=30, text=True)
+    if r.returncode == 0:
+        out = r.stdout.strip()
+        log_cb(f"[probe:{label}] OK" + (f" — {out}" if out else ""))
+    else:
+        detail = (r.stderr or r.stdout or "").strip().splitlines()
+        log_cb(f"[probe:{label}] FAILED — {detail[-1] if detail else f'exit {r.returncode}'}")
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 async def train(
@@ -389,6 +403,15 @@ async def train(
 
     py = str(_python())
     log_cb(f"Python: {py}")
+    log_cb("Running pre-flight import checks…")
+    _probe(py, "torch", "import torch; print(torch.__version__)", log_cb)
+    _probe(
+        py, "cuda",
+        "import torch; print('available' if torch.cuda.is_available() else 'NOT AVAILABLE — training will fail or fall back to CPU')",
+        log_cb,
+    )
+    _probe(py, "pytorch_lightning", "import pytorch_lightning; print(pytorch_lightning.__version__)", log_cb)
+    _probe(py, "piper_train.vits.lightning", "import piper_train.vits.lightning", log_cb)
 
     n = _prep_dataset(usable, dataset_dir)
     log_cb(f"Dataset ready: {n} clips")
