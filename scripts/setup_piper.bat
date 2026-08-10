@@ -35,9 +35,22 @@ set "PATH=%ESPEAK_DIR%;%PATH%"
 
 :: ── Create venv ──────────────────────────────────────────────────────────────
 if exist "%VENV%\Scripts\python.exe" (
+    :: Sanity check — a venv created by a different interpreter (e.g. WSL's
+    :: python -m venv run against this same folder) leaves a Scripts\python.exe
+    :: that exists on disk but fails to launch ("No Python at ..."). Detect and
+    :: rebuild instead of silently trying to use a broken venv.
+    "%VENV%\Scripts\python.exe" --version >nul 2>&1
+    if errorlevel 1 (
+        echo Existing piper venv is broken ^(created by a different Python — likely WSL^).
+        echo Deleting and recreating "%VENV%"...
+        rmdir /s /q "%VENV%"
+        goto :create_venv
+    )
     echo Piper venv already exists — checking for updates.
     goto :install_packages
 )
+
+:create_venv
 echo Creating piper venv...
 py -3.11 -m venv "%VENV%"
 

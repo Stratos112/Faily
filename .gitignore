@@ -222,3 +222,7 @@ __marimo__/
 # Local Faily config/secrets
 faily_settings.json
 hf_token.txt
+
+# Piper training venv — platform-specific, must never be committed
+# (a Linux-created pyvenv.cfg checked out on Windows breaks Scripts\python.exe)
+/piper_venv/

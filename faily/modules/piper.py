@@ -31,15 +31,35 @@ def can_infer() -> bool:
 
 def can_train() -> bool:
     """True if the piper venv has everything needed to start training."""
+    return diagnose() is None
+
+
+def diagnose() -> str | None:
+    """Human-readable reason piper training isn't available, or None if ready."""
+    py = _python()
+    if not py.exists():
+        return f"piper venv not found at {PIPER_VENV} — run the setup script."
+
     check = "phonemizer" if _IS_WIN else "piper_train"
     try:
         r = subprocess.run(
-            [str(_python()), "-c", f"import {check}"],
-            capture_output=True, timeout=15,
+            [str(py), "-c", f"import {check}"],
+            capture_output=True, timeout=15, text=True,
         )
-        return r.returncode == 0
-    except Exception:
-        return False
+    except Exception as exc:
+        return f"couldn't run the piper venv's python ({exc}) — rerun the setup script."
+
+    if r.returncode != 0:
+        lines = (r.stderr or r.stdout or "").strip().splitlines()
+        detail = lines[-1] if lines else f"exit code {r.returncode}"
+        if "No Python at" in detail:
+            return (
+                f"the piper venv is broken ({detail}) — it was likely created with a "
+                "different Python (e.g. from WSL). Delete piper_venv/ and rerun the "
+                "setup script."
+            )
+        return f"{detail} — rerun the setup script."
+    return None
 
 
 def is_ready() -> bool:
@@ -229,10 +249,9 @@ async def train(
     max_epochs: int = 1000,
 ) -> Path:
     """Train piper voice model. Streams log lines via log_cb. Returns .onnx path."""
-    if not can_train():
-        raise RuntimeError(
-            "Piper not set up — run scripts/setup_piper.bat (Windows) or scripts/setup_piper.sh"
-        )
+    reason = diagnose()
+    if reason:
+        raise RuntimeError(f"Piper not ready — {reason}")
 
     usable = [c for c in clips if c.get("transcript", "").strip()]
     if len(usable) < 2:

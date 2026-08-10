@@ -30,6 +30,18 @@ if ! command -v espeak-ng &>/dev/null; then
 fi
 
 # ── Venv ─────────────────────────────────────────────────────────────────────
+# Guard against running this against a Windows-created venv (e.g. this repo
+# mounted at /mnt/c or /mnt/e and setup_piper.bat already run there). A
+# Windows venv has Scripts/ instead of bin/ — creating a Linux venv on top of
+# it corrupts pyvenv.cfg's `home` for the Windows side ("No Python at
+# '/usr/bin\python.exe'" when Windows tries to use it afterward).
+if [ -d "$VENV/Scripts" ] && [ ! -f "$VENV/bin/python" ]; then
+    echo "ERROR: $VENV looks like a Windows-created venv (has Scripts/, no bin/python)."
+    echo "  Running this WSL2 setup here would corrupt it for Windows use."
+    echo "  If this is genuinely meant to be a WSL2-only venv, remove $VENV first."
+    exit 1
+fi
+
 if [ -f "$VENV/bin/piper" ] && "$VENV/bin/python" -c "import piper_train" 2>/dev/null; then
     echo "Piper venv already complete — skipping."
     SKIP_INSTALL=1

@@ -426,12 +426,10 @@ def build_characters_tab(on_speak, on_change):
                         ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
                         return
 
-                    from faily.modules.piper import train, can_train
-                    if not can_train():
-                        ui.notify(
-                            "Piper not set up — run scripts/setup_piper.bat (Windows) or scripts/setup_piper.sh (WSL2)",
-                            type="warning", timeout=6000,
-                        )
+                    from faily.modules.piper import train, diagnose
+                    reason = diagnose()
+                    if reason:
+                        ui.notify(f"Piper not ready — {reason}", type="warning", timeout=8000)
                         return
 
                     _proc_ref: list = [None]
