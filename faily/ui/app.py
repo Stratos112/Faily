@@ -65,6 +65,7 @@ def run():
 
         def _open_settings():
             from faily.core.settings import load_settings, save_settings
+            from faily.core.hf_token import get_hf_token, save_hf_token, clear_hf_token
             cfg = load_settings()
             with ui.dialog() as dlg, ui.card().classes(
                 "bg-[#1a1a1a] border border-[#333] min-w-[460px] gap-3"
@@ -83,6 +84,44 @@ def run():
                     "All download buttons save to this folder."
                 ).classes("text-[#333] font-mono text-[10px]")
 
+                ui.separator().classes("opacity-20")
+                ui.label("HUGGING FACE TOKEN").classes(
+                    "text-[#444] font-mono text-[10px] tracking-widest"
+                )
+                existing_token = get_hf_token()
+                token_inp = (
+                    ui.input(
+                        placeholder="hf_…" if not existing_token else "•" * 20,
+                    )
+                    .props("outlined dark dense type=password")
+                    .classes("w-full font-mono text-[11px]")
+                )
+                ui.label(
+                    "Used for gated models (e.g. Stable Audio Open). "
+                    + ("A token is currently saved." if existing_token else "No token saved yet.")
+                ).classes("text-[#333] font-mono text-[10px]")
+
+                def _save_token():
+                    val = token_inp.value.strip()
+                    if val:
+                        save_hf_token(val)
+                        ui.notify("Token saved", type="positive", timeout=2000)
+                        token_inp.set_value("")
+
+                def _clear_token():
+                    clear_hf_token()
+                    ui.notify("Token cleared", type="warning", timeout=2000)
+                    dlg.close()
+
+                with ui.row().classes("w-full justify-end gap-2"):
+                    if existing_token:
+                        ui.button("Clear Token", on_click=_clear_token).props(
+                            "flat dense color=red"
+                        ).classes("font-mono text-[10px]")
+                    ui.button("Save Token", on_click=_save_token).props(
+                        "flat dense color=amber"
+                    ).classes("font-mono text-[10px]")
+
                 def _save_cfg():
                     new_dir = path_inp.value.strip() or str(Path.home() / "Downloads")
                     save_settings({**cfg, "download_dir": new_dir})
@@ -90,8 +129,42 @@ def run():
                     ui.notify("Settings saved", type="positive", timeout=2000)
 
                 with ui.row().classes("w-full justify-end gap-2 mt-1"):
-                    ui.button("Cancel", on_click=dlg.close).props("flat dense color=grey")
+                    ui.button("Close", on_click=dlg.close).props("flat dense color=grey")
                     ui.button("Save", on_click=_save_cfg).props("color=amber unelevated dense")
+            dlg.open()
+
+        def _maybe_prompt_hf_token():
+            from faily.core.hf_token import has_hf_token, save_hf_token
+            if has_hf_token():
+                return
+            with ui.dialog() as dlg, ui.card().classes(
+                "bg-[#1a1a1a] border border-[#333] min-w-[460px] gap-3"
+            ):
+                ui.label("HUGGING FACE TOKEN").classes("text-white font-mono text-xs tracking-widest")
+                ui.separator().classes("opacity-20")
+                ui.label(
+                    "Some models (e.g. Stable Audio Open) are gated and need a Hugging "
+                    "Face access token with that model's license accepted. Paste one "
+                    "below, or skip — you can add it later from Settings."
+                ).classes("text-[#888] font-mono text-[10px]")
+                token_inp = (
+                    ui.input(placeholder="hf_…")
+                    .props("outlined dark dense type=password")
+                    .classes("w-full font-mono text-[11px]")
+                )
+
+                def _save():
+                    val = token_inp.value.strip()
+                    if not val:
+                        ui.notify("Enter a token first", type="warning")
+                        return
+                    save_hf_token(val)
+                    dlg.close()
+                    ui.notify("Token saved", type="positive", timeout=2000)
+
+                with ui.row().classes("w-full justify-end gap-2 mt-1"):
+                    ui.button("Skip", on_click=dlg.close).props("flat dense color=grey")
+                    ui.button("Save", on_click=_save).props("color=amber unelevated dense")
             dlg.open()
 
         with ui.header().classes(
@@ -165,6 +238,8 @@ def run():
 
             with ui.tab_panel(foley_tab):
                 build_foley_tab()
+
+        _maybe_prompt_hf_token()
 
     _native = os.environ.get("FAILY_NATIVE", "0") == "1"
     ui.run(

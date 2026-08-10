@@ -37,14 +37,10 @@ def _patch_model_output():
 _BUNDLED: dict[str, str] = {
     "AudioLDM2":            "cvssp/audioldm2",
     "AudioLDM2 Large":      "cvssp/audioldm2-large",
-    "Tango 2":              "declare-lab/tango2",
     "Stable Audio Open":    "stabilityai/stable-audio-open-1.0",
-    "AudioGen Medium":      "facebook/audiogen-medium",
-    "AudioGen Large":       "facebook/audiogen-large",
 }
 
 _STABLE_AUDIO = {"stabilityai/stable-audio-open-1.0"}
-_AUDIOGEN = {"facebook/audiogen-medium", "facebook/audiogen-large"}
 
 SFX_OUTPUT_DIR = Path("outputs/sfx")
 
@@ -110,15 +106,17 @@ def _loader_audioldm2(model_id: str):
 
     from diffusers import AudioLDM2Pipeline
     from transformers import GPT2LMHeadModel
+    from faily.core.hf_token import get_hf_token
     import torch
     dtype = torch.float16 if manager.device == "cuda" else torch.float32
+    token = get_hf_token()
     pipe = AudioLDM2Pipeline.from_pretrained(
-        model_id, torch_dtype=dtype, cache_dir=str(SFX_MODELS_DIR)
+        model_id, torch_dtype=dtype, cache_dir=str(SFX_MODELS_DIR), token=token
     )
     # cvssp/audioldm2 saves language_model as GPT2Model which lacks GenerationMixin
     pipe.language_model = GPT2LMHeadModel.from_pretrained(
         model_id, subfolder="language_model", torch_dtype=dtype,
-        ignore_mismatched_sizes=True, cache_dir=str(SFX_MODELS_DIR),
+        ignore_mismatched_sizes=True, cache_dir=str(SFX_MODELS_DIR), token=token,
     )
     _patch_generate_lm(pipe)
     return pipe.to(manager.device)
@@ -147,11 +145,28 @@ def _generate_audioldm2(pipe, prompt, duration, steps, guidance, candidates, pro
 
 def _loader_stable_audio(model_id: str):
     from diffusers import StableAudioPipeline
+    from huggingface_hub.errors import GatedRepoError, LocalTokenNotFoundError
+    from faily.core.hf_token import get_hf_token
     import torch
     dtype = torch.float16 if manager.device == "cuda" else torch.float32
-    pipe = StableAudioPipeline.from_pretrained(
-        model_id, torch_dtype=dtype, cache_dir=str(SFX_MODELS_DIR)
-    )
+    token = get_hf_token()
+    try:
+        pipe = StableAudioPipeline.from_pretrained(
+            model_id, torch_dtype=dtype, cache_dir=str(SFX_MODELS_DIR), token=token
+        )
+    except (GatedRepoError, LocalTokenNotFoundError) as exc:
+        if token is None:
+            raise RuntimeError(
+                f"{model_id} is a gated model and no Hugging Face token is configured. "
+                f"Accept the license at https://huggingface.co/{model_id} while logged "
+                "in, then add your token via the settings (gear icon, top right) and "
+                "try again."
+            ) from exc
+        raise RuntimeError(
+            f"{model_id} is a gated model and access was denied for the configured "
+            f"token. Make sure you've accepted the license at "
+            f"https://huggingface.co/{model_id} with the account that issued this token."
+        ) from exc
     return pipe.to(manager.device)
 
 
@@ -173,36 +188,6 @@ def _generate_stable_audio(pipe, prompt, duration, steps, guidance, candidates, 
     # audios: (batch, channels, samples) — mix to mono
     audio = result.audios[0].mean(axis=0) if result.audios[0].ndim > 1 else result.audios[0]
     return audio, sr
-
-
-# ── AudioGen ──────────────────────────────────────────────────────────────────
-
-def _loader_audiogen(model_id: str):
-    from transformers import AutoProcessor, MusicgenForConditionalGeneration
-    processor = AutoProcessor.from_pretrained(model_id, cache_dir=str(SFX_MODELS_DIR))
-    model = MusicgenForConditionalGeneration.from_pretrained(
-        model_id, cache_dir=str(SFX_MODELS_DIR)
-    )
-    return (processor, model.to(manager.device))
-
-
-def _generate_audiogen(pipe_tuple, prompt, duration, candidates, progress_ref):
-    import torch
-    processor, model = pipe_tuple
-    sr = model.config.audio_encoder.sampling_rate
-    max_new_tokens = int(duration * 50)  # AudioGen uses ~50 tokens/sec
-
-    if progress_ref is not None:
-        progress_ref[0] = 0.1
-    inputs = processor(text=[prompt], padding=True, return_tensors="pt").to(manager.device)
-    with torch.no_grad():
-        audio = model.generate(**inputs, max_new_tokens=max_new_tokens)
-    if progress_ref is not None:
-        progress_ref[0] = 1.0
-
-    # audio: (batch, channels, samples)
-    wav = audio[0, 0].cpu().numpy().astype(np.float32)
-    return wav, sr
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -227,9 +212,6 @@ def generate(
     if model_id in _STABLE_AUDIO:
         pipe = manager.load(model_id, lambda: _loader_stable_audio(model_id))
         audio, sr = _generate_stable_audio(pipe, prompt, duration, steps, guidance, candidates, progress_ref)
-    elif model_id in _AUDIOGEN:
-        pipe_tuple = manager.load(model_id, lambda: _loader_audiogen(model_id))
-        audio, sr = _generate_audiogen(pipe_tuple, prompt, duration, candidates, progress_ref)
     else:
         pipe = manager.load(model_id, lambda: _loader_audioldm2(model_id))
         audio, sr = _generate_audioldm2(pipe, prompt, duration, steps, guidance, candidates, progress_ref)

@@ -137,9 +137,11 @@ EXPRESSION_ENGINES = {
 
 def _load_tts():
     from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
-    p   = SpeechT5Processor.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR))
-    m   = SpeechT5ForTextToSpeech.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR)).to(manager.device)
-    voc = SpeechT5HifiGan.from_pretrained(_VOC_ID, cache_dir=str(VC_MODELS_DIR)).to(manager.device)
+    from faily.core.hf_token import get_hf_token
+    token = get_hf_token()
+    p   = SpeechT5Processor.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR), token=token)
+    m   = SpeechT5ForTextToSpeech.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR), token=token).to(manager.device)
+    voc = SpeechT5HifiGan.from_pretrained(_VOC_ID, cache_dir=str(VC_MODELS_DIR), token=token).to(manager.device)
     return p, m, voc
 
 
@@ -375,13 +377,16 @@ def _load_parler():
     ParlerTTSForConditionalGeneration.prepare_inputs_for_generation = _pig_compat
 
     # 16. device_map avoids meta-tensor crash on .to(device); float16 for VRAM efficiency
+    from faily.core.hf_token import get_hf_token
+    token = get_hf_token()
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         _PARLER_ID,
         cache_dir=str(VC_MODELS_DIR),
         device_map={"": manager.device},
         torch_dtype=torch.float16,
+        token=token,
     )
-    tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR))
+    tok = AutoTokenizer.from_pretrained(_PARLER_ID, cache_dir=str(VC_MODELS_DIR), token=token)
     return model, tok
 
 
@@ -464,10 +469,12 @@ def _load_openvoice_converter():
     ckpt_path   = ckpt_dir / "checkpoint.pth"
     if not ckpt_path.exists():
         from huggingface_hub import snapshot_download
+        from faily.core.hf_token import get_hf_token
         snapshot_download(
             "myshell-ai/openvoice-v2",
             local_dir=str(_OPENVOICE_CKPT),
             ignore_patterns=["*.md", "*.txt"],
+            token=get_hf_token(),
         )
     conv = ToneColorConverter(str(config_path), device=str(manager.device))
     conv.load_ckpt(str(ckpt_path))

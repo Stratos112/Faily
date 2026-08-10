@@ -21,9 +21,6 @@ dependencies = [
     "speechbrain>=1.0.0",
 ]
 
-[project.optional-dependencies]
-audiocraft = ["audiocraft"]
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["faily*"]

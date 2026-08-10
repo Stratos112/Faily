@@ -218,3 +218,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 /models/
+
+# Local Faily config/secrets
+faily_settings.json
+hf_token.txt
