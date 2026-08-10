@@ -99,6 +99,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: pytorch-lightning 1.7.x predates NumPy 2.0 (mid-2023) and uses the removed
+:: np.Inf alias in a couple of callbacks (ModelCheckpoint, EarlyStopping).
+:: pip resolves a modern NumPy for us (torch requires it), so patch the
+:: package in place rather than downgrading NumPy and risking breaking torch.
+echo Patching pytorch-lightning for NumPy 2.x compatibility...
+"%VENV%\Scripts\python" -c "import pathlib; d = pathlib.Path(r'%VENV%\Lib\site-packages\pytorch_lightning'); [f.write_text(f.read_text(encoding='utf-8').replace('np.Inf', 'np.inf'), encoding='utf-8') for f in d.rglob('*.py') if 'np.Inf' in f.read_text(encoding='utf-8')]"
+
 :: ── piper-train from GitHub (--no-deps skips piper-phonemize requirement) ─────
 echo Installing piper-train ^(no-deps^)...
 "%VENV%\Scripts\pip" install --no-deps ^
