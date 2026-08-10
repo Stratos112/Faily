@@ -314,21 +314,26 @@ def _prep_dataset(clips: list[dict], dataset_dir: Path) -> int:
 
 
 async def _stream(cmd: list[str], log_cb, proc_ref: list):
+    log_cb(f"$ {' '.join(cmd)}")
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
     proc_ref[0] = proc
+    log_cb(f"[pid {proc.pid}] started")
     tail: list[str] = []
+    n_lines = 0
     async for raw in proc.stdout:
         line = raw.decode(errors="replace").rstrip()
         log_cb(line)
+        n_lines += 1
         tail.append(line)
         if len(tail) > 40:
             tail.pop(0)
     await proc.wait()
     proc_ref[0] = None
+    log_cb(f"[pid {proc.pid}] exited {proc.returncode} ({n_lines} output lines)")
     if proc.returncode not in (0, -15):
         detail = "\n".join(tail).strip()
         step = cmd[2] if len(cmd) > 2 and cmd[1] == "-m" else cmd[0]
@@ -347,11 +352,16 @@ async def train(
     max_epochs: int = 1000,
 ) -> Path:
     """Train piper voice model. Streams log lines via log_cb. Returns .onnx path."""
+    log_cb(f"Character dir: {char_dir}")
+    log_cb(f"Clips received: {len(clips)}")
+
     reason = diagnose()
     if reason:
         raise RuntimeError(f"Piper not ready — {reason}")
+    log_cb("Piper venv OK")
 
     usable = [c for c in clips if c.get("transcript", "").strip()]
+    log_cb(f"Usable clips (with transcript): {len(usable)}/{len(clips)}")
     if len(usable) < 2:
         raise ValueError(
             f"Need ≥2 clips with transcripts (have {len(usable)}/{len(clips)}). "
@@ -364,6 +374,8 @@ async def train(
         raise RuntimeError("No base checkpoint in piper_checkpoints/ — run setup script first")
     if not base_cfgs:
         raise RuntimeError("No .onnx.json config in piper_checkpoints/ — run setup script first")
+    log_cb(f"Base checkpoint: {base_ckpts[-1].name}")
+    log_cb(f"Base config: {base_cfgs[-1].name}")
 
     _ensure_phonemize_shim()
     log_cb("piper_phonemize shim ready")
@@ -371,8 +383,11 @@ async def train(
     dataset_dir = char_dir / "piper_dataset"
     train_dir   = char_dir / "piper_train"
     train_dir.mkdir(parents=True, exist_ok=True)
+    log_cb(f"Dataset dir: {dataset_dir}")
+    log_cb(f"Train dir: {train_dir}")
 
     py = str(_python())
+    log_cb(f"Python: {py}")
 
     n = _prep_dataset(usable, dataset_dir)
     log_cb(f"Dataset ready: {n} clips")
@@ -383,11 +398,13 @@ async def train(
         "--language", "en-us",
         "--input-dir",  str(dataset_dir),
         "--output-dir", str(train_dir),
+        "--sample-rate", str(_SR),
         "--dataset-format", "ljspeech",
         "--single-speaker",
     ], log_cb, proc_ref)
+    log_cb("Preprocessing done")
 
-    log_cb(f"Training — {max_epochs} epochs, batch 16, GPU…")
+    log_cb(f"Training — {max_epochs} epochs, batch 16, GPU, resuming from {base_ckpts[-1].name}…")
     await _stream([
         py, "-m", "piper_train",
         "--dataset-dir", str(train_dir),
@@ -402,10 +419,13 @@ async def train(
         "--precision", "32",
         "--default_root_dir", str(train_dir),
     ], log_cb, proc_ref)
+    log_cb("Training done")
 
     ckpts = sorted(train_dir.rglob("*.ckpt"), key=lambda p: p.stat().st_mtime)
+    log_cb(f"Checkpoints found: {len(ckpts)}")
     if not ckpts:
         raise RuntimeError("Training finished but no checkpoint was written")
+    log_cb(f"Using checkpoint: {ckpts[-1]}")
 
     onnx_path = char_dir / "piper.onnx"
     log_cb("Exporting to ONNX…")
@@ -413,6 +433,7 @@ async def train(
         py, "-m", "piper_train.export_onnx",
         str(ckpts[-1]), str(onnx_path),
     ], log_cb, proc_ref)
+    log_cb(f"ONNX export done: {onnx_path}")
 
     shutil.copy2(str(base_cfgs[-1]), str(char_dir / "piper.onnx.json"))
     log_cb(f"✓  {onnx_path.name}")

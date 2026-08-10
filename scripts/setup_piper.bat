@@ -87,6 +87,11 @@ if errorlevel 1 (
 echo Installing piper-train dependencies...
 "%VENV%\Scripts\pip" install cython --quiet
 "%VENV%\Scripts\pip" install librosa --quiet
+"%VENV%\Scripts\pip" install six --quiet
+:: pytorch-lightning 1.7.x declares torchmetrics>=0.7.0 with no upper bound, so
+:: pip grabs the newest release, which dropped the private _compare_version
+:: helper 1.7.x imports at startup. Pin a version still compatible with 1.7.x.
+"%VENV%\Scripts\pip" install "torchmetrics==0.11.4" --quiet
 "%VENV%\Scripts\pip" install "pytorch-lightning~=1.7.0" --quiet
 if errorlevel 1 (
     echo ERROR: pytorch-lightning install failed.

@@ -60,6 +60,15 @@ if [ -z "$SKIP_INSTALL" ]; then
     echo "Installing piper-tts..."
     "$VENV/bin/pip" install piper-tts --quiet
 
+    # pytorch-lightning 1.7.x (pulled in by piper-train below) declares
+    # torchmetrics>=0.7.0 with no upper bound, so pip grabs the newest release,
+    # which dropped the private _compare_version helper 1.7.x imports at
+    # startup. Pin a version still compatible with 1.7.x before piper-train
+    # installs, so its resolver leaves this one alone. Also needed by
+    # torch.utils.tensorboard's import chain but not declared anywhere.
+    echo "Pinning torchmetrics/six for pytorch-lightning 1.7.x compatibility..."
+    "$VENV/bin/pip" install "torchmetrics==0.11.4" six --quiet
+
     echo "Installing piper-train from source (pulls torch, ~2 GB)..."
     "$VENV/bin/pip" install \
         "piper-train @ git+https://github.com/rhasspy/piper.git#subdirectory=src/python"
