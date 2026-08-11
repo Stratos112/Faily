@@ -344,12 +344,22 @@ async def _stream(cmd: list[str], log_cb, proc_ref: list):
         )
 
 
-def _probe(py: str, label: str, code: str, log_cb) -> None:
+async def _probe(py: str, label: str, code: str, log_cb) -> None:
     """Run a quick `python -c <code>` in the piper venv and log the outcome.
     Used for pre-flight checks so import-chain breaks show up immediately
     with a clear label, instead of surfacing later inside a much longer
-    preprocess/train subprocess log."""
-    r = subprocess.run([py, "-c", code], capture_output=True, timeout=30, text=True)
+    preprocess/train subprocess log.
+
+    The blocking subprocess.run() runs in a worker thread — Faily (like most
+    asyncio UI apps) runs everything on a single event loop, so a blocking
+    call here would freeze the whole server, including the websocket pings
+    that keep the browser connected, for its full duration (up to the 30s
+    timeout). log_cb runs back on the main thread after the await, since
+    NiceGUI elements aren't safe to touch from a worker thread.
+    """
+    r = await asyncio.to_thread(
+        subprocess.run, [py, "-c", code], capture_output=True, timeout=30, text=True
+    )
     if r.returncode == 0:
         out = r.stdout.strip()
         log_cb(f"[probe:{label}] OK" + (f" — {out}" if out else ""))
@@ -371,7 +381,7 @@ async def train(
     log_cb(f"Character dir: {char_dir}")
     log_cb(f"Clips received: {len(clips)}")
 
-    reason = diagnose()
+    reason = await asyncio.to_thread(diagnose)
     if reason:
         raise RuntimeError(f"Piper not ready — {reason}")
     log_cb("Piper venv OK")
@@ -393,7 +403,7 @@ async def train(
     log_cb(f"Base checkpoint: {base_ckpts[-1].name}")
     log_cb(f"Base config: {base_cfgs[-1].name}")
 
-    _ensure_phonemize_shim()
+    await asyncio.to_thread(_ensure_phonemize_shim)
     log_cb("piper_phonemize shim ready")
 
     dataset_dir = char_dir / "piper_dataset"
@@ -405,16 +415,16 @@ async def train(
     py = str(_python())
     log_cb(f"Python: {py}")
     log_cb("Running pre-flight import checks…")
-    _probe(py, "torch", "import torch; print(torch.__version__)", log_cb)
-    _probe(
+    await _probe(py, "torch", "import torch; print(torch.__version__)", log_cb)
+    await _probe(
         py, "cuda",
         "import torch; print('available' if torch.cuda.is_available() else 'NOT AVAILABLE — training will fail or fall back to CPU')",
         log_cb,
     )
-    _probe(py, "pytorch_lightning", "import pytorch_lightning; print(pytorch_lightning.__version__)", log_cb)
-    _probe(py, "piper_train.vits.lightning", "import piper_train.vits.lightning", log_cb)
+    await _probe(py, "pytorch_lightning", "import pytorch_lightning; print(pytorch_lightning.__version__)", log_cb)
+    await _probe(py, "piper_train.vits.lightning", "import piper_train.vits.lightning", log_cb)
 
-    n = _prep_dataset(usable, dataset_dir)
+    n = await asyncio.to_thread(_prep_dataset, usable, dataset_dir)
     log_cb(f"Dataset ready: {n} clips")
 
     # preprocess.py computes batch_size = num_utterances // (max_workers * 2)

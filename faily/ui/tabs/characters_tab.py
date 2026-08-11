@@ -427,7 +427,7 @@ def build_characters_tab(on_speak, on_change):
                         return
 
                     from faily.modules.piper import train, diagnose
-                    reason = diagnose()
+                    reason = await ni_run.io_bound(diagnose)
                     if reason:
                         ui.notify(f"Piper not ready — {reason}", type="warning", timeout=8000)
                         return
