@@ -464,24 +464,35 @@ def build_characters_tab(on_speak, on_change):
                                 close_btn.set_visibility(False)
                     dlg.open()
 
+                    def _ui_safe(fn):
+                        # If the browser tab/connection dies mid-training, NiceGUI
+                        # raises RuntimeError on any attempt to touch its elements.
+                        # Training itself (a separate OS process) keeps running
+                        # regardless — don't let a dead UI client abort the actual
+                        # training/export logic or the file writes that follow it.
+                        try:
+                            fn()
+                        except RuntimeError:
+                            pass
+
                     def _log(line: str):
                         _log_lines.append(line)
-                        log.push(line)
+                        _ui_safe(lambda: log.push(line))
 
                     try:
                         model_path = await train(chain, CHARACTERS_DIR / n, _log, _proc_ref)
                         set_piper_model(n, str(model_path))
-                        status_lbl.set_text("✓  done")
-                        status_lbl.classes(remove="text-[#555]", add="text-green-400")
-                        ui.notify(f"Piper model trained for {n}", type="positive", timeout=4000)
-                        on_change()
-                        _rebuild_detail()
+                        _ui_safe(lambda: status_lbl.set_text("✓  done"))
+                        _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-green-400"))
+                        _ui_safe(lambda: ui.notify(f"Piper model trained for {n}", type="positive", timeout=4000))
+                        _ui_safe(on_change)
+                        _ui_safe(_rebuild_detail)
                     except Exception as exc:
-                        status_lbl.set_text(f"error")
-                        status_lbl.classes(remove="text-[#555]", add="text-red-400")
-                        show_error(exc)
+                        _ui_safe(lambda: status_lbl.set_text("error"))
+                        _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-red-400"))
+                        _ui_safe(lambda: show_error(exc))
                     finally:
-                        close_btn.set_visibility(True)
+                        _ui_safe(lambda: close_btn.set_visibility(True))
 
                 train_label = "RETRAIN VOICE" if has_model else "TRAIN VOICE"
                 ui.button(train_label, icon="model_training", on_click=_do_train).props(
