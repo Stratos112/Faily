@@ -236,20 +236,28 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
 
 def _build_character(char_state: list[str], _out: dict, _current_char: list[str]):
     """Left controls for CHARACTER sub-tab. Returns refresh."""
-    _candidates: list[int] = [1]
+    _candidates:   list[int]   = [1]
+    _length_scale: list[float] = [1.0]
+    _noise_scale:  list[float] = [0.667]
+    _noise_w:      list[float] = [0.8]
 
     def _update_info(name: str):
         char_state[0] = name
         _current_char[0] = name
         if name == _NO_CHAR:
-            char_info.set_text(""); return
+            char_info.set_text("")
+            piper_params_row.set_visibility(False)
+            return
         char = get_character(name)
         if char and char.get("piper_model"):
             char_info.set_text("piper model ready")
+            piper_params_row.set_visibility(True)
         elif char and char.get("rvc_model"):
             char_info.set_text("rvc model (legacy)")
+            piper_params_row.set_visibility(False)
         else:
             char_info.set_text("⚠  no model — train from CHARACTERS tab")
+            piper_params_row.set_visibility(False)
 
     async def _generate():
         if char_state[0] == _NO_CHAR:
@@ -273,7 +281,10 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                     slug = text[:28].strip().replace(" ", "_").replace("/", "-")
                     suffix = f"_{i + 1:02d}" if n > 1 else ""
                     out_path = _VC_DIR / f"piper_{char_state[0]}_{slug}{suffix}.wav"
-                    path = await ni_run.io_bound(infer, text, Path(char["piper_model"]), out_path)
+                    path = await ni_run.io_bound(
+                        infer, text, Path(char["piper_model"]), out_path,
+                        _length_scale[0], _noise_scale[0], _noise_w[0],
+                    )
                 else:
                     from faily.modules.rvc import speak_generate
                     path = await ni_run.io_bound(
@@ -304,6 +315,32 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
             .props("outlined dark dense").classes("w-full")
         )
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
+
+        with ui.column().classes("w-full gap-3") as piper_params_row:
+            _section_row("SPEED", "Phoneme length. Lower is faster/higher-pitched, higher is slower. Default 1.00.")
+            with ui.row().classes("w-full items-center gap-3"):
+                length_lbl = ui.label("1.00").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_length(e): _length_scale[0] = float(e.value); length_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_length).classes("flex-grow").props("color=amber")
+
+            _section_row("EXPRESSIVENESS", "Generator noise. Controls prosodic variability — higher is more expressive but less stable. Default 0.667.")
+            with ui.row().classes("w-full items-center gap-3"):
+                noise_lbl = ui.label("0.67").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_noise(e): _noise_scale[0] = float(e.value); noise_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.0, max=1.5, step=0.01, value=0.667, on_change=_on_noise).classes("flex-grow").props("color=amber")
+
+            _section_row("PACING VARIABILITY", "Phoneme duration noise. Higher adds more natural variation between phonemes. Default 0.80.")
+            with ui.row().classes("w-full items-center gap-3"):
+                noise_w_lbl = ui.label("0.80").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_noise_w(e): _noise_w[0] = float(e.value); noise_w_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.0, max=1.5, step=0.01, value=0.8, on_change=_on_noise_w).classes("flex-grow").props("color=amber")
+        piper_params_row.set_visibility(False)
 
         _section_row("LINE", "What the character says.")
         text_input = (

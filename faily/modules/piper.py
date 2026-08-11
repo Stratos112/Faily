@@ -497,8 +497,22 @@ async def train(
     return onnx_path
 
 
-def infer(text: str, model_path: Path, out_path: Path) -> Path:
-    """Blocking piper inference. Returns out_path."""
+def infer(
+    text: str,
+    model_path: Path,
+    out_path: Path,
+    length_scale: float = 1.0,
+    noise_scale: float = 0.667,
+    noise_w_scale: float = 0.8,
+) -> Path:
+    """Blocking piper inference. Returns out_path.
+
+    length_scale: phoneme length — lower is faster/higher-pitched speech, higher is slower.
+    noise_scale: generator noise — controls prosodic variability/expressiveness.
+    noise_w_scale: phoneme duration noise — controls pacing variability between phonemes.
+    Defaults match piper's own (and the values export_onnx.py bakes into the dummy
+    input used to export the model in the first place).
+    """
     cfg = model_path.with_suffix(".onnx.json")
     if not cfg.exists():
         raise FileNotFoundError(f"Piper config missing: {cfg}")
@@ -513,6 +527,9 @@ def infer(text: str, model_path: Path, out_path: Path) -> Path:
         [
             str(piper), "--model", str(model_path), "--config", str(cfg),
             "--output_file", str(out_path), "--cuda",
+            "--length-scale", str(length_scale),
+            "--noise-scale", str(noise_scale),
+            "--noise-w-scale", str(noise_w_scale),
         ],
         input=text.encode(),
         capture_output=True,
