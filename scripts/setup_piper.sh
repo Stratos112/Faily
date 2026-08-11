@@ -124,6 +124,20 @@ p = Path('$MONO_DIR/__init__.py')
 t = p.read_text()
 p.write_text(t.replace('from .monotonic_align.core import', 'from .core import'))
 "
+
+    # export_onnx.py needs the base `onnx` package to write .onnx files at
+    # all — piper-train's requirements.txt never declared it (only
+    # onnxruntime, which is for inference, not export). Always been an
+    # implicit gap.
+    echo "Installing onnx..."
+    "$VENV/bin/pip" install onnx --quiet
+
+    # PyTorch 2.9 flipped torch.onnx.export's default to the new dynamo-based
+    # exporter, which requires the optional `onnxscript` package and is a
+    # completely different code path piper's model was never tested against.
+    # Patch export_onnx.py to explicitly request the old exporter instead.
+    echo "Patching piper-train for torch 2.9+ ONNX exporter default..."
+    "$VENV/bin/python" "$PROJECT_DIR/scripts/patch_piper_train_onnx.py"
 fi
 
 # ── Download base checkpoint ─────────────────────────────────────────────────

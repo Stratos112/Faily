@@ -162,6 +162,24 @@ popd
 :: piper-train itself, not something the build step can fix. Patch it.
 "%VENV%\Scripts\python" -c "from pathlib import Path; p = Path(r'%MONO_DIR%\__init__.py'); t = p.read_text(); p.write_text(t.replace('from .monotonic_align.core import', 'from .core import'))"
 
+:: export_onnx.py needs the base `onnx` package to write .onnx files at all —
+:: piper-train's requirements.txt never declared it (only onnxruntime, which
+:: is for inference, not export). Always been an implicit gap.
+echo Installing onnx...
+"%VENV%\Scripts\pip" install onnx --quiet
+
+:: PyTorch 2.9 flipped torch.onnx.export's default to the new dynamo-based
+:: exporter, which requires the optional `onnxscript` package and is a
+:: completely different code path piper's model was never tested against.
+:: Patch export_onnx.py to explicitly request the old exporter instead.
+echo Patching piper-train for torch 2.9+ ONNX exporter default...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_onnx.py"
+if errorlevel 1 (
+    echo ERROR: piper-train ONNX exporter patch failed.
+    pause
+    exit /b 1
+)
+
 :: After this step pip's resolver will report several dependency conflicts.
 :: These are ALL expected and handled — do not treat them as errors:
 ::
