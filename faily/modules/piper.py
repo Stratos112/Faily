@@ -2,6 +2,7 @@
 import asyncio
 import csv
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -435,7 +436,22 @@ async def train(
     ], log_cb, proc_ref)
     log_cb("Preprocessing done")
 
-    log_cb(f"Training — {max_epochs} epochs, batch 16, GPU, resuming from {base_ckpts[-1].name}…")
+    # The base checkpoint already has a current_epoch baked in from its own
+    # original training run (Lightning's default naming embeds it: e.g.
+    # "epoch=2164-...ckpt"). --max_epochs is an ABSOLUTE target, not a count
+    # of additional epochs — passing our max_epochs directly would set a
+    # target already in the past and Lightning refuses to resume
+    # ("You restored a checkpoint with current_epoch=2164, but you have set
+    # Trainer(max_epochs=1000)"). Treat our max_epochs as "how many more
+    # epochs to fine-tune for" and add it on top of the checkpoint's epoch.
+    m = re.search(r"epoch=(\d+)", base_ckpts[-1].name)
+    base_epoch = int(m.group(1)) if m else 0
+    target_epochs = base_epoch + max_epochs
+    log_cb(
+        f"Training — {max_epochs} additional epochs (base checkpoint at epoch "
+        f"{base_epoch}, target {target_epochs}), batch 16, GPU, resuming from "
+        f"{base_ckpts[-1].name}…"
+    )
     await _stream([
         py, "-m", "piper_train",
         "--dataset-dir", str(train_dir),
@@ -444,7 +460,7 @@ async def train(
         "--batch-size", "16",
         "--validation-split", "0.0",
         "--num-test-examples", "0",
-        "--max_epochs", str(max_epochs),
+        "--max_epochs", str(target_epochs),
         "--resume_from_checkpoint", str(base_ckpts[-1]),
         "--checkpoint-epochs", "100",
         "--precision", "32",
