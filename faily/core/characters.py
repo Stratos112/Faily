@@ -176,6 +176,36 @@ def delete_character(name: str):
         shutil.rmtree(str(char_dir))
 
 
+def clip_quality_issues(path: Path) -> list[str]:
+    """Lightweight heuristic checks on a reference clip — short/quiet/clipping.
+    Returns a list of human-readable issue strings, empty if the clip looks fine.
+    Not a substitute for actually listening, just enough to flag obvious problems
+    before they quietly drag down cloning/training quality."""
+    import numpy as np
+    import soundfile as sf
+
+    try:
+        data, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    except Exception:
+        return ["couldn't read audio"]
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    if len(data) == 0 or sr == 0:
+        return ["empty audio"]
+
+    issues = []
+    duration = len(data) / sr
+    if duration < 1.0:
+        issues.append(f"very short ({duration:.1f}s)")
+    peak = float(np.max(np.abs(data)))
+    rms = float(np.sqrt(np.mean(data ** 2)))
+    if peak >= 0.99:
+        issues.append("clipping")
+    if rms < 0.01:
+        issues.append("very quiet")
+    return issues
+
+
 def add_ref_clip(name: str, clip_path: Path, transcript: str = "") -> Path:
     """Copy a generated clip into the character's ref pool and register it in config."""
     char_dir = CHARACTERS_DIR / name

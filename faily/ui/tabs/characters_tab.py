@@ -5,7 +5,7 @@ from faily.core.characters import (
     update_character_metadata,
     list_character_clips, list_character_favorites, rename_character_file,
     get_ref_chain, remove_ref_clip, set_rvc_model, set_piper_model,
-    rename_ref_audio, update_ref_clip,
+    rename_ref_audio, update_ref_clip, clip_quality_issues,
     CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error, send_to_edit
@@ -324,6 +324,7 @@ def build_characters_tab(on_speak, on_change):
                     rel = audio.relative_to(Path("outputs"))
                     url = f"/outputs/{rel.as_posix()}"
                     is_primary = ref["kind"] == "primary"
+                    issues = clip_quality_issues(audio)
 
                     with ui.row().classes(
                         "w-full items-center gap-1 px-2 py-1 rounded "
@@ -336,6 +337,13 @@ def build_characters_tab(on_speak, on_change):
                         ui.icon("star" if is_primary else "mic", size="12px").classes(
                             ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
                         )
+                        if issues:
+                            ui.icon("warning", size="12px").classes(
+                                "text-amber-500 shrink-0"
+                            ).tooltip(
+                                f"{', '.join(issues)} — consider re-recording or removing "
+                                "this clip; low-quality refs drag down cloning and training."
+                            )
                         with ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer").on(
                             "click", lambda u=url, n=audio.stem: _play_ref(u, n)
                         ):
