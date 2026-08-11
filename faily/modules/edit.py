@@ -15,6 +15,43 @@ def ensure_stereo(path: Path):
         sf.write(str(path), np.stack([data, data], axis=1), sr)
 
 
+def _highpass(data: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
+    """4th-order Butterworth high-pass — cuts rumble/hum below cutoff_hz.
+    Pure filtering, no noise estimation, so it's safe/predictable on any input."""
+    import scipy.signal as sps
+    sos = sps.butter(4, cutoff_hz, btype="highpass", fs=sr, output="sos")
+    if data.ndim == 1:
+        return sps.sosfiltfilt(sos, data).astype(np.float32)
+    return np.stack(
+        [sps.sosfiltfilt(sos, data[:, c]) for c in range(data.shape[1])], axis=1
+    ).astype(np.float32)
+
+
+def _denoise_channel(x: np.ndarray, sr: int, strength: float) -> np.ndarray:
+    """Spectral-gating noise reduction. Blindly estimating a noise profile from
+    the whole clip performs poorly (verified: it attenuates speech and noise by
+    roughly the same amount, barely improving effective SNR). Finding the
+    quietest short window in the clip and using *that* as the noise reference
+    instead gives noise-floor reduction several times larger than the speech
+    attenuation — that's the difference this function exists to apply."""
+    import noisereduce as nr
+
+    win = max(int(0.2 * sr), 1)
+    noise_clip = None
+    if len(x) > win * 3:
+        hop = max(win // 2, 1)
+        n_wins = max((len(x) - win) // hop, 1)
+        energies = [
+            float(np.sqrt(np.mean(x[i * hop: i * hop + win] ** 2)))
+            for i in range(n_wins)
+        ]
+        q = int(np.argmin(energies))
+        noise_clip = x[q * hop: q * hop + win]
+    return nr.reduce_noise(
+        y=x, sr=sr, y_noise=noise_clip, stationary=True, prop_decrease=strength,
+    ).astype(np.float32)
+
+
 def apply_edits(
     src: Path,
     out: Path,
@@ -26,6 +63,10 @@ def apply_edits(
     trim_silence: bool = False,
     stereo: bool = False,
     mono: bool = False,
+    highpass: bool = False,
+    highpass_hz: float = 80.0,
+    denoise: bool = False,
+    denoise_strength: float = 0.8,
 ) -> Path:
     data, sr = sf.read(str(src), dtype="float32", always_2d=False)
     n = data.shape[0]
@@ -34,6 +75,20 @@ def apply_edits(
     s = min(int(trim_start * sr), n)
     e = max(n - int(trim_end * sr), s + 1)
     data = data[s:e]
+
+    # high-pass + denoise run early, before amplitude-based silence trimming,
+    # so a hummy/noisy noise floor doesn't throw off that threshold.
+    if highpass and len(data) > 0:
+        data = _highpass(data, sr, highpass_hz)
+
+    if denoise and len(data) > 0:
+        if data.ndim == 1:
+            data = _denoise_channel(data, sr, denoise_strength)
+        else:
+            data = np.stack(
+                [_denoise_channel(data[:, c], sr, denoise_strength) for c in range(data.shape[1])],
+                axis=1,
+            )
 
     # trim silence via amplitude threshold
     if trim_silence and len(data) > 0:

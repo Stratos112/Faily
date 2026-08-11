@@ -93,6 +93,10 @@ def build_edit_tab():
     _trim_silence: list[bool]  = [False]
     _mono:         list[bool]  = [False]
     _stereo:       list[bool]  = [False]
+    _highpass:      list[bool]  = [False]
+    _highpass_hz:   list[float] = [80.0]
+    _denoise:       list[bool]  = [False]
+    _denoise_amt:   list[float] = [0.8]
 
     # ── helpers ───────────────────────────────────────────────────────────────
     def _char_opts() -> dict[str, str]:
@@ -197,6 +201,10 @@ def build_edit_tab():
                 trim_silence=_trim_silence[0],
                 mono=_mono[0],
                 stereo=_stereo[0],
+                highpass=_highpass[0],
+                highpass_hz=_highpass_hz[0],
+                denoise=_denoise[0],
+                denoise_strength=_denoise_amt[0],
             )
             _preview[0] = out
             preview_player.set_source(f"/outputs/edit/{out.name}")
@@ -221,6 +229,10 @@ def build_edit_tab():
         _trim_end[0]   = 0.0;  trim_e_slider.set_value(0.0);  te_lbl.set_text("0.0s")
         _trim_silence[0] = False;  silence_chk.set_value(False)
         _mono[0]  = False;  _stereo[0] = False;  mono_check.set_value(False)
+        _highpass[0] = False;  highpass_chk.set_value(False)
+        _highpass_hz[0] = 80.0;  hp_hz_slider.set_value(80.0);  hp_hz_lbl.set_text("80 Hz")
+        _denoise[0] = False;  denoise_chk.set_value(False)
+        _denoise_amt[0] = 0.8;  denoise_slider.set_value(0.8);  denoise_lbl.set_text("80%")
         ui.run_javascript("faily_trim_update(0, 0)")
 
     def _save_as_ref():
@@ -427,6 +439,43 @@ def build_edit_tab():
                 pit_slider = ui.slider(
                     min=-12.0, max=12.0, step=0.1, value=0.0, on_change=_on_pit,
                 ).classes("flex-grow").props("color=amber")
+
+            ui.separator().classes("my-1 opacity-20")
+
+            # ── cleanup ──────────────────────────────────────────────────────
+            section_label("CLEANUP  (nothing here runs automatically elsewhere)")
+            highpass_chk = ui.checkbox(
+                "HIGH-PASS FILTER  (cuts rumble/hum below the cutoff)",
+                on_change=lambda e: _highpass.__setitem__(0, bool(e.value)),
+            ).classes("font-mono text-[10px] text-[#555]")
+            with ui.row().classes("w-full items-center gap-3 pl-6"):
+                hp_hz_lbl = ui.label("80 Hz").classes(
+                    "font-mono text-[9px] text-amber-400 w-14 shrink-0 text-right"
+                )
+                def _on_hp_hz(e):
+                    _highpass_hz[0] = float(e.value); hp_hz_lbl.set_text(f"{int(e.value)} Hz")
+                hp_hz_slider = ui.slider(
+                    min=20, max=300, step=5, value=80, on_change=_on_hp_hz,
+                ).classes("flex-grow").props("color=amber")
+
+            denoise_chk = ui.checkbox(
+                "DENOISE  (spectral gating — auto-finds the quietest stretch as the noise reference)",
+                on_change=lambda e: _denoise.__setitem__(0, bool(e.value)),
+            ).classes("font-mono text-[10px] text-[#555] mt-1")
+            with ui.row().classes("w-full items-center gap-3 pl-6"):
+                denoise_lbl = ui.label("80%").classes(
+                    "font-mono text-[9px] text-amber-400 w-14 shrink-0 text-right"
+                )
+                def _on_denoise(e):
+                    _denoise_amt[0] = float(e.value); denoise_lbl.set_text(f"{int(e.value * 100)}%")
+                denoise_slider = ui.slider(
+                    min=0.0, max=1.0, step=0.05, value=0.8, on_change=_on_denoise,
+                ).classes("flex-grow").props("color=amber")
+
+            ui.label(
+                "⚠  Some noise is part of a character's voice — this is opt-in per "
+                "clip, not automatic anywhere. Preview before saving."
+            ).classes("text-[#444] font-mono text-[9px] leading-snug pl-1")
 
             ui.separator().classes("my-1 opacity-20")
 
