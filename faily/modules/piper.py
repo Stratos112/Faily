@@ -376,8 +376,14 @@ async def train(
     log_cb,
     proc_ref: list,
     max_epochs: int = 1000,
-) -> Path:
-    """Train piper voice model. Streams log lines via log_cb. Returns .onnx path."""
+) -> list[tuple[int, Path]]:
+    """Train piper voice model. Streams log lines via log_cb.
+
+    Every saved checkpoint gets exported to its own ONNX file for preview —
+    returns a list of (epoch, onnx_path) pairs, newest checkpoint last. Call
+    finalize_piper_model() with the caller's pick to promote it and discard
+    the rest.
+    """
     log_cb(f"Character dir: {char_dir}")
     log_cb(f"Clips received: {len(clips)}")
 
@@ -482,19 +488,50 @@ async def train(
     log_cb(f"Checkpoints found: {len(ckpts)}")
     if not ckpts:
         raise RuntimeError("Training finished but no checkpoint was written")
-    log_cb(f"Using checkpoint: {ckpts[-1]}")
 
-    onnx_path = char_dir / "piper.onnx"
-    log_cb("Exporting to ONNX…")
-    await _stream([
-        py, "-m", "piper_train.export_onnx",
-        str(ckpts[-1]), str(onnx_path),
-    ], log_cb, proc_ref)
-    log_cb(f"ONNX export done: {onnx_path}")
+    # Each saved checkpoint is a complete, independent snapshot of the model
+    # at that epoch — not a merge of earlier ones. With a tiny dataset and no
+    # validation split, the LAST checkpoint isn't necessarily the best-sounding
+    # one (it can overfit past a point that sounded more natural). Export every
+    # saved checkpoint to its own ONNX file so the caller can preview and pick.
+    # Capped as a safety net — --checkpoint-epochs 100 means a normal run only
+    # produces a handful; this just guards against pathologically long runs.
+    ckpts = ckpts[-20:]
 
-    shutil.copy2(str(base_cfgs[-1]), str(char_dir / "piper.onnx.json"))
-    log_cb(f"✓  {onnx_path.name}")
-    return onnx_path
+    candidates_dir = char_dir / "piper_candidates"
+    if candidates_dir.exists():
+        shutil.rmtree(candidates_dir)
+    candidates_dir.mkdir(parents=True)
+
+    candidates: list[tuple[int, Path]] = []
+    for ckpt in ckpts:
+        m = re.search(r"epoch=(\d+)", ckpt.name)
+        epoch = int(m.group(1)) if m else 0
+        onnx_path = candidates_dir / f"epoch_{epoch:05d}.onnx"
+        log_cb(f"Exporting checkpoint (epoch {epoch}) to ONNX…")
+        await _stream([
+            py, "-m", "piper_train.export_onnx",
+            str(ckpt), str(onnx_path),
+        ], log_cb, proc_ref)
+        shutil.copy2(str(base_cfgs[-1]), str(onnx_path.with_suffix(".onnx.json")))
+        candidates.append((epoch, onnx_path))
+
+    log_cb(f"✓  Exported {len(candidates)} checkpoint candidate(s) for preview")
+    return candidates
+
+
+def finalize_piper_model(char_dir: Path, chosen_onnx: Path) -> Path:
+    """Promote a chosen checkpoint candidate (from train()'s return value) to
+    the character's permanent Piper model, and discard the other exported
+    candidates. Blocking file I/O — small files, safe to call directly."""
+    final_onnx = char_dir / "piper.onnx"
+    final_cfg = char_dir / "piper.onnx.json"
+    shutil.copy2(str(chosen_onnx), str(final_onnx))
+    shutil.copy2(str(chosen_onnx.with_suffix(".onnx.json")), str(final_cfg))
+    candidates_dir = chosen_onnx.parent
+    if candidates_dir.name == "piper_candidates" and candidates_dir.is_dir():
+        shutil.rmtree(candidates_dir, ignore_errors=True)
+    return final_onnx
 
 
 def infer(

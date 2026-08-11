@@ -437,7 +437,7 @@ def build_characters_tab(on_speak, on_change):
                             type="warning", timeout=6000,
                         )
 
-                    from faily.modules.piper import train, diagnose
+                    from faily.modules.piper import train, diagnose, finalize_piper_model, infer
                     reason = await ni_run.io_bound(diagnose)
                     if reason:
                         ui.notify(f"Piper not ready — {reason}", type="warning", timeout=8000)
@@ -445,6 +445,8 @@ def build_characters_tab(on_speak, on_change):
 
                     _proc_ref: list = [None]
                     _log_lines: list[str] = []
+                    _candidates: list[tuple[int, Path]] = []
+                    char_dir = CHARACTERS_DIR / n
 
                     with ui.dialog().classes("w-full max-w-3xl") as dlg, ui.card().classes(
                         "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
@@ -473,6 +475,28 @@ def build_characters_tab(on_speak, on_change):
                                     .props("flat dense color=grey")
                                 )
                                 close_btn.set_visibility(False)
+
+                        # ── checkpoint picker — populated once training finishes ────
+                        with ui.column().classes("w-full gap-2") as picker_section:
+                            ui.separator().classes("opacity-20")
+                            ui.label("PICK A CHECKPOINT").classes(
+                                "text-amber-400 font-mono text-[10px] tracking-widest"
+                            )
+                            ui.label(
+                                "Each saved checkpoint is a full, independent snapshot — the "
+                                "last one isn't always the best-sounding. Preview a few and "
+                                "pick your favorite."
+                            ).classes("text-[#444] font-mono text-[10px] leading-snug")
+                            preview_text_input = (
+                                ui.input(value="Hello, this is a test of the trained voice.")
+                                .props("outlined dark dense")
+                                .classes("w-full font-mono text-[11px]")
+                            )
+                            gen_previews_btn = ui.button(
+                                "GENERATE PREVIEWS", icon="graphic_eq",
+                            ).props("color=amber unelevated dense").classes("font-mono text-[10px]")
+                            candidates_col = ui.column().classes("w-full gap-1")
+                        picker_section.set_visibility(False)
                     dlg.open()
 
                     def _ui_safe(fn):
@@ -490,14 +514,51 @@ def build_characters_tab(on_speak, on_change):
                         _log_lines.append(line)
                         _ui_safe(lambda: log.push(line))
 
+                    async def _choose(chosen_onnx: Path):
+                        try:
+                            final_path = await ni_run.io_bound(finalize_piper_model, char_dir, chosen_onnx)
+                            set_piper_model(n, str(final_path))
+                            ui.notify(f"Piper model set for {n}", type="positive", timeout=4000)
+                            on_change()
+                            _rebuild_detail()
+                            dlg.close()
+                        except Exception as exc:
+                            show_error(exc)
+
+                    async def _generate_previews():
+                        gen_previews_btn.disable()
+                        candidates_col.clear()
+                        text = preview_text_input.value.strip() or "Hello, this is a test of the trained voice."
+                        for epoch, onnx_path in _candidates:
+                            preview_path = onnx_path.with_name(f"preview_epoch_{epoch}.wav")
+                            try:
+                                await ni_run.io_bound(infer, text, onnx_path, preview_path)
+                            except Exception as exc:
+                                show_error(exc)
+                                continue
+                            rel = preview_path.relative_to(Path("outputs"))
+                            with candidates_col:
+                                with ui.row().classes(
+                                    "w-full items-center gap-2 px-3 py-1 rounded "
+                                    "border border-[#1e1e1e] hover:border-[#333]"
+                                ):
+                                    ui.label(f"epoch {epoch}").classes(
+                                        "text-[#888] font-mono text-[10px] w-20 shrink-0"
+                                    )
+                                    ui.audio(f"/outputs/{rel.as_posix()}").classes("flex-grow").props("controls")
+                                    ui.button(
+                                        "USE THIS", icon="check",
+                                        on_click=lambda p=onnx_path: _choose(p),
+                                    ).props("flat dense color=amber").classes("font-mono text-[10px] shrink-0")
+                        gen_previews_btn.enable()
+
+                    gen_previews_btn.on_click(_generate_previews)
+
                     try:
-                        model_path = await train(chain, CHARACTERS_DIR / n, _log, _proc_ref)
-                        set_piper_model(n, str(model_path))
-                        _ui_safe(lambda: status_lbl.set_text("✓  done"))
+                        _candidates.extend(await train(chain, char_dir, _log, _proc_ref))
+                        _ui_safe(lambda: status_lbl.set_text(f"✓  {len(_candidates)} checkpoint(s) ready to preview"))
                         _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-green-400"))
-                        _ui_safe(lambda: ui.notify(f"Piper model trained for {n}", type="positive", timeout=4000))
-                        _ui_safe(on_change)
-                        _ui_safe(_rebuild_detail)
+                        _ui_safe(lambda: picker_section.set_visibility(True))
                     except Exception as exc:
                         _ui_safe(lambda: status_lbl.set_text("error"))
                         _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-red-400"))
