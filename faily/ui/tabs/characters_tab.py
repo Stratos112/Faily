@@ -476,6 +476,17 @@ def build_characters_tab(on_speak, on_change):
                                 )
                                 close_btn.set_visibility(False)
 
+                        ui.separator().classes("opacity-20")
+                        ui.label(
+                            "PREVIEW LINE — used to audition each saved checkpoint once "
+                            "training finishes. Edit it any time before then."
+                        ).classes("text-[#444] font-mono text-[10px] leading-snug")
+                        preview_text_input = (
+                            ui.input(value="Hello, this is a test of the trained voice.")
+                            .props("outlined dark dense")
+                            .classes("w-full font-mono text-[11px]")
+                        )
+
                         # ── checkpoint picker — populated once training finishes ────
                         with ui.column().classes("w-full gap-2") as picker_section:
                             ui.separator().classes("opacity-20")
@@ -484,17 +495,9 @@ def build_characters_tab(on_speak, on_change):
                             )
                             ui.label(
                                 "Each saved checkpoint is a full, independent snapshot — the "
-                                "last one isn't always the best-sounding. Preview a few and "
-                                "pick your favorite."
+                                "last one isn't always the best-sounding. Listen and pick "
+                                "your favorite; the rest are discarded."
                             ).classes("text-[#444] font-mono text-[10px] leading-snug")
-                            preview_text_input = (
-                                ui.input(value="Hello, this is a test of the trained voice.")
-                                .props("outlined dark dense")
-                                .classes("w-full font-mono text-[11px]")
-                            )
-                            gen_previews_btn = ui.button(
-                                "GENERATE PREVIEWS", icon="graphic_eq",
-                            ).props("color=amber unelevated dense").classes("font-mono text-[10px]")
                             candidates_col = ui.column().classes("w-full gap-1")
                         picker_section.set_visibility(False)
                     dlg.open()
@@ -526,10 +529,10 @@ def build_characters_tab(on_speak, on_change):
                             show_error(exc)
 
                     async def _generate_previews():
-                        gen_previews_btn.disable()
                         candidates_col.clear()
                         text = preview_text_input.value.strip() or "Hello, this is a test of the trained voice."
                         for epoch, onnx_path in _candidates:
+                            _ui_safe(lambda e=epoch: status_lbl.set_text(f"Generating preview — epoch {e}…"))
                             preview_path = onnx_path.with_name(f"preview_epoch_{epoch}.wav")
                             try:
                                 await ni_run.io_bound(infer, text, onnx_path, preview_path)
@@ -550,15 +553,13 @@ def build_characters_tab(on_speak, on_change):
                                         "USE THIS", icon="check",
                                         on_click=lambda p=onnx_path: _choose(p),
                                     ).props("flat dense color=amber").classes("font-mono text-[10px] shrink-0")
-                        gen_previews_btn.enable()
-
-                    gen_previews_btn.on_click(_generate_previews)
 
                     try:
                         _candidates.extend(await train(chain, char_dir, _log, _proc_ref))
-                        _ui_safe(lambda: status_lbl.set_text(f"✓  {len(_candidates)} checkpoint(s) ready to preview"))
-                        _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-green-400"))
                         _ui_safe(lambda: picker_section.set_visibility(True))
+                        await _generate_previews()
+                        _ui_safe(lambda: status_lbl.set_text(f"✓  {len(_candidates)} checkpoint(s) ready — pick one below"))
+                        _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-green-400"))
                     except Exception as exc:
                         _ui_safe(lambda: status_lbl.set_text("error"))
                         _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-red-400"))
