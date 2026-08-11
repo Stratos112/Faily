@@ -441,6 +441,10 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 ui.input(placeholder="leave blank to use stored transcripts…")
                 .classes("w-full").props("outlined dark")
             )
+            ui.label(
+                "⚠  F5-TTS works best with 5–15 s of reference audio — the character's "
+                "ref chain is automatically capped to this."
+            ).classes("text-[#444] font-mono text-[10px] leading-snug")
         ref_text_row.set_visibility(False)
 
         _section_row("TEXT", "What the character says.")

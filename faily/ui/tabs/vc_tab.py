@@ -208,6 +208,10 @@ def build_vc_tab():
                     .classes("w-full")
                     .props("outlined dark")
                 )
+                ui.label(
+                    "⚠  F5-TTS works best with 5–15 s of reference audio — longer clips "
+                    "break the trim step and can bleed reference speech into the output."
+                ).classes("text-[#444] font-mono text-[10px] leading-snug")
             ref_text_row.set_visibility(False)
 
             # TODO: refactor — character management (save/delete/list) belongs in the

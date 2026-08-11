@@ -505,8 +505,15 @@ def infer(text: str, model_path: Path, out_path: Path) -> Path:
     piper = _piper_bin()
     if not piper.exists():
         raise FileNotFoundError(f"Piper binary missing: {piper}")
+    # --cuda is safe to pass even without onnxruntime-gpu installed: onnxruntime
+    # just warns ("Specified provider 'CUDAExecutionProvider' is not in
+    # available provider names") and falls back to CPU. Actually getting GPU
+    # acceleration additionally requires onnxruntime-gpu in piper_venv.
     result = subprocess.run(
-        [str(piper), "--model", str(model_path), "--config", str(cfg), "--output_file", str(out_path)],
+        [
+            str(piper), "--model", str(model_path), "--config", str(cfg),
+            "--output_file", str(out_path), "--cuda",
+        ],
         input=text.encode(),
         capture_output=True,
     )
