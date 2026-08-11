@@ -204,7 +204,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
             )
             def _on_cand(e): _candidates[0] = int(e.value); cand_lbl.set_text(str(int(e.value)))
-            ui.slider(min=1, max=6, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
+            ui.slider(min=1, max=8, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
 
         ui.space()
         gen_btn = (
@@ -317,7 +317,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                 "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
             )
             def _on_cand(e): _candidates[0] = int(e.value); cand_lbl.set_text(str(int(e.value)))
-            ui.slider(min=1, max=6, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
+            ui.slider(min=1, max=8, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
 
         ui.space()
         gen_btn = (
@@ -455,7 +455,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 "font-mono text-[10px] text-amber-400 w-7 shrink-0 text-right"
             )
             def _on_cand(e): _candidates[0] = int(e.value); cand_lbl.set_text(str(int(e.value)))
-            ui.slider(min=1, max=6, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
+            ui.slider(min=1, max=8, step=1, value=1, on_change=_on_cand).classes("flex-grow").props("color=amber")
 
         ui.space()
         gen_btn = (

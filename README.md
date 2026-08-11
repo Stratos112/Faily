@@ -8,11 +8,11 @@ Local neural-net audio framework — TTS, voice cloning, and SFX. Built for soun
 | Tab | Purpose |
 |---|---|
 | **CHARACTERS** | Browse and manage voice character library; train Piper TTS models |
-| **CLONE** | Upload reference audio, run one-shot voice cloning, build characters |
-| **SPEAK** | Load a character and generate audio — expression engine + voice conversion, one-shot, or trained Piper model |
+| **CLONE** | Upload reference audio, run zero-shot voice cloning, build characters |
+| **SPEAK** | Load a character and generate audio — expression engine + voice conversion, zero-shot, or trained Piper model |
 | **EDIT** | Trim, pitch-shift, speed-adjust, and mix generated clips |
 | **DAW** | 3-track Web Audio mixer; queue clips from any tab |
-| **FOLEY** | Generate sound effects from text prompts (AudioLDM2, Stable Audio, AudioGen) |
+| **FOLEY** | Generate sound effects from text prompts (AudioLDM2, Stable Audio Open) |
 
 ---
 
@@ -166,7 +166,7 @@ for /f "tokens=5" %a in ('netstat -aon ^| findstr :7842') do taskkill /F /PID %a
 
 ## Backend Reference
 
-### CLONE / ONE SHOT — voice cloning backends
+### CLONE / ZERO SHOT — voice cloning backends
 
 | Backend | Package | Model size | Notes |
 |---|---|---|---|
@@ -222,12 +222,11 @@ Trains a character-specific `.onnx` TTS model from their reference audio clips. 
 |---|---|---|
 | AudioLDM2 | `cvssp/audioldm2` | Default; general purpose |
 | AudioLDM2 Large | `cvssp/audioldm2-large` | Slower, higher quality |
-| Tango 2 | `declare-lab/tango2` | Strong at environmental sounds |
-| AudioGen Medium | `facebook/audiogen-medium` | Fast; good for short effects |
-| AudioGen Large | `facebook/audiogen-large` | Better quality |
-| Stable Audio Open | `stabilityai/stable-audio-open-1.0` | **Requires HuggingFace login and gated model access** — run `huggingface-cli login` first |
+| Stable Audio Open | `stabilityai/stable-audio-open-1.0` | 44.1kHz stereo, highest quality available — **requires a Hugging Face token with the model's gated license accepted** (Settings → paste token, or `huggingface-cli login`) |
 
 All FOLEY models download automatically on first use (~1–4 GB each).
+
+> **Removed:** Tango 2 (`declare-lab/tango2`) and AudioGen (`facebook/audiogen-medium`/`large`) were dropped — their real loaders require ancient, mutually incompatible torch versions (torch 1.13 / torch 2.1) that can't coexist with this project's torch 2.11+cu128 (Blackwell). Not a quality call, a compatibility one. See the [FOLEY roadmap](#foley--alternative-backends) below.
 
 ---
 
@@ -272,13 +271,70 @@ This means the two layers improve independently: better style prompts improve st
 
 ---
 
-## Character voice library (roadmap)
+## Roadmap — improving output quality
+
+Open questions and concrete next steps for getting better results out of each pipeline, ordered roughly by effort within each section.
+
+### CHARACTER (trained Piper model)
+
+**Why quality is limited today:**
+- Training typically uses a small handful of reference clips. That's genuinely small for fine-tuning a full acoustic model — Piper voices that sound good usually come from 30–200+ clips (several minutes to an hour of audio). More/better data is the single biggest lever.
+- No validation split (`--validation-split 0.0`), so there's no signal for when the model starts overfitting — training runs to a fixed epoch count and Faily grabs the checkpoint with the newest mtime, which isn't necessarily the best-sounding one.
+- Only one base voice (`en_US-lessac-medium`) is ever offered as a fine-tuning starting point.
+- The CHARACTER sub-tab exposes **zero** inference-time controls today — `infer()` calls the `piper` CLI with only `--model`/`--config`/`--output_file`. The binary actually supports (verified via `piper --help`):
+  - `--length-scale` — speed/pacing
+  - `--noise-scale` — generator noise (expressiveness/variability)
+  - `--noise-w-scale` — phoneme duration variability
+  - `--sentence-silence`, `--volume`, `--cuda` (GPU inference — currently CPU-only)
+
+**Near-term (low effort, no retraining needed):**
+- [ ] Wire `length_scale` / `noise_scale` / `noise_w_scale` through `infer()` and add sliders to the CHARACTER sub-tab (same UI pattern as the ZERO SHOT param sliders). Real pacing/expressiveness control without touching training.
+- [ ] Pass `--cuda` for GPU inference (speed only, not quality — free to add).
+- [ ] Let the user preview/pick between the last few saved checkpoints (already written to disk every 100 epochs) instead of always defaulting to the most recent one.
+
+**Medium effort:**
+- [ ] Offer alternate base checkpoints (e.g. a high-quality lessac variant, or a base voice closer to the target's gender/age/timbre) as a CHARACTERS-tab choice before training.
+- [ ] Encourage more reference clips before enabling TRAIN VOICE (e.g. a soft warning below some clip-count threshold).
+- [ ] Reference-clip quality gate: flag clips that are too short, too quiet, or too noisy before they're used for training.
+
+### Expressive output for trained characters ("it feels like zero-shot")
+
+Piper itself has no text-conditioned style/emotion input — it's a direct text→speech VITS model, unlike Parler-TTS (EXPRESSION sub-tab), which takes a free-text style description.
+
+**Two real paths:**
+1. **Reuse the existing two-stage pipeline, but as the VC target.** EXPRESSION already does "Parler-TTS (styled) → voice conversion onto the character" and produces expressive, character-voiced output today, independent of whether that character has a trained Piper model. Worth prototyping: generate a short, clean utterance from the trained Piper model and use *that* as the stage-2 VC reference (instead of, or blended with, the raw uploaded ref clips) — Piper's own output is consistent, denoised, single-take audio, which may give voice conversion a cleaner target than noisier user uploads.
+2. **A genuinely expressive TTS backend as an alternative to Piper** for the CHARACTER tab — e.g. StyleTTS2 or a similarly-licensed model with native style/emotion conditioning, trained the same way Piper is. Much bigger lift (new training pipeline, new backend integration).
+
+- [ ] Prototype path 1 (Piper output as VC reference) — smallest step, reuses existing code.
+- [ ] Research spike on expressive-TTS backends compatible with our torch/cu128 stack *before* committing to one — "supports fine-tuning" on paper doesn't mean "installs cleanly on this stack" (see the Tango 2 / AudioGen removal below).
+
+### FOLEY — alternative backends
+
+Tango 2 and AudioGen were removed (see [Backend Reference](#foley--sound-effect-models)) because their real dependency requirements — ancient/pinned torch versions — are incompatible with torch 2.11+cu128, not a quality decision. Current lineup: AudioLDM2, AudioLDM2 Large, Stable Audio Open.
+
+- Stable Audio Open (44.1kHz stereo) is meaningfully higher quality than AudioLDM2 (16kHz) for most sources — worth confirming it's actually working end-to-end (requires the HF token + accepted gated license).
+- Raising STEPS (try 100–150) and CANDIDATES (best-of-N) in FOLEY's own controls is a free quality lever with what's already installed.
+- [ ] Research spike before adding any new backend: confirm a real Windows/cu128-compatible install path *and run an actual generation* before wiring it in — don't assume a model "should work" from its README.
+
+### Zero-shot cloning (CLONE / ZERO SHOT)
+
+Reference-clip quality dominates output quality here more than backend choice.
+
+- [ ] Add a denoising/cleanup pass for uploaded reference audio before it's used — currently only the F5-TTS path normalizes loudness.
+- [ ] Surface clip duration/quality guidance in the CLONE tab UI (F5-TTS's 5–15s "optimal" window is currently only documented in a code comment).
+- [ ] Let the user choose *which* ref clips build the chain (currently `build_ref_audio` always uses the whole chain) — a few strong clips can outperform many mixed-quality ones.
+
+### Character consolidation (growing a character's reference pool over time)
 
 | Stage | Voice conversion | Reference requirement |
 |---|---|---|
 | **Now** | FreeVC24 | Single reference clip |
 | **Now** | OpenVoice v2 | Multi-reference; better on longer output |
-| **Future** | RVC (trained model) | Train from all approved clips — sharpens with every good generation |
+| **Future** | RVC (trained model) | Trained from all approved clips — sharpens with every good generation |
+
+- [ ] Streamline "promote a good generation back into the reference pool" — the add-to-ref-pool action already exists on every clip; consider surfacing it more prominently (e.g. auto-suggest after a favorite).
+- [ ] Auto-flag low-quality ref clips (too short, too quiet, clipping) so a character's pool doesn't silently degrade over time.
+- [ ] The RVC-trained-model path (lighter-weight than a full Piper fine-tune) is still just a roadmap item — worth prioritizing if Piper's data requirements prove too heavy for most characters.
 
 ---
 
