@@ -87,41 +87,13 @@ if [ -z "$SKIP_INSTALL" ]; then
           "https://raw.githubusercontent.com/rhasspy/piper/master/src/python/piper_train/norm_audio/models/silero_vad.onnx"
     fi
 
-    # pytorch-lightning 1.7.x predates NumPy 2.0 (mid-2023) and uses the
-    # removed np.Inf alias in a couple of callbacks (ModelCheckpoint,
-    # EarlyStopping). pip resolves a modern NumPy for us, so patch the
-    # package in place rather than downgrading NumPy and risking torch.
-    echo "Patching pytorch-lightning for NumPy 2.x compatibility..."
-    "$VENV/bin/python" -c "
-import pathlib
-d = pathlib.Path('$SITE_PACKAGES/pytorch_lightning')
-for f in d.rglob('*.py'):
-    t = f.read_text(encoding='utf-8')
-    if 'np.Inf' in t:
-        f.write_text(t.replace('np.Inf', 'np.inf'), encoding='utf-8')
-"
-
-    # PyTorch 2.6 flipped torch.load's default from weights_only=False to
-    # True. pytorch-lightning 1.7.x's checkpoint loader (cloud_io.py) was
-    # written before that change and doesn't pass weights_only itself, so
-    # loading any checkpoint containing non-tensor objects (e.g. a
-    # pathlib.PosixPath/WindowsPath baked in at save time) fails under the
-    # new secure-by-default behavior. Restore the old behavior explicitly —
-    # this checkpoint is from our own pinned HF download.
-    echo "Patching pytorch-lightning for torch 2.6+ weights_only default..."
-    "$VENV/bin/python" -c "
-import pathlib
-p = pathlib.Path('$SITE_PACKAGES/pytorch_lightning/utilities/cloud_io.py')
-t = p.read_text(encoding='utf-8')
-t = t.replace(
-    'torch.load(path_or_url, map_location=map_location)',
-    'torch.load(path_or_url, map_location=map_location, weights_only=False)',
-).replace(
-    'torch.load(f, map_location=map_location)',
-    'torch.load(f, map_location=map_location, weights_only=False)',
-)
-p.write_text(t, encoding='utf-8')
-"
+    # pytorch-lightning 1.7.x needs a couple of source patches to work with a
+    # modern NumPy/PyTorch stack (removed np.Inf alias, torch.load's
+    # weights_only default flip, cross-platform checkpoint loading). See
+    # patch_pytorch_lightning.py for details — inline one-liners here got
+    # unwieldy and error-prone.
+    echo "Patching pytorch-lightning for NumPy/torch 2.6+ compatibility..."
+    "$VENV/bin/python" "$PROJECT_DIR/scripts/patch_pytorch_lightning.py"
 
     # monotonic_align is a Cython extension piper-train ships as source
     # (.pyx) but never builds — same package-data gap as above drops core.pyx
