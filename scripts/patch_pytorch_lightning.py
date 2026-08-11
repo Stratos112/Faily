@@ -109,8 +109,32 @@ else:
     cloud_io.write_text(text, encoding="utf-8")
     print(f"torch 2.6+ weights_only / cross-platform checkpoint compat: patched {cloud_io}")
 
+# ── 4. LRSchedulerTypeTuple — torch renamed its scheduler base class ────────
+# Modern torch made the private torch.optim.lr_scheduler._LRScheduler
+# obsolete: real schedulers (ExponentialLR, etc.) now inherit from a new
+# public LRScheduler class, and _LRScheduler was demoted to an empty
+# subclass of it kept only for backward compat — so it's no longer an
+# ancestor of any real scheduler. pytorch-lightning 1.7.x still validates
+# scheduler types with `isinstance(scheduler, _LRScheduler)`, which now
+# rejects every built-in scheduler with "doesn't follow PyTorch's
+# LRScheduler API". LRScheduler is a strict superset (it's an ancestor of
+# _LRScheduler too), so swapping to it is safe either way.
+types_py = PL_DIR / "utilities" / "types.py"
+changed = _patch_file(types_py, [
+    (
+        "LRSchedulerTypeTuple = (torch.optim.lr_scheduler._LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)",
+        'LRSchedulerTypeTuple = (getattr(torch.optim.lr_scheduler, "LRScheduler", torch.optim.lr_scheduler._LRScheduler), torch.optim.lr_scheduler.ReduceLROnPlateau)',
+    ),
+])
+print(
+    "torch 2.x LRScheduler rename compat: "
+    + ("patched" if changed else "already patched or pattern not found")
+    + f" {types_py}"
+)
+
 # ── Delete stale __pycache__ so the patched source is actually used ─────────
-cache = PL_DIR / "utilities" / "__pycache__"
-if cache.exists():
-    for pyc in cache.glob("cloud_io.cpython-*.pyc"):
-        pyc.unlink()
+for name, patched_file in (("cloud_io", cloud_io), ("types", types_py)):
+    cache = patched_file.parent / "__pycache__"
+    if cache.exists():
+        for pyc in cache.glob(f"{name}.cpython-*.pyc"):
+            pyc.unlink()
