@@ -425,6 +425,17 @@ def build_characters_tab(on_speak, on_change):
                     if not chain:
                         ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
                         return
+                    # Piper only hard-requires 2 clips with transcripts, but good
+                    # fine-tunes typically need 30-200+ (several minutes of audio).
+                    # Warn below a lower floor without blocking — this is a soft
+                    # nudge, not a hard requirement.
+                    if len(chain) < 20:
+                        ui.notify(
+                            f"Only {len(chain)} reference clip{'s' if len(chain) != 1 else ''} — "
+                            "Piper fine-tunes usually need 30-200+ for good results. "
+                            "Training will proceed, but quality may suffer.",
+                            type="warning", timeout=6000,
+                        )
 
                     from faily.modules.piper import train, diagnose
                     reason = await ni_run.io_bound(diagnose)

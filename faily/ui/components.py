@@ -218,7 +218,7 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
                 ).classes("font-mono text-[10px]")
         dlg.open()
 
-    def _fav(path: Path):
+    def _fav(path: Path, transcript: str = ""):
         name = get_char_name() if get_char_name else None
         if not name:
             ui.notify("No character selected", type="warning")
@@ -230,6 +230,10 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
         try:
             add_clip_to_favorites(name, path)
             ui.notify(f"Added to {name} favorites", type="positive", timeout=2000)
+            # A favorite is a signal this clip came out well — surface the
+            # option to also promote it into the reference pool right away,
+            # instead of leaving that action to be found later.
+            _open_ref_dialog(path, transcript)
         except Exception as exc:
             show_error(exc)
 
@@ -263,9 +267,10 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
                     ).props("flat dense color=grey").classes("shrink-0").tooltip(
                         "Add to character reference pool"
                     )
-                    ui.button(icon="favorite_border", on_click=lambda p=path: _fav(p)).props(
-                        "flat dense color=grey"
-                    ).classes("shrink-0").tooltip("Favorite")
+                    ui.button(
+                        icon="favorite_border",
+                        on_click=lambda p=path, t=transcript: _fav(p, t),
+                    ).props("flat dense color=grey").classes("shrink-0").tooltip("Favorite")
                 ui.button(
                     icon="queue_music",
                     on_click=lambda p=path: _daw_fn[0](
@@ -324,9 +329,10 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
                     ).props("flat dense color=grey size=sm").classes("shrink-0").tooltip(
                         "Add to character reference pool"
                     )
-                    ui.button(icon="favorite_border", on_click=lambda p=path: _fav(p)).props(
-                        "flat dense color=grey size=sm"
-                    ).classes("shrink-0").tooltip("Favorite")
+                    ui.button(
+                        icon="favorite_border",
+                        on_click=lambda p=path, t=transcript: _fav(p, t),
+                    ).props("flat dense color=grey size=sm").classes("shrink-0").tooltip("Favorite")
                 ui.button(
                     icon="tune",
                     on_click=lambda p=path: _edit_fn[0](
