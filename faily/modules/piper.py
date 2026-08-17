@@ -38,6 +38,7 @@ BASE_VOICES: dict[str, dict] = {
         "desc": "Neutral American female voice — Faily's original default.",
         "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/lessac/medium/epoch=2164-step=1355540.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
+        "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
         "ckpt_filename": "epoch=2164-step=1355540.ckpt",
         "cfg_filename": "en_US-lessac-medium.onnx.json",
     },
@@ -46,6 +47,7 @@ BASE_VOICES: dict[str, dict] = {
         "desc": "Deeper American male voice.",
         "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/ryan/medium/epoch=4641-step=3104302.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx.json",
+        "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx",
         "ckpt_filename": "epoch=4641-step=3104302.ckpt",
         "cfg_filename": "en_US-ryan-medium.onnx.json",
     },
@@ -54,6 +56,7 @@ BASE_VOICES: dict[str, dict] = {
         "desc": "American female voice, different timbre from Lessac.",
         "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/amy/medium/epoch=6679-step=1554200.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json",
+        "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx",
         "ckpt_filename": "epoch=6679-step=1554200.ckpt",
         "cfg_filename": "en_US-amy-medium.onnx.json",
     },
@@ -62,6 +65,7 @@ BASE_VOICES: dict[str, dict] = {
         "desc": "Home Assistant community male voice.",
         "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/hfc_male/medium/epoch=2785-step=2128064.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx.json",
+        "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx",
         "ckpt_filename": "epoch=2785-step=2128064.ckpt",
         "cfg_filename": "en_US-hfc_male-medium.onnx.json",
     },
@@ -70,10 +74,17 @@ BASE_VOICES: dict[str, dict] = {
         "desc": "Home Assistant community female voice.",
         "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/hfc_female/medium/epoch=2868-step=1575188.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
+        "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx",
         "ckpt_filename": "epoch=2868-step=1575188.ckpt",
         "cfg_filename": "en_US-hfc_female-medium.onnx.json",
     },
 }
+
+SAMPLE_TEXT = "The quick brown fox jumps over the lazy dog."
+# Relative, like CHARACTERS_DIR etc. — the app always runs with the project
+# root as cwd, and UI code does path.relative_to(Path("outputs")) to build
+# /outputs/... URLs, which requires this to stay relative too.
+_BASE_VOICE_SAMPLES_DIR = Path("outputs/base_voice_samples")
 
 
 def base_voice_dir(key: str) -> Path:
@@ -96,6 +107,25 @@ def base_voice_paths(key: str) -> tuple[Path, Path]:
     if not ckpts or not cfgs:
         raise FileNotFoundError(f"Base voice '{key}' isn't downloaded yet")
     return ckpts[-1], cfgs[-1]
+
+
+def _sample_onnx_filename(key: str) -> str:
+    cfg_filename = BASE_VOICES[key]["cfg_filename"]
+    return cfg_filename[: -len(".json")]
+
+
+def sample_ready(key: str) -> bool:
+    """True if this base voice's small preview .onnx (+ matching config) is
+    already on disk — independent of whether the (much larger) Lightning
+    training checkpoint has been downloaded."""
+    if key not in BASE_VOICES:
+        return False
+    d = base_voice_dir(key)
+    return (d / _sample_onnx_filename(key)).exists() and (d / BASE_VOICES[key]["cfg_filename"]).exists()
+
+
+def sample_onnx_path(key: str) -> Path:
+    return base_voice_dir(key) / _sample_onnx_filename(key)
 
 
 def _download_with_progress(url: str, dest: Path, label: str, log_cb) -> None:
@@ -144,6 +174,45 @@ async def download_base_voice(key: str, log_cb) -> None:
         await asyncio.to_thread(_download_with_progress, voice["cfg_url"], cfg_dest, cfg_dest.name, log_cb)
     else:
         log_cb(f"{voice['label']} config already present")
+
+
+async def download_sample_voice(key: str, log_cb) -> None:
+    """Download just the small pre-exported .onnx + its config (tens of MB,
+    not the ~800 MB Lightning checkpoint) so the base voice can be auditioned
+    before committing to a full download for training."""
+    if key not in BASE_VOICES:
+        raise ValueError(f"Unknown base voice: {key}")
+    voice = BASE_VOICES[key]
+    dest_dir = base_voice_dir(key)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg_dest = dest_dir / voice["cfg_filename"]
+    if not cfg_dest.exists():
+        log_cb(f"Downloading {voice['label']} config…")
+        await asyncio.to_thread(_download_with_progress, voice["cfg_url"], cfg_dest, cfg_dest.name, log_cb)
+
+    onnx_dest = dest_dir / _sample_onnx_filename(key)
+    if not onnx_dest.exists():
+        log_cb(f"Downloading {voice['label']} preview model…")
+        await asyncio.to_thread(_download_with_progress, voice["onnx_url"], onnx_dest, onnx_dest.name, log_cb)
+
+
+async def generate_base_voice_sample(key: str, log_cb=None) -> Path:
+    """Ensure the small preview model is downloaded, then synthesize a short
+    fixed test line with it. Cached on disk — later calls for the same voice
+    return instantly instead of re-running inference."""
+    if key not in BASE_VOICES:
+        raise ValueError(f"Unknown base voice: {key}")
+    out_path = _BASE_VOICE_SAMPLES_DIR / f"{key}.wav"
+    if out_path.exists():
+        return out_path
+    if not can_infer():
+        raise RuntimeError("Piper binary not found in piper_venv — run the setup script first.")
+    if not sample_ready(key):
+        await download_sample_voice(key, log_cb or (lambda _line: None))
+    _BASE_VOICE_SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(infer, SAMPLE_TEXT, sample_onnx_path(key), out_path)
+    return out_path
 
 
 async def _read_checkpoint_epoch(py: str, ckpt_path: Path) -> int:

@@ -9,7 +9,7 @@ from faily.core.characters import (
     CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error, send_to_edit
-from faily.modules.piper import BASE_VOICES, base_voice_ready
+from faily.modules.piper import BASE_VOICES, base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT
 
 _BTN = "font-mono tracking-widest"
 
@@ -425,12 +425,12 @@ def build_characters_tab(on_speak, on_change):
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
-            # auto_upload=False stages the file(s) client-side only — nothing
+            # auto_upload=False stages the file client-side only — nothing
             # touches the ref pool until the Upload button below fires the
             # actual transfer, so a transcript can be typed first.
             ref_upload = (
-                ui.upload(on_upload=_on_ref_upload, multiple=True, auto_upload=False)
-                .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Select clip(s)'")
+                ui.upload(on_upload=_on_ref_upload, multiple=False, auto_upload=False)
+                .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Select clip'")
                 .classes("w-full mt-1")
             )
             upload_transcript = (
@@ -490,6 +490,7 @@ def build_characters_tab(on_speak, on_change):
             def _on_base_voice_change(e):
                 _base_voice_key[0] = e.value
                 base_voice_desc.set_text(BASE_VOICES.get(e.value, {}).get("desc", ""))
+                base_voice_preview_player.set_visibility(False)
 
             base_voice_select = (
                 ui.select(options=_base_voice_opts(), value="lessac", on_change=_on_base_voice_change)
@@ -498,6 +499,32 @@ def build_characters_tab(on_speak, on_change):
             base_voice_desc = ui.label(BASE_VOICES["lessac"]["desc"]).classes(
                 "text-[#444] font-mono text-[10px] tracking-wide mb-2"
             )
+
+            # ── base voice preview — hear it before committing to training ──
+            async def _preview_base_voice():
+                key = _base_voice_key[0]
+                preview_btn.set_text("LOADING…")
+                preview_btn.disable()
+                try:
+                    path = await generate_base_voice_sample(key)
+                    rel = path.relative_to(Path("outputs"))
+                    base_voice_preview_player.set_source(f"/outputs/{rel.as_posix()}")
+                    base_voice_preview_player.set_visibility(True)
+                except Exception as exc:
+                    show_error(exc)
+                finally:
+                    preview_btn.set_text("▶  PREVIEW VOICE")
+                    preview_btn.enable()
+
+            with ui.row().classes("items-center gap-2 mb-1"):
+                preview_btn = ui.button("▶  PREVIEW VOICE", on_click=_preview_base_voice).props(
+                    "flat dense color=grey"
+                ).classes("font-mono text-[10px] tracking-widest")
+                ui.label(f'"{SAMPLE_TEXT}"').classes(
+                    "text-[#444] font-mono text-[10px] italic"
+                )
+            base_voice_preview_player = ui.audio("").classes("w-full rounded mb-2")
+            base_voice_preview_player.set_visibility(False)
 
             with ui.row().classes("gap-2 flex-wrap"):
 
