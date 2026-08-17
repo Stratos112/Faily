@@ -5,7 +5,7 @@ from faily.core.characters import (
     update_character_metadata,
     list_character_clips, list_character_favorites, rename_character_file,
     get_ref_chain, remove_ref_clip, set_rvc_model, set_piper_model,
-    rename_ref_audio, update_ref_clip, clip_quality_issues,
+    rename_ref_audio, update_ref_clip, clip_quality_issues, add_ref_clip,
     CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error, send_to_edit
@@ -403,6 +403,38 @@ def build_characters_tab(on_speak, on_change):
                                     "text-[#333] font-mono text-[10px] italic leading-tight truncate"
                                 )
                         ui.label("↑ parent").classes("text-[#333] font-mono text-[9px] shrink-0")
+
+            # ── add ref clip ────────────────────────────────────────────────
+            ui.separator().classes("my-3 opacity-20")
+            section_label("ADD REFERENCE CLIP")
+            with ui.row().classes("items-center gap-2 w-full mt-1"):
+                upload_transcript = (
+                    ui.input(placeholder="transcript (optional)…")
+                    .props("outlined dark dense")
+                    .classes("flex-grow font-mono text-[11px]")
+                )
+
+            async def _on_ref_upload(e, n=name):
+                import os
+                import tempfile
+                suffix = Path(e.file.name).suffix or ".wav"
+                fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+                tmp_path = Path(tmp_name)
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(await e.file.read())
+                    add_ref_clip(n, tmp_path, upload_transcript.value.strip())
+                    upload_transcript.set_value("")
+                    ui.notify("Added to reference pool", type="positive", timeout=2000)
+                    _rebuild_detail()
+                except Exception as exc:
+                    show_error(exc)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+
+            ui.upload(on_upload=_on_ref_upload, multiple=True, auto_upload=True).props(
+                "accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Upload clip'"
+            ).classes("w-full mt-1")
 
             # ── personality clips ────────────────────────────────────────
             if is_base:

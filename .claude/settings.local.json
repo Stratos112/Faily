@@ -36,7 +36,10 @@
       "Bash(git add *)",
       "Bash(git rm *)",
       "Skill(claude-api)",
-      "Bash(xargs ls -la)"
+      "Bash(xargs ls -la)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('faily/ui/tabs/characters_tab.py'\\).read\\(\\)\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('faily/ui/tabs/characters_tab.py'\\).read\\(\\)\\)\")",
+      "Bash(timeout 15 python3 -c ' *)"
     ]
   }
 }
