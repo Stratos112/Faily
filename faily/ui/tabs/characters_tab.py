@@ -9,6 +9,7 @@ from faily.core.characters import (
     CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error, send_to_edit
+from faily.modules.piper import BASE_VOICES, base_voice_ready
 
 _BTN = "font-mono tracking-widest"
 
@@ -426,6 +427,39 @@ def build_characters_tab(on_speak, on_change):
 
             has_model = bool(char.get("piper_model") or char.get("rvc_model"))
 
+            # ── base voice picker — what the Piper fine-tune starts from ────
+            def _base_voice_opts() -> dict[str, str]:
+                opts = {}
+                for key, v in BASE_VOICES.items():
+                    ready = base_voice_ready(key)
+                    suffix = "" if ready else "  (~800 MB download)"
+                    opts[key] = f"{v['label']}{suffix}"
+                return opts
+
+            _base_voice_key: list[str] = ["lessac"]
+            with ui.row().classes("items-center gap-1"):
+                section_label("BASE VOICE")
+                ui.icon("info_outline", size="13px").classes(
+                    "text-[#3a3a3a] cursor-help"
+                ).tooltip(
+                    "What the fine-tune starts from. With only a handful of ref "
+                    "clips, picking a base already close to the target's gender/"
+                    "timbre matters more than most other settings. Not-yet-"
+                    "downloaded voices download automatically the first time "
+                    "you train with them."
+                )
+            def _on_base_voice_change(e):
+                _base_voice_key[0] = e.value
+                base_voice_desc.set_text(BASE_VOICES.get(e.value, {}).get("desc", ""))
+
+            base_voice_select = (
+                ui.select(options=_base_voice_opts(), value="lessac", on_change=_on_base_voice_change)
+                .props("outlined dark dense").classes("w-full mb-2")
+            )
+            base_voice_desc = ui.label(BASE_VOICES["lessac"]["desc"]).classes(
+                "text-[#444] font-mono text-[10px] tracking-wide mb-2"
+            )
+
             with ui.row().classes("gap-2 flex-wrap"):
 
                 async def _do_train(n=name):
@@ -445,7 +479,10 @@ def build_characters_tab(on_speak, on_change):
                             type="warning", timeout=6000,
                         )
 
-                    from faily.modules.piper import train, diagnose, finalize_piper_model, infer
+                    from faily.modules.piper import (
+                        train, diagnose, finalize_piper_model, infer, download_base_voice,
+                    )
+                    chosen_voice = _base_voice_key[0]
                     reason = await ni_run.io_bound(diagnose)
                     if reason:
                         ui.notify(f"Piper not ready — {reason}", type="warning", timeout=8000)
@@ -563,7 +600,12 @@ def build_characters_tab(on_speak, on_change):
                                     ).props("flat dense color=amber").classes("font-mono text-[10px] shrink-0")
 
                     try:
-                        _candidates.extend(await train(chain, char_dir, _log, _proc_ref))
+                        if not base_voice_ready(chosen_voice):
+                            _log(f"Downloading base voice: {BASE_VOICES.get(chosen_voice, {}).get('label', chosen_voice)}…")
+                            await download_base_voice(chosen_voice, _log)
+                        _candidates.extend(
+                            await train(chain, char_dir, _log, _proc_ref, base_voice=chosen_voice)
+                        )
                         _ui_safe(lambda: picker_section.set_visibility(True))
                         await _generate_previews()
                         _ui_safe(lambda: status_lbl.set_text(f"✓  {len(_candidates)} checkpoint(s) ready — pick one below"))

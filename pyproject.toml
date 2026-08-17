@@ -19,6 +19,7 @@ dependencies = [
     "huggingface_hub>=0.22.0",
     "scipy>=1.11.0",
     "speechbrain>=1.0.0",
+    "noisereduce>=3.0.0",
 ]
 
 [tool.setuptools.packages.find]

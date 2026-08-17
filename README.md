@@ -67,7 +67,7 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 pip install -e .
 ```
 
-This installs: `nicegui`, `transformers`, `diffusers`, `accelerate`, `soundfile`, `numpy`, `scipy`, `speechbrain`, `huggingface_hub`.
+This installs: `nicegui`, `transformers`, `diffusers`, `accelerate`, `soundfile`, `numpy`, `scipy`, `speechbrain`, `huggingface_hub`, `noisereduce`.
 
 #### 4. Voice cloning backends
 
@@ -137,7 +137,7 @@ This script:
 4. Installs `piper-train --no-deps` + its dependencies manually (skips the uninstallable `piper-phonemize` C extension)
 5. Installs `pytorch-lightning~=1.7.0`, `librosa`, `cython`
 6. Force-installs torch cu128 (replaces the default torch 1.13 that piper-train pulls)
-7. Downloads the `en_US-lessac-medium` base checkpoint (~400 MB) and config
+7. Downloads the `en_US-lessac-medium` base checkpoint (~800 MB) and config
 
 > The `piper_phonemize` compatibility shim is written automatically into the piper venv on the first training run — no manual action needed.
 
@@ -209,10 +209,13 @@ Trains a character-specific `.onnx` TTS model from their reference audio clips. 
 - Piper setup complete (see above)
 
 **Training flow:**
-1. CHARACTERS tab → select character → TRAIN VOICE
+1. CHARACTERS tab → select character → pick a BASE VOICE → TRAIN VOICE
 2. A log window shows live training output
-3. Exports to `outputs/characters/{name}/piper.onnx` when done
-4. Character then appears in the SPEAK → CHARACTER sub-tab
+3. Every checkpoint saved during training gets exported and previewed — pick whichever sounds best (the last epoch isn't always the best-sounding one)
+4. Your pick is promoted to `outputs/characters/{name}/piper.onnx`; the rest are discarded
+5. Character then appears in the SPEAK → CHARACTER sub-tab
+
+**Base voice** is what the fine-tune starts from — with only a handful of ref clips, starting from a base already close to the target's gender/timbre matters more than most other settings. `en_US-lessac-medium` ("Lessac") is the default, downloaded by `setup_piper.bat`. A few alternates (Ryan, Amy, HFC Male, HFC Female — see [rhasspy/piper-checkpoints](https://huggingface.co/datasets/rhasspy/piper-checkpoints) for the full catalog) download automatically (~800 MB) the first time you pick them for training — no extra setup step required.
 
 ---
 
@@ -244,7 +247,8 @@ All FOLEY models download automatically on first use (~1–4 GB each).
 | MeloTTS | ~200 MB | First MeloTTS expression pass |
 | OpenVoice v2 converter | ~200 MB | First OpenVoice voice conversion |
 | AudioLDM2 | ~1.5 GB | First FOLEY generation with this model |
-| Piper base checkpoint | ~400 MB | `scripts\setup_piper.bat` (manual) |
+| Piper base checkpoint (Lessac) | ~800 MB | `scripts\setup_piper.bat` (manual) |
+| Piper alternate base voices | ~800 MB each | CHARACTERS tab, first time selected for training |
 
 > Models are cached under `models/` (VC) and `models/sfx/` (FOLEY). Piper checkpoint goes to `piper_checkpoints/`.
 
@@ -293,7 +297,7 @@ Open questions and concrete next steps for getting better results out of each pi
 - [ ] Let the user preview/pick between the last few saved checkpoints (already written to disk every 100 epochs) instead of always defaulting to the most recent one.
 
 **Medium effort:**
-- [ ] Offer alternate base checkpoints (e.g. a high-quality lessac variant, or a base voice closer to the target's gender/age/timbre) as a CHARACTERS-tab choice before training.
+- [x] Offer alternate base checkpoints as a CHARACTERS-tab choice before training (Ryan, Amy, HFC Male, HFC Female alongside the Lessac default) — downloads on demand, epoch read from the checkpoint itself rather than parsed from its filename (not every base voice's filename follows the same naming convention).
 - [ ] Encourage more reference clips before enabling TRAIN VOICE (e.g. a soft warning below some clip-count threshold).
 - [ ] Reference-clip quality gate: flag clips that are too short, too quiet, or too noisy before they're used for training.
 
@@ -320,7 +324,7 @@ Tango 2 and AudioGen were removed (see [Backend Reference](#foley--sound-effect-
 
 Reference-clip quality dominates output quality here more than backend choice.
 
-- [ ] Add a denoising/cleanup pass for uploaded reference audio before it's used — currently only the F5-TTS path normalizes loudness.
+- [x] High-pass filter + spectral-gating denoise, available as opt-in EDIT tab tools (not automatic anywhere — some noise is part of a character's voice, so it's the user's call per clip).
 - [ ] Surface clip duration/quality guidance in the CLONE tab UI (F5-TTS's 5–15s "optimal" window is currently only documented in a code comment).
 - [ ] Let the user choose *which* ref clips build the chain (currently `build_ref_audio` always uses the whole chain) — a few strong clips can outperform many mixed-quality ones.
 

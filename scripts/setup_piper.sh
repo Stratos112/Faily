@@ -145,7 +145,7 @@ mkdir -p "$CKPT_DIR"
 
 CKPT="$CKPT_DIR/epoch=2164-step=1355540.ckpt"
 if [ ! -f "$CKPT" ]; then
-    echo "Downloading base checkpoint (~400 MB)..."
+    echo "Downloading base checkpoint (~800 MB)..."
     curl -L --progress-bar -o "$CKPT" \
       "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/lessac/medium/epoch=2164-step=1355540.ckpt"
 else

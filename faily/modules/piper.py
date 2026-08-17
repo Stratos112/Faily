@@ -19,6 +19,155 @@ _SR           = 22050
 _IS_WIN       = sys.platform == "win32"
 
 
+# ── base voices ─────────────────────────────────────────────────────────────
+# Curated subset of rhasspy's published English voices — verified (via the HF
+# API, not assumed) to have both a resumable Lightning checkpoint
+# (rhasspy/piper-checkpoints) and a matching inference config
+# (rhasspy/piper-voices) in the "medium" quality tier. Not every voice rhasspy
+# publishes has both — some directories only have the exported .onnx, not the
+# training checkpoint needed to resume fine-tuning from.
+#
+# "lessac" is special: it's the one setup_piper.bat already downloads
+# unconditionally into piper_checkpoints/ (flat, no subfolder) — kept exactly
+# as-is so existing installs need no migration. Every other voice downloads
+# on demand into its own piper_checkpoints/{key}/ subfolder the first time
+# it's actually selected for training.
+BASE_VOICES: dict[str, dict] = {
+    "lessac": {
+        "label": "Lessac (default)",
+        "desc": "Neutral American female voice — Faily's original default.",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/lessac/medium/epoch=2164-step=1355540.ckpt",
+        "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
+        "ckpt_filename": "epoch=2164-step=1355540.ckpt",
+        "cfg_filename": "en_US-lessac-medium.onnx.json",
+    },
+    "ryan": {
+        "label": "Ryan",
+        "desc": "Deeper American male voice.",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/ryan/medium/epoch=4641-step=3104302.ckpt",
+        "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx.json",
+        "ckpt_filename": "epoch=4641-step=3104302.ckpt",
+        "cfg_filename": "en_US-ryan-medium.onnx.json",
+    },
+    "amy": {
+        "label": "Amy",
+        "desc": "American female voice, different timbre from Lessac.",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/amy/medium/epoch=6679-step=1554200.ckpt",
+        "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json",
+        "ckpt_filename": "epoch=6679-step=1554200.ckpt",
+        "cfg_filename": "en_US-amy-medium.onnx.json",
+    },
+    "hfc_male": {
+        "label": "HFC Male",
+        "desc": "Home Assistant community male voice.",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/hfc_male/medium/epoch=2785-step=2128064.ckpt",
+        "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx.json",
+        "ckpt_filename": "epoch=2785-step=2128064.ckpt",
+        "cfg_filename": "en_US-hfc_male-medium.onnx.json",
+    },
+    "hfc_female": {
+        "label": "HFC Female",
+        "desc": "Home Assistant community female voice.",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/hfc_female/medium/epoch=2868-step=1575188.ckpt",
+        "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
+        "ckpt_filename": "epoch=2868-step=1575188.ckpt",
+        "cfg_filename": "en_US-hfc_female-medium.onnx.json",
+    },
+}
+
+
+def base_voice_dir(key: str) -> Path:
+    return PIPER_CKPTS if key == "lessac" else PIPER_CKPTS / key
+
+
+def base_voice_ready(key: str) -> bool:
+    """True if this base voice's checkpoint + config are already on disk."""
+    if key not in BASE_VOICES:
+        return False
+    d = base_voice_dir(key)
+    return bool(list(d.glob("*.ckpt"))) and bool(list(d.glob("*.onnx.json"))) if d.exists() else False
+
+
+def base_voice_paths(key: str) -> tuple[Path, Path]:
+    """Returns (ckpt_path, cfg_path) for an already-downloaded base voice."""
+    d = base_voice_dir(key)
+    ckpts = sorted(d.glob("*.ckpt")) if d.exists() else []
+    cfgs = sorted(d.glob("*.onnx.json")) if d.exists() else []
+    if not ckpts or not cfgs:
+        raise FileNotFoundError(f"Base voice '{key}' isn't downloaded yet")
+    return ckpts[-1], cfgs[-1]
+
+
+def _download_with_progress(url: str, dest: Path, label: str, log_cb) -> None:
+    import urllib.request
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    with urllib.request.urlopen(url) as resp:
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        last_pct = -1
+        with open(tmp, "wb") as f:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    pct = int(downloaded * 100 / total)
+                    if pct != last_pct and pct % 10 == 0:
+                        log_cb(f"  {label}: {pct}% ({downloaded // (1024*1024)}/{total // (1024*1024)} MB)")
+                        last_pct = pct
+    tmp.rename(dest)
+
+
+async def download_base_voice(key: str, log_cb) -> None:
+    """Download a base voice's checkpoint + config on demand (~800 MB total),
+    skipping any files already present."""
+    if key not in BASE_VOICES:
+        raise ValueError(f"Unknown base voice: {key}")
+    voice = BASE_VOICES[key]
+    dest_dir = base_voice_dir(key)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    ckpt_dest = dest_dir / voice["ckpt_filename"]
+    cfg_dest = dest_dir / voice["cfg_filename"]
+
+    if not ckpt_dest.exists():
+        log_cb(f"Downloading {voice['label']} checkpoint (~800 MB)…")
+        await asyncio.to_thread(_download_with_progress, voice["ckpt_url"], ckpt_dest, ckpt_dest.name, log_cb)
+    else:
+        log_cb(f"{voice['label']} checkpoint already present")
+
+    if not cfg_dest.exists():
+        log_cb(f"Downloading {voice['label']} config…")
+        await asyncio.to_thread(_download_with_progress, voice["cfg_url"], cfg_dest, cfg_dest.name, log_cb)
+    else:
+        log_cb(f"{voice['label']} config already present")
+
+
+async def _read_checkpoint_epoch(py: str, ckpt_path: Path) -> int:
+    """Read the actual current_epoch from inside a Lightning checkpoint —
+    more reliable than parsing it out of the filename, which isn't
+    consistently formatted across different base voices (some use
+    epoch=N-step=M.ckpt, others use arbitrary names like "bryce-3499.ckpt"
+    with no "epoch=" substring at all)."""
+    code = (
+        "import torch, sys, pathlib\n"
+        "if sys.platform == 'win32':\n"
+        "    pathlib.PosixPath = pathlib.WindowsPath\n"
+        f"ckpt = torch.load({str(ckpt_path)!r}, map_location='cpu', weights_only=False)\n"
+        "print(ckpt.get('epoch', 0))\n"
+    )
+    r = await asyncio.to_thread(
+        subprocess.run, [py, "-c", code], capture_output=True, timeout=120, text=True,
+    )
+    if r.returncode != 0:
+        detail = (r.stderr or r.stdout or "").strip()
+        raise RuntimeError(f"Couldn't read checkpoint epoch: {detail[-500:]}")
+    return int(r.stdout.strip())
+
+
 def _python() -> Path:
     return PIPER_VENV / ("Scripts/python.exe" if _IS_WIN else "bin/python")
 
@@ -376,6 +525,7 @@ async def train(
     log_cb,
     proc_ref: list,
     max_epochs: int = 1000,
+    base_voice: str = "lessac",
 ) -> list[tuple[int, Path]]:
     """Train piper voice model. Streams log lines via log_cb.
 
@@ -400,14 +550,15 @@ async def train(
             "Add transcripts via the EDIT button on each ref clip."
         )
 
-    base_ckpts = sorted(PIPER_CKPTS.glob("*.ckpt")) if PIPER_CKPTS.exists() else []
-    base_cfgs  = sorted(PIPER_CKPTS.glob("*.json")) if PIPER_CKPTS.exists() else []
-    if not base_ckpts:
-        raise RuntimeError("No base checkpoint in piper_checkpoints/ — run setup script first")
-    if not base_cfgs:
-        raise RuntimeError("No .onnx.json config in piper_checkpoints/ — run setup script first")
-    log_cb(f"Base checkpoint: {base_ckpts[-1].name}")
-    log_cb(f"Base config: {base_cfgs[-1].name}")
+    if not base_voice_ready(base_voice):
+        raise RuntimeError(
+            f"Base voice '{base_voice}' isn't downloaded — pick it again to download it first."
+        )
+    base_ckpt, base_cfg = base_voice_paths(base_voice)
+    voice_label = BASE_VOICES.get(base_voice, {}).get("label", base_voice)
+    log_cb(f"Base voice: {voice_label}")
+    log_cb(f"Base checkpoint: {base_ckpt.name}")
+    log_cb(f"Base config: {base_cfg.name}")
 
     await asyncio.to_thread(_ensure_phonemize_shim)
     log_cb("piper_phonemize shim ready")
@@ -453,20 +604,21 @@ async def train(
     log_cb("Preprocessing done")
 
     # The base checkpoint already has a current_epoch baked in from its own
-    # original training run (Lightning's default naming embeds it: e.g.
-    # "epoch=2164-...ckpt"). --max_epochs is an ABSOLUTE target, not a count
+    # original training run. --max_epochs is an ABSOLUTE target, not a count
     # of additional epochs — passing our max_epochs directly would set a
     # target already in the past and Lightning refuses to resume
     # ("You restored a checkpoint with current_epoch=2164, but you have set
     # Trainer(max_epochs=1000)"). Treat our max_epochs as "how many more
     # epochs to fine-tune for" and add it on top of the checkpoint's epoch.
-    m = re.search(r"epoch=(\d+)", base_ckpts[-1].name)
-    base_epoch = int(m.group(1)) if m else 0
+    # Read the epoch from inside the checkpoint itself, not its filename —
+    # not every base voice's filename follows the "epoch=N-..." convention.
+    log_cb("Reading base checkpoint epoch…")
+    base_epoch = await _read_checkpoint_epoch(py, base_ckpt)
     target_epochs = base_epoch + max_epochs
     log_cb(
         f"Training — {max_epochs} additional epochs (base checkpoint at epoch "
         f"{base_epoch}, target {target_epochs}), batch 16, GPU, resuming from "
-        f"{base_ckpts[-1].name}…"
+        f"{base_ckpt.name}…"
     )
     await _stream([
         py, "-m", "piper_train",
@@ -477,7 +629,7 @@ async def train(
         "--validation-split", "0.0",
         "--num-test-examples", "0",
         "--max_epochs", str(target_epochs),
-        "--resume_from_checkpoint", str(base_ckpts[-1]),
+        "--resume_from_checkpoint", str(base_ckpt),
         "--checkpoint-epochs", "100",
         "--precision", "32",
         "--default_root_dir", str(train_dir),
@@ -513,7 +665,7 @@ async def train(
             py, "-m", "piper_train.export_onnx",
             str(ckpt), str(onnx_path),
         ], log_cb, proc_ref)
-        shutil.copy2(str(base_cfgs[-1]), str(onnx_path.with_suffix(".onnx.json")))
+        shutil.copy2(str(base_cfg), str(onnx_path.with_suffix(".onnx.json")))
         candidates.append((epoch, onnx_path))
 
     log_cb(f"✓  Exported {len(candidates)} checkpoint candidate(s) for preview")
