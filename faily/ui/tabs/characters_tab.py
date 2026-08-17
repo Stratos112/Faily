@@ -407,12 +407,6 @@ def build_characters_tab(on_speak, on_change):
             # ── add ref clip ────────────────────────────────────────────────
             ui.separator().classes("my-3 opacity-20")
             section_label("ADD REFERENCE CLIP")
-            with ui.row().classes("items-center gap-2 w-full mt-1"):
-                upload_transcript = (
-                    ui.input(placeholder="transcript (optional)…")
-                    .props("outlined dark dense")
-                    .classes("flex-grow font-mono text-[11px]")
-                )
 
             async def _on_ref_upload(e, n=name):
                 import os
@@ -424,7 +418,6 @@ def build_characters_tab(on_speak, on_change):
                     with os.fdopen(fd, "wb") as f:
                         f.write(await e.file.read())
                     add_ref_clip(n, tmp_path, upload_transcript.value.strip())
-                    upload_transcript.set_value("")
                     ui.notify("Added to reference pool", type="positive", timeout=2000)
                     _rebuild_detail()
                 except Exception as exc:
@@ -432,9 +425,23 @@ def build_characters_tab(on_speak, on_change):
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
-            ui.upload(on_upload=_on_ref_upload, multiple=True, auto_upload=True).props(
-                "accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Upload clip'"
-            ).classes("w-full mt-1")
+            # auto_upload=False stages the file(s) client-side only — nothing
+            # touches the ref pool until the Upload button below fires the
+            # actual transfer, so a transcript can be typed first.
+            ref_upload = (
+                ui.upload(on_upload=_on_ref_upload, multiple=True, auto_upload=False)
+                .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Select clip(s)'")
+                .classes("w-full mt-1")
+            )
+            upload_transcript = (
+                ui.input(placeholder="transcript (optional)…")
+                .props("outlined dark dense")
+                .classes("w-full mt-2 font-mono text-[11px]")
+            )
+            ui.button(
+                "Upload", icon="cloud_upload",
+                on_click=lambda: ref_upload.run_method("upload"),
+            ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest mt-1")
 
             # ── personality clips ────────────────────────────────────────
             if is_base:
