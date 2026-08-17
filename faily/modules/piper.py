@@ -502,13 +502,24 @@ async def _probe(py: str, label: str, code: str, log_cb) -> None:
     The blocking subprocess.run() runs in a worker thread — Faily (like most
     asyncio UI apps) runs everything on a single event loop, so a blocking
     call here would freeze the whole server, including the websocket pings
-    that keep the browser connected, for its full duration (up to the 30s
+    that keep the browser connected, for its full duration (up to the 120s
     timeout). log_cb runs back on the main thread after the await, since
     NiceGUI elements aren't safe to touch from a worker thread.
+
+    These are best-effort diagnostics, not a gate — a cold `import torch` can
+    legitimately take well over 30s on Windows (cu128's DLLs are large and
+    first-import disk/AV-scan cost is real), so a timeout here is logged and
+    swallowed rather than raised. Failing the probe would abort the whole
+    training run over a diagnostic that never blocks the actual training
+    subprocess later, which has no timeout at all.
     """
-    r = await asyncio.to_thread(
-        subprocess.run, [py, "-c", code], capture_output=True, timeout=30, text=True
-    )
+    try:
+        r = await asyncio.to_thread(
+            subprocess.run, [py, "-c", code], capture_output=True, timeout=120, text=True
+        )
+    except subprocess.TimeoutExpired:
+        log_cb(f"[probe:{label}] TIMED OUT after 120s (continuing — this is just a diagnostic)")
+        return
     if r.returncode == 0:
         out = r.stdout.strip()
         log_cb(f"[probe:{label}] OK" + (f" — {out}" if out else ""))
