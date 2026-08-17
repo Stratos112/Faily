@@ -213,8 +213,56 @@ def build_characters_tab(on_speak, on_change):
         is_base = "parent" not in char
         char_dir = CHARACTERS_DIR / name
 
+        # ── shared data — computed once, used by more than one tab ──────────
+        own_refs = []
+        if is_base and "ref_audio" in char:
+            ra = char_dir / char["ref_audio"]
+            if ra.exists():
+                own_refs.append({
+                    "audio": ra, "transcript": char.get("transcript", ""),
+                    "kind": "primary", "file_key": None,
+                })
+        for rc in char.get("ref_clips", []):
+            rp = char_dir / rc["file"]
+            if rp.exists():
+                own_refs.append({
+                    "audio": rp, "transcript": rc.get("transcript", ""),
+                    "kind": "clip", "file_key": rc["file"],
+                })
+
+        full_chain = get_ref_chain(name)
+        own_paths = {r["audio"] for r in own_refs}
+        inherited = [e for e in full_chain if e["audio"] not in own_paths]
+        all_refs = own_refs + inherited
+
+        total_dur = 0.0
+        try:
+            import soundfile as _sf
+            for _r in all_refs:
+                try:
+                    total_dur += _sf.info(str(_r["audio"])).duration
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        dur_str = f"{total_dur:.0f}s" if total_dur < 60 else f"{total_dur / 60:.1f}m"
+        transcript_count = sum(1 for r in all_refs if r["transcript"].strip())
+
+        _, children_map = _grouped()
+        children = children_map.get(name, []) if is_base else []
+        clips = list_character_clips(name) if is_base else []
+        favs = list_character_favorites(name) if is_base else []
+        has_model = bool(char.get("piper_model") or char.get("rvc_model"))
+
+        def _meta_row(label: str, value: str):
+            with ui.row().classes("items-start gap-3 w-full"):
+                ui.label(label).classes(
+                    "text-[#444] font-mono text-[10px] tracking-widest w-36 shrink-0 pt-0.5"
+                )
+                ui.label(value).classes("text-[#aaa] font-mono text-[11px] flex-grow break-all")
+
         with right_col:
-            # ── header ──────────────────────────────────────────────────────
+            # ── header — stays visible no matter which sub-tab is open ──────
             ui.label(name).classes("text-white font-mono text-xl tracking-wide")
             if is_base:
                 ui.label("BASE CHARACTER").classes(
@@ -224,485 +272,480 @@ def build_characters_tab(on_speak, on_change):
                 ui.label(f"SUB-CHARACTER  ↳  {char['parent']}").classes(
                     "text-[#555] font-mono text-[10px] tracking-widest"
                 )
-
             ui.separator().classes("my-3 opacity-20")
 
-            # ── metadata ────────────────────────────────────────────────────
-            def _meta_row(label: str, value: str):
-                with ui.row().classes("items-start gap-3 w-full"):
-                    ui.label(label).classes(
-                        "text-[#444] font-mono text-[10px] tracking-widest w-28 shrink-0 pt-0.5"
+            with ui.tabs().classes("w-full") as detail_tabs:
+                tab_about = ui.tab("ABOUT")
+                tab_refs = ui.tab("REFERENCES")
+                tab_train = ui.tab("TRAINING")
+                tab_clips = ui.tab("CLIPS")
+
+            with ui.tab_panels(detail_tabs, value=tab_about).classes("w-full bg-transparent"):
+
+                # ══ ABOUT ════════════════════════════════════════════════════
+                with ui.tab_panel(tab_about).classes("gap-2 p-0 pt-3"):
+                    created = char.get("created", "—")[:19].replace("T", "  ")
+                    _meta_row("CREATED", created)
+                    if not is_base:
+                        _meta_row("PARENT", char.get("parent", "—"))
+                        if char.get("backend"):
+                            _meta_row("BACKEND", char["backend"])
+                    _meta_row(
+                        "REF CLIPS",
+                        f"{len(all_refs)}" + (
+                            f"  ({len(own_refs)} own + {len(inherited)} inherited)" if inherited else ""
+                        ),
                     )
-                    ui.label(value).classes("text-[#aaa] font-mono text-[11px] flex-grow break-all")
+                    _meta_row("REF AUDIO LENGTH", dur_str if all_refs else "—")
+                    _meta_row("TRANSCRIPTS", f"{transcript_count} / {len(all_refs)}")
+                    trained = []
+                    if char.get("piper_model"):
+                        trained.append("Piper")
+                    if char.get("rvc_model"):
+                        trained.append("RVC")
+                    _meta_row("TRAINED MODELS", ", ".join(trained) if trained else "none yet")
+                    if is_base:
+                        _meta_row("PERSONALITY CLIPS", str(len(clips)))
+                        _meta_row("FAVORITES", str(len(favs)))
 
-            created = char.get("created", "—")[:19].replace("T", "  ")
-            _meta_row("CREATED", created)
-
-            if is_base:
-                # ── variants ────────────────────────────────────────────────
-                _, children_map = _grouped()
-                children = children_map.get(name, [])
-                if children:
-                    ui.separator().classes("my-3 opacity-20")
-                    ui.label("VARIANTS").classes(
-                        "text-[#444] font-mono text-[10px] tracking-widest"
-                    )
-                    for sub in children:
-                        with ui.row().classes(
-                            "items-center gap-2 px-2 py-0.5 rounded cursor-pointer hover:bg-[#111]"
-                        ).on("click", lambda n=sub["name"]: _select(n)):
-                            ui.icon("person_outline", size="12px").classes("text-[#555]")
-                            ui.label(f"↳ {sub['name']}").classes(
-                                "text-[#666] font-mono text-[10px] hover:text-amber-400"
-                            )
-            else:
-                _meta_row("PARENT", char.get("parent", "—"))
-                if char.get("backend"):
-                    _meta_row("BACKEND", char["backend"])
-                style = char.get("style_prompt", "").strip()
-                if style:
-                    ui.label("STYLE PROMPT").classes(
-                        "text-[#444] font-mono text-[10px] tracking-widest mt-1"
-                    )
-                    ui.label(style).classes(
-                        "text-[#aaa] font-mono text-[11px] leading-relaxed "
-                        "bg-[#1a1a1a] rounded px-3 py-2 w-full"
-                    )
-
-            # ── references (unified) ──────────────────────────────────────
-            own_refs = []
-            if is_base and "ref_audio" in char:
-                ra = char_dir / char["ref_audio"]
-                if ra.exists():
-                    own_refs.append({
-                        "audio": ra, "transcript": char.get("transcript", ""),
-                        "kind": "primary", "file_key": None,
-                    })
-            for rc in char.get("ref_clips", []):
-                rp = char_dir / rc["file"]
-                if rp.exists():
-                    own_refs.append({
-                        "audio": rp, "transcript": rc.get("transcript", ""),
-                        "kind": "clip", "file_key": rc["file"],
-                    })
-
-            full_chain = get_ref_chain(name)
-            own_paths = {r["audio"] for r in own_refs}
-            inherited = [e for e in full_chain if e["audio"] not in own_paths]
-
-            if own_refs or inherited:
-                ui.separator().classes("my-3 opacity-20")
-                all_refs = own_refs + inherited
-                total_dur = 0.0
-                try:
-                    import soundfile as _sf
-                    for _r in all_refs:
-                        try:
-                            total_dur += _sf.info(str(_r["audio"])).duration
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                dur_str = (f"{total_dur:.0f}s" if total_dur < 60
-                           else f"{total_dur / 60:.1f}m")
-                with ui.row().classes("items-center gap-2 w-full"):
-                    ui.label("REFERENCES").classes(
-                        "text-[#444] font-mono text-[10px] tracking-widest flex-grow"
-                    )
-                    ui.label(f"{len(all_refs)} clips  ·  {dur_str}").classes(
-                        "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
-                    )
-
-                ref_player = ui.audio("").classes("w-full rounded mt-1")
-                ref_now_playing = ui.label("").classes("text-[#333] font-mono text-[9px]")
-
-                def _play_ref(u, n):
-                    ref_player.set_source(u)
-                    ref_now_playing.set_text(f"▶  {n}")
-
-                for ref in own_refs:
-                    audio = ref["audio"]
-                    rel = audio.relative_to(Path("outputs"))
-                    url = f"/outputs/{rel.as_posix()}"
-                    is_primary = ref["kind"] == "primary"
-                    issues = clip_quality_issues(audio)
-
-                    with ui.row().classes(
-                        "w-full items-center gap-1 px-2 py-1 rounded "
-                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
-                    ):
-                        ui.button(
-                            icon="play_arrow",
-                            on_click=lambda u=url, n=audio.stem: _play_ref(u, n),
-                        ).props("flat dense color=amber").classes("shrink-0")
-                        ui.icon("star" if is_primary else "mic", size="12px").classes(
-                            ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
+                    style = char.get("style_prompt", "").strip()
+                    if not is_base and style:
+                        ui.label("STYLE PROMPT").classes(
+                            "text-[#444] font-mono text-[10px] tracking-widest mt-1"
                         )
-                        if issues:
-                            ui.icon("warning", size="12px").classes(
-                                "text-amber-500 shrink-0"
-                            ).tooltip(
-                                f"{', '.join(issues)} — consider re-recording or removing "
-                                "this clip; low-quality refs drag down cloning and training."
+                        ui.label(style).classes(
+                            "text-[#aaa] font-mono text-[11px] leading-relaxed "
+                            "bg-[#1a1a1a] rounded px-3 py-2 w-full"
+                        )
+
+                    if is_base:
+                        ui.separator().classes("my-2 opacity-10")
+                        with ui.row().classes("items-center gap-2"):
+                            ui.label("VARIANTS").classes(
+                                "text-[#444] font-mono text-[10px] tracking-widest"
                             )
-                        with ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer").on(
-                            "click", lambda u=url, n=audio.stem: _play_ref(u, n)
-                        ):
-                            ui.label(audio.stem).classes(
-                                "text-[#aaa] font-mono text-[10px] truncate"
+                            ui.label(str(len(children))).classes(
+                                "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
                             )
-                            t = ref["transcript"]
-                            if t:
-                                ui.label(f'"{t}"').classes(
-                                    "text-[#555] font-mono text-[10px] italic leading-tight truncate"
+                        for sub in children:
+                            with ui.row().classes(
+                                "items-center gap-2 px-2 py-0.5 rounded cursor-pointer hover:bg-[#111]"
+                            ).on("click", lambda n=sub["name"]: _select(n)):
+                                ui.icon("person_outline", size="12px").classes("text-[#555]")
+                                ui.label(f"↳ {sub['name']}").classes(
+                                    "text-[#666] font-mono text-[10px] hover:text-amber-400"
                                 )
-                        ui.button(
-                            icon="tune",
-                            on_click=lambda r=ref: send_to_edit(r["audio"], name),
-                        ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to Edit tab")
-                        ui.button(
-                            icon="edit",
-                            on_click=lambda r=ref: _open_ref_edit(
-                                name, r["audio"], r["kind"] == "primary",
-                                r.get("file_key"), r["transcript"]
-                            ),
-                        ).props("flat dense color=grey").classes("shrink-0")
-                        if not is_primary:
-                            def _del(fk=ref["file_key"]):
-                                remove_ref_clip(name, fk)
-                                _rebuild_detail()
-                            ui.button(
-                                icon="close", on_click=_del,
-                            ).props("flat dense color=grey").classes(
-                                "shrink-0 opacity-40 hover:opacity-100"
-                            )
 
-                for entry in inherited:
-                    audio = entry["audio"]
-                    if not audio.exists():
-                        continue
-                    rel = audio.relative_to(Path("outputs"))
-                    url = f"/outputs/{rel.as_posix()}"
-                    with ui.row().classes(
-                        "w-full items-center gap-1 px-2 py-1 rounded "
-                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
-                    ):
-                        ui.button(
-                            icon="play_arrow",
-                            on_click=lambda u=url, n=audio.stem: _play_ref(u, n),
-                        ).props("flat dense color=grey").classes("shrink-0")
-                        ui.icon("link", size="12px").classes("text-[#333] shrink-0")
-                        with ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer").on(
-                            "click", lambda u=url, n=audio.stem: _play_ref(u, n)
-                        ):
-                            ui.label(audio.stem).classes(
-                                "text-[#555] font-mono text-[10px] truncate"
-                            )
-                            if entry.get("transcript"):
-                                ui.label(f'"{entry["transcript"]}"').classes(
-                                    "text-[#333] font-mono text-[10px] italic leading-tight truncate"
-                                )
-                        ui.label("↑ parent").classes("text-[#333] font-mono text-[9px] shrink-0")
-
-            # ── add ref clip ────────────────────────────────────────────────
-            ui.separator().classes("my-3 opacity-20")
-            section_label("ADD REFERENCE CLIP")
-
-            async def _on_ref_upload(e, n=name):
-                import os
-                import tempfile
-                suffix = Path(e.file.name).suffix or ".wav"
-                fd, tmp_name = tempfile.mkstemp(suffix=suffix)
-                tmp_path = Path(tmp_name)
-                try:
-                    with os.fdopen(fd, "wb") as f:
-                        f.write(await e.file.read())
-                    add_ref_clip(n, tmp_path, upload_transcript.value.strip())
-                    ui.notify("Added to reference pool", type="positive", timeout=2000)
-                    _rebuild_detail()
-                except Exception as exc:
-                    show_error(exc)
-                finally:
-                    tmp_path.unlink(missing_ok=True)
-
-            # auto_upload=False stages the file client-side only — nothing
-            # touches the ref pool until the Upload button below fires the
-            # actual transfer, so a transcript can be typed first.
-            ref_upload = (
-                ui.upload(on_upload=_on_ref_upload, multiple=False, auto_upload=False)
-                .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Select clip'")
-                .classes("w-full mt-1")
-            )
-            upload_transcript = (
-                ui.input(placeholder="transcript (optional)…")
-                .props("outlined dark dense")
-                .classes("w-full mt-2 font-mono text-[11px]")
-            )
-            ui.button(
-                "Upload", icon="cloud_upload",
-                on_click=lambda: ref_upload.run_method("upload"),
-            ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest mt-1")
-
-            # ── personality clips ────────────────────────────────────────
-            if is_base:
-                clips = list_character_clips(name)
-                if clips:
-                    ui.separator().classes("my-3 opacity-20")
-                    _clip_section(
-                        name, "PERSONALITY CLIPS", "library_music", "text-amber-400",
-                        clips, "clips",
-                    )
-
-                favs = list_character_favorites(name)
-                if favs:
-                    ui.separator().classes("my-3 opacity-20")
-                    _clip_section(
-                        name, "FAVORITES", "favorite", "text-pink-400",
-                        favs, "favorites",
-                    )
-
-            # ── actions ──────────────────────────────────────────────────────
-            ui.separator().classes("mt-4 mb-3 opacity-20")
-
-            has_model = bool(char.get("piper_model") or char.get("rvc_model"))
-
-            # ── base voice picker — what the Piper fine-tune starts from ────
-            def _base_voice_opts() -> dict[str, str]:
-                opts = {}
-                for key, v in BASE_VOICES.items():
-                    ready = base_voice_ready(key)
-                    suffix = "" if ready else "  (~800 MB download)"
-                    opts[key] = f"{v['label']}{suffix}"
-                return opts
-
-            _base_voice_key: list[str] = ["lessac"]
-            with ui.row().classes("items-center gap-1"):
-                section_label("BASE VOICE")
-                ui.icon("info_outline", size="13px").classes(
-                    "text-[#3a3a3a] cursor-help"
-                ).tooltip(
-                    "What the fine-tune starts from. With only a handful of ref "
-                    "clips, picking a base already close to the target's gender/"
-                    "timbre matters more than most other settings. Not-yet-"
-                    "downloaded voices download automatically the first time "
-                    "you train with them."
-                )
-            def _on_base_voice_change(e):
-                _base_voice_key[0] = e.value
-                base_voice_desc.set_text(BASE_VOICES.get(e.value, {}).get("desc", ""))
-                base_voice_preview_player.set_visibility(False)
-
-            base_voice_select = (
-                ui.select(options=_base_voice_opts(), value="lessac", on_change=_on_base_voice_change)
-                .props("outlined dark dense").classes("w-full mb-2")
-            )
-            base_voice_desc = ui.label(BASE_VOICES["lessac"]["desc"]).classes(
-                "text-[#444] font-mono text-[10px] tracking-wide mb-2"
-            )
-
-            # ── base voice preview — hear it before committing to training ──
-            async def _preview_base_voice():
-                key = _base_voice_key[0]
-                preview_btn.set_text("LOADING…")
-                preview_btn.disable()
-                try:
-                    path = await generate_base_voice_sample(key)
-                    rel = path.relative_to(Path("outputs"))
-                    base_voice_preview_player.set_source(f"/outputs/{rel.as_posix()}")
-                    base_voice_preview_player.set_visibility(True)
-                except Exception as exc:
-                    show_error(exc)
-                finally:
-                    preview_btn.set_text("▶  PREVIEW VOICE")
-                    preview_btn.enable()
-
-            with ui.row().classes("items-center gap-2 mb-1"):
-                preview_btn = ui.button("▶  PREVIEW VOICE", on_click=_preview_base_voice).props(
-                    "flat dense color=grey"
-                ).classes("font-mono text-[10px] tracking-widest")
-                ui.label(f'"{SAMPLE_TEXT}"').classes(
-                    "text-[#444] font-mono text-[10px] italic"
-                )
-            base_voice_preview_player = ui.audio("").classes("w-full rounded mb-2")
-            base_voice_preview_player.set_visibility(False)
-
-            with ui.row().classes("gap-2 flex-wrap"):
-
-                async def _do_train(n=name):
-                    chain = get_ref_chain(n)
-                    if not chain:
-                        ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
-                        return
-                    # Piper only hard-requires 2 clips with transcripts, but good
-                    # fine-tunes typically need 30-200+ (several minutes of audio).
-                    # Warn below a lower floor without blocking — this is a soft
-                    # nudge, not a hard requirement.
-                    if len(chain) < 20:
-                        ui.notify(
-                            f"Only {len(chain)} reference clip{'s' if len(chain) != 1 else ''} — "
-                            "Piper fine-tunes usually need 30-200+ for good results. "
-                            "Training will proceed, but quality may suffer.",
-                            type="warning", timeout=6000,
+                    ui.separator().classes("mt-4 mb-3 opacity-20")
+                    with ui.row().classes("gap-2"):
+                        ui.button("EDIT", icon="edit", on_click=lambda n=name: _open_edit(n)).props(
+                            "flat color=grey"
                         )
+                        ui.button(
+                            "DELETE", icon="delete_outline",
+                            on_click=lambda n=name: _confirm_delete(n),
+                        ).props("flat color=negative")
 
-                    from faily.modules.piper import (
-                        train, diagnose, finalize_piper_model, infer, download_base_voice,
-                    )
-                    chosen_voice = _base_voice_key[0]
-                    reason = await ni_run.io_bound(diagnose)
-                    if reason:
-                        ui.notify(f"Piper not ready — {reason}", type="warning", timeout=8000)
-                        return
+                # ══ REFERENCES ═══════════════════════════════════════════════
+                with ui.tab_panel(tab_refs).classes("gap-2 p-0 pt-3"):
+                    section_label("ADD REFERENCE")
 
-                    _proc_ref: list = [None]
-                    _log_lines: list[str] = []
-                    _candidates: list[tuple[int, Path]] = []
-                    char_dir = CHARACTERS_DIR / n
-
-                    with ui.dialog().classes("w-full max-w-3xl") as dlg, ui.card().classes(
-                        "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
-                    ):
-                        ui.label(f"TRAINING  {n}").classes(
-                            "text-white font-mono text-xs tracking-widest"
-                        )
-                        log = ui.log(max_lines=2000).classes(
-                            "w-full font-mono text-[10px] rounded border border-[#1a1a1a]"
-                        ).style("height:420px; background:#050505")
-                        with ui.row().classes("w-full justify-between items-center"):
-                            status_lbl = ui.label("running…").classes(
-                                "text-[#555] font-mono text-[10px]"
-                            )
-                            with ui.row().classes("gap-2"):
-                                ui.button(
-                                    "Copy log", icon="content_copy",
-                                    on_click=lambda: ui.clipboard.write("\n".join(_log_lines)),
-                                ).props("flat dense color=amber")
-                                ui.button(
-                                    "STOP",
-                                    on_click=lambda: _proc_ref[0].terminate() if _proc_ref[0] else None,
-                                ).props("flat dense color=negative")
-                                close_btn = (
-                                    ui.button("CLOSE", on_click=dlg.close)
-                                    .props("flat dense color=grey")
-                                )
-                                close_btn.set_visibility(False)
-
-                        ui.separator().classes("opacity-20")
-                        ui.label(
-                            "PREVIEW LINE — used to audition each saved checkpoint once "
-                            "training finishes. Edit it any time before then."
-                        ).classes("text-[#444] font-mono text-[10px] leading-snug")
-                        preview_text_input = (
-                            ui.input(value="Hello, this is a test of the trained voice.")
-                            .props("outlined dark dense")
-                            .classes("w-full font-mono text-[11px]")
-                        )
-
-                        # ── checkpoint picker — populated once training finishes ────
-                        with ui.column().classes("w-full gap-2") as picker_section:
-                            ui.separator().classes("opacity-20")
-                            ui.label("PICK A CHECKPOINT").classes(
-                                "text-amber-400 font-mono text-[10px] tracking-widest"
-                            )
-                            ui.label(
-                                "Each saved checkpoint is a full, independent snapshot — the "
-                                "last one isn't always the best-sounding. Listen and pick "
-                                "your favorite; the rest are discarded."
-                            ).classes("text-[#444] font-mono text-[10px] leading-snug")
-                            candidates_col = ui.column().classes("w-full gap-1")
-                        picker_section.set_visibility(False)
-                    dlg.open()
-
-                    def _ui_safe(fn):
-                        # If the browser tab/connection dies mid-training, NiceGUI
-                        # raises RuntimeError on any attempt to touch its elements.
-                        # Training itself (a separate OS process) keeps running
-                        # regardless — don't let a dead UI client abort the actual
-                        # training/export logic or the file writes that follow it.
+                    async def _on_ref_upload(e, n=name):
+                        import os
+                        import tempfile
+                        suffix = Path(e.file.name).suffix or ".wav"
+                        fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+                        tmp_path = Path(tmp_name)
                         try:
-                            fn()
-                        except RuntimeError:
-                            pass
-
-                    def _log(line: str):
-                        _log_lines.append(line)
-                        _ui_safe(lambda: log.push(line))
-
-                    async def _choose(chosen_onnx: Path):
-                        try:
-                            final_path = await ni_run.io_bound(finalize_piper_model, char_dir, chosen_onnx)
-                            set_piper_model(n, str(final_path))
-                            ui.notify(f"Piper model set for {n}", type="positive", timeout=4000)
-                            on_change()
+                            with os.fdopen(fd, "wb") as f:
+                                f.write(await e.file.read())
+                            add_ref_clip(n, tmp_path, upload_transcript.value.strip())
+                            ui.notify("Added to reference pool", type="positive", timeout=2000)
                             _rebuild_detail()
-                            dlg.close()
                         except Exception as exc:
                             show_error(exc)
+                        finally:
+                            tmp_path.unlink(missing_ok=True)
 
-                    async def _generate_previews():
-                        candidates_col.clear()
-                        text = preview_text_input.value.strip() or "Hello, this is a test of the trained voice."
-                        for epoch, onnx_path in _candidates:
-                            _ui_safe(lambda e=epoch: status_lbl.set_text(f"Generating preview — epoch {e}…"))
-                            preview_path = onnx_path.with_name(f"preview_epoch_{epoch}.wav")
+                    # auto_upload=False stages the file client-side only —
+                    # nothing touches the ref pool until the Upload button
+                    # below fires the actual transfer, so a transcript can be
+                    # typed first.
+                    ref_upload = (
+                        ui.upload(on_upload=_on_ref_upload, multiple=False, auto_upload=False)
+                        .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Select clip'")
+                        .classes("w-full mt-1")
+                    )
+                    upload_transcript = (
+                        ui.input(placeholder="transcript (optional)…")
+                        .props("outlined dark dense")
+                        .classes("w-full mt-2 font-mono text-[11px]")
+                    )
+                    ui.button(
+                        "Upload", icon="cloud_upload",
+                        on_click=lambda: ref_upload.run_method("upload"),
+                    ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest mt-1")
+
+                    ui.separator().classes("my-3 opacity-20")
+                    with ui.row().classes("items-center gap-2 w-full"):
+                        ui.label("ALL REFERENCES").classes(
+                            "text-[#444] font-mono text-[10px] tracking-widest flex-grow"
+                        )
+                        ui.label(f"{len(all_refs)} clips  ·  {dur_str}").classes(
+                            "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
+                        )
+
+                    if not all_refs:
+                        ui.label("No reference clips yet — add one above.").classes(
+                            "text-[#444] font-mono text-[10px] py-2"
+                        )
+                    else:
+                        ref_player = ui.audio("").classes("w-full rounded mt-1")
+                        ref_now_playing = ui.label("").classes("text-[#333] font-mono text-[9px]")
+
+                        def _play_ref(u, n):
+                            ref_player.set_source(u)
+                            ref_now_playing.set_text(f"▶  {n}")
+
+                        with ui.scroll_area().classes("w-full").style("height: 380px"):
+                            with ui.column().classes("w-full gap-1"):
+                                for ref in own_refs:
+                                    audio = ref["audio"]
+                                    rel = audio.relative_to(Path("outputs"))
+                                    url = f"/outputs/{rel.as_posix()}"
+                                    is_primary = ref["kind"] == "primary"
+                                    issues = clip_quality_issues(audio)
+
+                                    with ui.row().classes(
+                                        "w-full items-center gap-1 px-2 py-1 rounded "
+                                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
+                                    ):
+                                        ui.button(
+                                            icon="play_arrow",
+                                            on_click=lambda u=url, n=audio.stem: _play_ref(u, n),
+                                        ).props("flat dense color=amber").classes("shrink-0")
+                                        ui.icon("star" if is_primary else "mic", size="12px").classes(
+                                            ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
+                                        )
+                                        if issues:
+                                            ui.icon("warning", size="12px").classes(
+                                                "text-amber-500 shrink-0"
+                                            ).tooltip(
+                                                f"{', '.join(issues)} — consider re-recording or removing "
+                                                "this clip; low-quality refs drag down cloning and training."
+                                            )
+                                        with ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer").on(
+                                            "click", lambda u=url, n=audio.stem: _play_ref(u, n)
+                                        ):
+                                            ui.label(audio.stem).classes(
+                                                "text-[#aaa] font-mono text-[10px] truncate"
+                                            )
+                                            t = ref["transcript"]
+                                            if t:
+                                                ui.label(f'"{t}"').classes(
+                                                    "text-[#555] font-mono text-[10px] italic leading-tight truncate"
+                                                )
+                                        ui.button(
+                                            icon="tune",
+                                            on_click=lambda r=ref: send_to_edit(r["audio"], name),
+                                        ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to Edit tab")
+                                        ui.button(
+                                            icon="edit",
+                                            on_click=lambda r=ref: _open_ref_edit(
+                                                name, r["audio"], r["kind"] == "primary",
+                                                r.get("file_key"), r["transcript"]
+                                            ),
+                                        ).props("flat dense color=grey").classes("shrink-0")
+                                        if not is_primary:
+                                            def _del(fk=ref["file_key"]):
+                                                remove_ref_clip(name, fk)
+                                                _rebuild_detail()
+                                            ui.button(
+                                                icon="close", on_click=_del,
+                                            ).props("flat dense color=grey").classes(
+                                                "shrink-0 opacity-40 hover:opacity-100"
+                                            )
+
+                                for entry in inherited:
+                                    audio = entry["audio"]
+                                    if not audio.exists():
+                                        continue
+                                    rel = audio.relative_to(Path("outputs"))
+                                    url = f"/outputs/{rel.as_posix()}"
+                                    with ui.row().classes(
+                                        "w-full items-center gap-1 px-2 py-1 rounded "
+                                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
+                                    ):
+                                        ui.button(
+                                            icon="play_arrow",
+                                            on_click=lambda u=url, n=audio.stem: _play_ref(u, n),
+                                        ).props("flat dense color=grey").classes("shrink-0")
+                                        ui.icon("link", size="12px").classes("text-[#333] shrink-0")
+                                        with ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer").on(
+                                            "click", lambda u=url, n=audio.stem: _play_ref(u, n)
+                                        ):
+                                            ui.label(audio.stem).classes(
+                                                "text-[#555] font-mono text-[10px] truncate"
+                                            )
+                                            if entry.get("transcript"):
+                                                ui.label(f'"{entry["transcript"]}"').classes(
+                                                    "text-[#333] font-mono text-[10px] italic leading-tight truncate"
+                                                )
+                                        ui.label("↑ parent").classes("text-[#333] font-mono text-[9px] shrink-0")
+
+                # ══ TRAINING ═════════════════════════════════════════════════
+                with ui.tab_panel(tab_train).classes("gap-2 p-0 pt-3"):
+
+                    def _base_voice_opts() -> dict[str, str]:
+                        opts = {}
+                        for key, v in BASE_VOICES.items():
+                            ready = base_voice_ready(key)
+                            suffix = "" if ready else "  (~800 MB download)"
+                            opts[key] = f"{v['label']}{suffix}"
+                        return opts
+
+                    _base_voice_key: list[str] = ["lessac"]
+                    with ui.row().classes("items-center gap-1"):
+                        section_label("BASE VOICE")
+                        ui.icon("info_outline", size="13px").classes(
+                            "text-[#3a3a3a] cursor-help"
+                        ).tooltip(
+                            "What the fine-tune starts from. With only a handful of ref "
+                            "clips, picking a base already close to the target's gender/"
+                            "timbre matters more than most other settings. Not-yet-"
+                            "downloaded voices download automatically the first time "
+                            "you train with them."
+                        )
+
+                    def _on_base_voice_change(e):
+                        _base_voice_key[0] = e.value
+                        base_voice_desc.set_text(BASE_VOICES.get(e.value, {}).get("desc", ""))
+                        base_voice_preview_player.set_visibility(False)
+
+                    base_voice_select = (
+                        ui.select(options=_base_voice_opts(), value="lessac", on_change=_on_base_voice_change)
+                        .props("outlined dark dense").classes("w-full mb-2")
+                    )
+                    base_voice_desc = ui.label(BASE_VOICES["lessac"]["desc"]).classes(
+                        "text-[#444] font-mono text-[10px] tracking-wide mb-2"
+                    )
+
+                    # ── base voice preview — hear it before committing ──────
+                    async def _preview_base_voice():
+                        key = _base_voice_key[0]
+                        preview_btn.set_text("LOADING…")
+                        preview_btn.disable()
+                        try:
+                            path = await generate_base_voice_sample(key)
+                            rel = path.relative_to(Path("outputs"))
+                            base_voice_preview_player.set_source(f"/outputs/{rel.as_posix()}")
+                            base_voice_preview_player.set_visibility(True)
+                        except Exception as exc:
+                            show_error(exc)
+                        finally:
+                            preview_btn.set_text("▶  PREVIEW VOICE")
+                            preview_btn.enable()
+
+                    with ui.row().classes("items-center gap-2 mb-1"):
+                        preview_btn = ui.button("▶  PREVIEW VOICE", on_click=_preview_base_voice).props(
+                            "flat dense color=grey"
+                        ).classes("font-mono text-[10px] tracking-widest")
+                        ui.label(f'"{SAMPLE_TEXT}"').classes(
+                            "text-[#444] font-mono text-[10px] italic"
+                        )
+                    base_voice_preview_player = ui.audio("").classes("w-full rounded mb-2")
+                    base_voice_preview_player.set_visibility(False)
+
+                    ui.separator().classes("my-3 opacity-20")
+
+                    async def _do_train(n=name):
+                        chain = get_ref_chain(n)
+                        if not chain:
+                            ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
+                            return
+                        # Piper only hard-requires 2 clips with transcripts, but good
+                        # fine-tunes typically need 30-200+ (several minutes of audio).
+                        # Warn below a lower floor without blocking — this is a soft
+                        # nudge, not a hard requirement.
+                        if len(chain) < 20:
+                            ui.notify(
+                                f"Only {len(chain)} reference clip{'s' if len(chain) != 1 else ''} — "
+                                "Piper fine-tunes usually need 30-200+ for good results. "
+                                "Training will proceed, but quality may suffer.",
+                                type="warning", timeout=6000,
+                            )
+
+                        from faily.modules.piper import (
+                            train, diagnose, finalize_piper_model, infer, download_base_voice,
+                        )
+                        chosen_voice = _base_voice_key[0]
+                        reason = await ni_run.io_bound(diagnose)
+                        if reason:
+                            ui.notify(f"Piper not ready — {reason}", type="warning", timeout=8000)
+                            return
+
+                        _proc_ref: list = [None]
+                        _log_lines: list[str] = []
+                        _candidates: list[tuple[int, Path]] = []
+                        char_dir = CHARACTERS_DIR / n
+
+                        with ui.dialog().classes("w-full max-w-3xl") as dlg, ui.card().classes(
+                            "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
+                        ):
+                            ui.label(f"TRAINING  {n}").classes(
+                                "text-white font-mono text-xs tracking-widest"
+                            )
+                            log = ui.log(max_lines=2000).classes(
+                                "w-full font-mono text-[10px] rounded border border-[#1a1a1a]"
+                            ).style("height:420px; background:#050505")
+                            with ui.row().classes("w-full justify-between items-center"):
+                                status_lbl = ui.label("running…").classes(
+                                    "text-[#555] font-mono text-[10px]"
+                                )
+                                with ui.row().classes("gap-2"):
+                                    ui.button(
+                                        "Copy log", icon="content_copy",
+                                        on_click=lambda: ui.clipboard.write("\n".join(_log_lines)),
+                                    ).props("flat dense color=amber")
+                                    ui.button(
+                                        "STOP",
+                                        on_click=lambda: _proc_ref[0].terminate() if _proc_ref[0] else None,
+                                    ).props("flat dense color=negative")
+                                    close_btn = (
+                                        ui.button("CLOSE", on_click=dlg.close)
+                                        .props("flat dense color=grey")
+                                    )
+                                    close_btn.set_visibility(False)
+
+                            ui.separator().classes("opacity-20")
+                            ui.label(
+                                "PREVIEW LINE — used to audition each saved checkpoint once "
+                                "training finishes. Edit it any time before then."
+                            ).classes("text-[#444] font-mono text-[10px] leading-snug")
+                            preview_text_input = (
+                                ui.input(value="Hello, this is a test of the trained voice.")
+                                .props("outlined dark dense")
+                                .classes("w-full font-mono text-[11px]")
+                            )
+
+                            # ── checkpoint picker — populated once training finishes ────
+                            with ui.column().classes("w-full gap-2") as picker_section:
+                                ui.separator().classes("opacity-20")
+                                ui.label("PICK A CHECKPOINT").classes(
+                                    "text-amber-400 font-mono text-[10px] tracking-widest"
+                                )
+                                ui.label(
+                                    "Each saved checkpoint is a full, independent snapshot — the "
+                                    "last one isn't always the best-sounding. Listen and pick "
+                                    "your favorite; the rest are discarded."
+                                ).classes("text-[#444] font-mono text-[10px] leading-snug")
+                                candidates_col = ui.column().classes("w-full gap-1")
+                            picker_section.set_visibility(False)
+                        dlg.open()
+
+                        def _ui_safe(fn):
+                            # If the browser tab/connection dies mid-training, NiceGUI
+                            # raises RuntimeError on any attempt to touch its elements.
+                            # Training itself (a separate OS process) keeps running
+                            # regardless — don't let a dead UI client abort the actual
+                            # training/export logic or the file writes that follow it.
                             try:
-                                await ni_run.io_bound(infer, text, onnx_path, preview_path)
+                                fn()
+                            except RuntimeError:
+                                pass
+
+                        def _log(line: str):
+                            _log_lines.append(line)
+                            _ui_safe(lambda: log.push(line))
+
+                        async def _choose(chosen_onnx: Path):
+                            try:
+                                final_path = await ni_run.io_bound(finalize_piper_model, char_dir, chosen_onnx)
+                                set_piper_model(n, str(final_path))
+                                ui.notify(f"Piper model set for {n}", type="positive", timeout=4000)
+                                on_change()
+                                _rebuild_detail()
+                                dlg.close()
                             except Exception as exc:
                                 show_error(exc)
-                                continue
-                            rel = preview_path.relative_to(Path("outputs"))
-                            with candidates_col:
-                                with ui.row().classes(
-                                    "w-full items-center gap-2 px-3 py-1 rounded "
-                                    "border border-[#1e1e1e] hover:border-[#333]"
-                                ):
-                                    ui.label(f"epoch {epoch}").classes(
-                                        "text-[#888] font-mono text-[10px] w-20 shrink-0"
-                                    )
-                                    ui.audio(f"/outputs/{rel.as_posix()}").classes("flex-grow").props("controls")
-                                    ui.button(
-                                        "USE THIS", icon="check",
-                                        on_click=lambda p=onnx_path: _choose(p),
-                                    ).props("flat dense color=amber").classes("font-mono text-[10px] shrink-0")
 
-                    try:
-                        if not base_voice_ready(chosen_voice):
-                            _log(f"Downloading base voice: {BASE_VOICES.get(chosen_voice, {}).get('label', chosen_voice)}…")
-                            await download_base_voice(chosen_voice, _log)
-                        _candidates.extend(
-                            await train(chain, char_dir, _log, _proc_ref, base_voice=chosen_voice)
+                        async def _generate_previews():
+                            candidates_col.clear()
+                            text = preview_text_input.value.strip() or "Hello, this is a test of the trained voice."
+                            for epoch, onnx_path in _candidates:
+                                _ui_safe(lambda e=epoch: status_lbl.set_text(f"Generating preview — epoch {e}…"))
+                                preview_path = onnx_path.with_name(f"preview_epoch_{epoch}.wav")
+                                try:
+                                    await ni_run.io_bound(infer, text, onnx_path, preview_path)
+                                except Exception as exc:
+                                    show_error(exc)
+                                    continue
+                                rel = preview_path.relative_to(Path("outputs"))
+                                with candidates_col:
+                                    with ui.row().classes(
+                                        "w-full items-center gap-2 px-3 py-1 rounded "
+                                        "border border-[#1e1e1e] hover:border-[#333]"
+                                    ):
+                                        ui.label(f"epoch {epoch}").classes(
+                                            "text-[#888] font-mono text-[10px] w-20 shrink-0"
+                                        )
+                                        ui.audio(f"/outputs/{rel.as_posix()}").classes("flex-grow").props("controls")
+                                        ui.button(
+                                            "USE THIS", icon="check",
+                                            on_click=lambda p=onnx_path: _choose(p),
+                                        ).props("flat dense color=amber").classes("font-mono text-[10px] shrink-0")
+
+                        try:
+                            if not base_voice_ready(chosen_voice):
+                                _log(f"Downloading base voice: {BASE_VOICES.get(chosen_voice, {}).get('label', chosen_voice)}…")
+                                await download_base_voice(chosen_voice, _log)
+                            _candidates.extend(
+                                await train(chain, char_dir, _log, _proc_ref, base_voice=chosen_voice)
+                            )
+                            _ui_safe(lambda: picker_section.set_visibility(True))
+                            await _generate_previews()
+                            _ui_safe(lambda: status_lbl.set_text(f"✓  {len(_candidates)} checkpoint(s) ready — pick one below"))
+                            _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-green-400"))
+                        except Exception as exc:
+                            _ui_safe(lambda: status_lbl.set_text("error"))
+                            _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-red-400"))
+                            _ui_safe(lambda: show_error(exc))
+                        finally:
+                            _ui_safe(lambda: close_btn.set_visibility(True))
+
+                    train_label = "RETRAIN VOICE" if has_model else "TRAIN VOICE"
+                    with ui.row().classes("gap-2 flex-wrap mt-1"):
+                        ui.button(train_label, icon="model_training", on_click=_do_train).props(
+                            "color=indigo unelevated"
+                        ).classes(_BTN)
+                        ui.button(
+                            "SPEAK", icon="spatial_audio",
+                            on_click=lambda n=name: on_speak(n),
+                        ).props("color=amber unelevated").classes(_BTN)
+
+                # ══ CLIPS ════════════════════════════════════════════════════
+                with ui.tab_panel(tab_clips).classes("gap-2 p-0 pt-3"):
+                    if not is_base:
+                        ui.label(
+                            "Personality clips and favorites are recorded on the base character."
+                        ).classes("text-[#444] font-mono text-[10px] py-2")
+                    elif not clips and not favs:
+                        ui.label("No personality clips or favorites yet.").classes(
+                            "text-[#444] font-mono text-[10px] py-2"
                         )
-                        _ui_safe(lambda: picker_section.set_visibility(True))
-                        await _generate_previews()
-                        _ui_safe(lambda: status_lbl.set_text(f"✓  {len(_candidates)} checkpoint(s) ready — pick one below"))
-                        _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-green-400"))
-                    except Exception as exc:
-                        _ui_safe(lambda: status_lbl.set_text("error"))
-                        _ui_safe(lambda: status_lbl.classes(remove="text-[#555]", add="text-red-400"))
-                        _ui_safe(lambda: show_error(exc))
-                    finally:
-                        _ui_safe(lambda: close_btn.set_visibility(True))
-
-                train_label = "RETRAIN VOICE" if has_model else "TRAIN VOICE"
-                ui.button(train_label, icon="model_training", on_click=_do_train).props(
-                    "color=indigo unelevated"
-                ).classes(_BTN)
-
-                ui.button(
-                    "SPEAK", icon="spatial_audio",
-                    on_click=lambda n=name: on_speak(n),
-                ).props("color=amber unelevated").classes(_BTN)
-
-                ui.button("EDIT", icon="edit", on_click=lambda n=name: _open_edit(n)).props(
-                    "flat color=grey"
-                )
-                (
-                    ui.button(
-                        "DELETE", icon="delete_outline",
-                        on_click=lambda n=name: _confirm_delete(n),
-                    )
-                    .props("flat color=negative")
-                )
+                    else:
+                        if clips:
+                            _clip_section(
+                                name, "PERSONALITY CLIPS", "library_music", "text-amber-400",
+                                clips, "clips",
+                            )
+                        if favs:
+                            if clips:
+                                ui.separator().classes("my-3 opacity-20")
+                            _clip_section(
+                                name, "FAVORITES", "favorite", "text-pink-400",
+                                favs, "favorites",
+                            )
 
     def _open_edit(name: str):
         char = get_character(name)
