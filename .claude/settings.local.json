@@ -42,7 +42,9 @@
       "Bash(timeout 15 python3 -c ' *)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('faily/modules/piper.py'\\).read\\(\\)\\)\")",
       "Bash(python3 -c \"import nicegui; print\\(nicegui.__file__\\)\")",
-      "Bash(pip3 show *)"
+      "Bash(pip3 show *)",
+      "Bash(bash scripts/test_faily.sh)",
+      "Bash(git stash *)"
     ]
   }
 }

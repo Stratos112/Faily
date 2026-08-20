@@ -309,7 +309,7 @@ Piper itself has no text-conditioned style/emotion input — it's a direct text�
 1. **Reuse the existing two-stage pipeline, but as the VC target.** EXPRESSION already does "Parler-TTS (styled) → voice conversion onto the character" and produces expressive, character-voiced output today, independent of whether that character has a trained Piper model. Worth prototyping: generate a short, clean utterance from the trained Piper model and use *that* as the stage-2 VC reference (instead of, or blended with, the raw uploaded ref clips) — Piper's own output is consistent, denoised, single-take audio, which may give voice conversion a cleaner target than noisier user uploads.
 2. **A genuinely expressive TTS backend as an alternative to Piper** for the CHARACTER tab — e.g. StyleTTS2 or a similarly-licensed model with native style/emotion conditioning, trained the same way Piper is. Much bigger lift (new training pipeline, new backend integration).
 
-- [ ] Prototype path 1 (Piper output as VC reference) — smallest step, reuses existing code.
+- [x] Prototype path 1 (Piper output as VC reference) — EXPRESSION sub-tab now has a REFERENCE SOURCE picker ("Reference clips" vs "Piper (trained voice)"), previewable before generating, defaulting to Piper when the character has a trained model.
 - [ ] Research spike on expressive-TTS backends compatible with our torch/cu128 stack *before* committing to one — "supports fine-tuning" on paper doesn't mean "installs cleanly on this stack" (see the Tango 2 / AudioGen removal below).
 
 ### FOLEY — alternative backends

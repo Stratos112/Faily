@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from nicegui import ui, run as ni_run
 from pathlib import Path
 from faily.modules.vc import (
@@ -5,7 +6,10 @@ from faily.modules.vc import (
     generate as vc_generate, BACKENDS,
 )
 from faily.modules.edit import ensure_stereo
-from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
+from faily.modules.piper import generate_character_ref_sample, SAMPLE_TEXT
+from faily.core.characters import (
+    list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio,
+)
 from faily.ui.components import output_panel, section_label, show_error, model_picker
 
 _BTN = "font-mono tracking-widest"
@@ -50,17 +54,57 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     _svc_steps:     list[int]   = [10]
     _svc_cfg:       list[float] = [0.7]
     _candidates:    list[int]   = [1]
+    _vc_source:     list[str]   = ["refs"]
+
+    def _ref_source_opts(name: str) -> dict[str, str]:
+        chain = get_ref_chain(name)
+        n = len(chain)
+        opts = {"refs": f"Reference clips ({n})" if n else "Reference clips (none)"}
+        char = get_character(name)
+        if char and char.get("piper_model"):
+            opts["piper"] = "Piper (trained voice)"
+        return opts
 
     def _update_info(name: str):
         char_state[0] = name
         _current_char[0] = name
         if name == _NO_CHAR:
-            char_info.set_text(""); return
+            char_info.set_text("")
+            ref_source_select.set_visibility(False)
+            return
         char = get_character(name)
         chain = get_ref_chain(name)
         ancestry = f"↳ {char['parent']}" if char and "parent" in char else "base"
         refs = f"{len(chain)} ref{'s' if len(chain) != 1 else ''}" if chain else "⚠  no ref audio"
         char_info.set_text(f"{ancestry}  ·  {refs}")
+
+        opts = _ref_source_opts(name)
+        default = "piper" if "piper" in opts else "refs"
+        _vc_source[0] = default
+        ref_source_select.set_options(opts, value=default)
+        ref_source_select.set_visibility(True)
+        ref_source_caption.set_text(f'"{SAMPLE_TEXT}"' if default == "piper" else "plays the primary reference clip")
+        ref_source_preview.set_visibility(False)
+
+    async def _preview_ref_source():
+        char = get_character(char_state[0])
+        ref_source_preview_btn.set_text("LOADING…")
+        ref_source_preview_btn.disable()
+        try:
+            if _vc_source[0] == "piper" and char and char.get("piper_model"):
+                path = await generate_character_ref_sample(Path(char["piper_model"]))
+            else:
+                path = get_ref_path(char_state[0])
+                if path is None:
+                    ui.notify("No reference audio for this character", type="warning"); return
+            rel = path.relative_to(Path("outputs"))
+            ref_source_preview.set_source(f"/outputs/{rel.as_posix()}")
+            ref_source_preview.set_visibility(True)
+        except Exception as exc:
+            show_error(exc)
+        finally:
+            ref_source_preview_btn.set_text("▶  PREVIEW")
+            ref_source_preview_btn.enable()
 
     async def _generate():
         if char_state[0] == _NO_CHAR:
@@ -76,7 +120,19 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         _out["model_loader"].set_visibility(True)
         _poll.active = True
         expression = expr_input.value.strip()
-        with build_ref_audio(char_state[0]) as (ref, _):
+        char = get_character(char_state[0])
+        if _vc_source[0] == "piper" and char and char.get("piper_model"):
+            try:
+                piper_ref = await generate_character_ref_sample(Path(char["piper_model"]))
+            except Exception as exc:
+                show_error(exc)
+                _out["model_loader"].set_visibility(False)
+                gen_btn.enable()
+                return
+            ref_cm = nullcontext((piper_ref, ""))
+        else:
+            ref_cm = build_ref_audio(char_state[0])
+        with ref_cm as (ref, _):
             try:
                 for i in range(n):
                     _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
@@ -121,6 +177,34 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
             .props("outlined dark dense").classes("w-full")
         )
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
+
+        _section_row(
+            "REFERENCE SOURCE",
+            "What voice conversion targets. Reference clips = the character's uploaded "
+            "audio. Piper (trained voice) = a fresh, clean line synthesized by the "
+            "character's trained model — consistent studio audio can give voice "
+            "conversion a cleaner target than noisier uploads. Defaults to Piper when "
+            "a trained model is available.",
+        )
+        def _on_ref_source_change(e):
+            _vc_source[0] = e.value
+            ref_source_preview.set_visibility(False)
+            ref_source_caption.set_text(f'"{SAMPLE_TEXT}"' if e.value == "piper" else "plays the primary reference clip")
+
+        ref_source_select = (
+            ui.select(options={"refs": "Reference clips"}, value="refs", on_change=_on_ref_source_change)
+            .props("outlined dark dense").classes("w-full mb-1")
+        )
+        ref_source_select.set_visibility(False)
+        with ui.row().classes("items-center gap-2 mb-1"):
+            ref_source_preview_btn = ui.button("▶  PREVIEW", on_click=_preview_ref_source).props(
+                "flat dense color=grey"
+            ).classes("font-mono text-[10px] tracking-widest")
+            ref_source_caption = ui.label("plays the primary reference clip").classes(
+                "text-[#444] font-mono text-[10px] italic"
+            )
+        ref_source_preview = ui.audio("").classes("w-full rounded mb-2")
+        ref_source_preview.set_visibility(False)
 
         _section_row("VOICE CONVERSION", "Applies the character's voice to the intermediate audio.")
         model_picker(STAGE2_BACKENDS, "freevc", _on_stage2)

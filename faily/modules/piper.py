@@ -215,6 +215,20 @@ async def generate_base_voice_sample(key: str, log_cb=None) -> Path:
     return out_path
 
 
+async def generate_character_ref_sample(model_path: Path) -> Path:
+    """Synthesize SAMPLE_TEXT with a character's trained Piper model, for use as a
+    clean, single-take voice-conversion reference in EXPRESSION (Piper's own output
+    is denoised, consistent studio audio — a cleaner VC target than noisier uploads).
+    Cached next to the model; regenerated automatically if the model is retrained."""
+    out_path = model_path.with_name("piper_ref_sample.wav")
+    if out_path.exists() and out_path.stat().st_mtime >= model_path.stat().st_mtime:
+        return out_path
+    if not can_infer():
+        raise RuntimeError("Piper binary not found in piper_venv — run the setup script first.")
+    await asyncio.to_thread(infer, SAMPLE_TEXT, model_path, out_path)
+    return out_path
+
+
 async def _read_checkpoint_epoch(py: str, ckpt_path: Path) -> int:
     """Read the actual current_epoch from inside a Lightning checkpoint —
     more reliable than parsing it out of the filename, which isn't
