@@ -177,7 +177,7 @@ def delete_character(name: str):
 
 
 def clip_quality_issues(path: Path) -> list[str]:
-    """Lightweight heuristic checks on a reference clip — short/quiet/clipping.
+    """Lightweight heuristic checks on a reference clip — short/quiet/clipping/noisy.
     Returns a list of human-readable issue strings, empty if the clip looks fine.
     Not a substitute for actually listening, just enough to flag obvious problems
     before they quietly drag down cloning/training quality."""
@@ -203,6 +203,22 @@ def clip_quality_issues(path: Path) -> list[str]:
         issues.append("clipping")
     if rms < 0.01:
         issues.append("very quiet")
+
+    # SNR estimate: quietest short window in the clip stands in for the noise
+    # floor (same trick used by the EDIT tab's denoiser, see modules/edit.py
+    # _denoise_channel) vs. the clip's overall RMS as the signal level.
+    win = max(int(0.2 * sr), 1)
+    if len(data) > win * 3 and rms > 0:
+        hop = max(win // 2, 1)
+        n_wins = max((len(data) - win) // hop, 1)
+        energies = [
+            float(np.sqrt(np.mean(data[i * hop: i * hop + win] ** 2)))
+            for i in range(n_wins)
+        ]
+        noise_floor = max(min(energies), 1e-6)
+        snr_db = 20 * np.log10(rms / noise_floor)
+        if snr_db < 15.0:
+            issues.append(f"noisy (~{snr_db:.0f}dB SNR)")
     return issues
 
 

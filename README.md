@@ -292,14 +292,14 @@ Open questions and concrete next steps for getting better results out of each pi
   - `--sentence-silence`, `--volume`, `--cuda` (GPU inference — currently CPU-only)
 
 **Near-term (low effort, no retraining needed):**
-- [ ] Wire `length_scale` / `noise_scale` / `noise_w_scale` through `infer()` and add sliders to the CHARACTER sub-tab (same UI pattern as the ZERO SHOT param sliders). Real pacing/expressiveness control without touching training.
-- [ ] Pass `--cuda` for GPU inference (speed only, not quality — free to add).
-- [ ] Let the user preview/pick between the last few saved checkpoints (already written to disk every 100 epochs) instead of always defaulting to the most recent one.
+- [x] Wire `length_scale` / `noise_scale` / `noise_w_scale` through `infer()` and add sliders to the CHARACTER sub-tab (same UI pattern as the ZERO SHOT param sliders). Real pacing/expressiveness control without touching training.
+- [x] Pass `--cuda` for GPU inference (speed only, not quality — free to add).
+- [x] Let the user preview/pick between the last few saved checkpoints (already written to disk every 100 epochs) instead of always defaulting to the most recent one.
 
 **Medium effort:**
 - [x] Offer alternate base checkpoints as a CHARACTERS-tab choice before training (Ryan, Amy, HFC Male, HFC Female alongside the Lessac default) — downloads on demand, epoch read from the checkpoint itself rather than parsed from its filename (not every base voice's filename follows the same naming convention).
-- [ ] Encourage more reference clips before enabling TRAIN VOICE (e.g. a soft warning below some clip-count threshold).
-- [ ] Reference-clip quality gate: flag clips that are too short, too quiet, or too noisy before they're used for training.
+- [x] Encourage more reference clips before enabling TRAIN VOICE (soft warning when clip count is below threshold).
+- [x] Reference-clip quality gate: flags clips that are too short, too quiet, clipping, or noisy (SNR estimated from the clip's quietest window vs. its overall RMS, same technique as the EDIT tab denoiser).
 
 ### Expressive output for trained characters ("it feels like zero-shot")
 
