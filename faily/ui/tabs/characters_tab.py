@@ -6,7 +6,7 @@ from faily.core.characters import (
     list_character_clips, list_character_favorites, rename_character_file,
     get_ref_chain, remove_ref_clip, set_rvc_model, set_piper_model,
     rename_ref_audio, update_ref_clip, clip_quality_issues, add_ref_clip,
-    CHARACTERS_DIR,
+    set_ref_clip_excluded, CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error, send_to_edit
 from faily.modules.piper import BASE_VOICES, base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT
@@ -227,18 +227,22 @@ def build_characters_tab(on_speak, on_change):
             if rp.exists():
                 own_refs.append({
                     "audio": rp, "transcript": rc.get("transcript", ""),
-                    "kind": "clip", "file_key": rc["file"],
+                    "kind": "clip", "file_key": rc["file"], "excluded": rc.get("excluded", False),
                 })
 
         full_chain = get_ref_chain(name)
         own_paths = {r["audio"] for r in own_refs}
         inherited = [e for e in full_chain if e["audio"] not in own_paths]
         all_refs = own_refs + inherited
+        # active_refs = what's actually used to build the VC reference — excludes
+        # opted-out own clips; inherited is already excluded-filtered by get_ref_chain.
+        excluded_count = sum(1 for r in own_refs if r.get("excluded"))
+        active_refs = [r for r in own_refs if not r.get("excluded")] + inherited
 
         total_dur = 0.0
         try:
             import soundfile as _sf
-            for _r in all_refs:
+            for _r in active_refs:
                 try:
                     total_dur += _sf.info(str(_r["audio"])).duration
                 except Exception:
@@ -246,7 +250,7 @@ def build_characters_tab(on_speak, on_change):
         except Exception:
             pass
         dur_str = f"{total_dur:.0f}s" if total_dur < 60 else f"{total_dur / 60:.1f}m"
-        transcript_count = sum(1 for r in all_refs if r["transcript"].strip())
+        transcript_count = sum(1 for r in active_refs if r["transcript"].strip())
 
         _, children_map = _grouped()
         children = children_map.get(name, []) if is_base else []
@@ -292,12 +296,13 @@ def build_characters_tab(on_speak, on_change):
                             _meta_row("BACKEND", char["backend"])
                     _meta_row(
                         "REF CLIPS",
-                        f"{len(all_refs)}" + (
-                            f"  ({len(own_refs)} own + {len(inherited)} inherited)" if inherited else ""
-                        ),
+                        f"{len(active_refs)}" + (
+                            f"  ({len(own_refs) - excluded_count} own + {len(inherited)} inherited)"
+                            if inherited else ""
+                        ) + (f"  ({excluded_count} excluded)" if excluded_count else ""),
                     )
-                    _meta_row("REF AUDIO LENGTH", dur_str if all_refs else "—")
-                    _meta_row("TRANSCRIPTS", f"{transcript_count} / {len(all_refs)}")
+                    _meta_row("REF AUDIO LENGTH", dur_str if active_refs else "—")
+                    _meta_row("TRANSCRIPTS", f"{transcript_count} / {len(active_refs)}")
                     trained = []
                     if char.get("piper_model"):
                         trained.append("Piper")
@@ -391,7 +396,7 @@ def build_characters_tab(on_speak, on_change):
                         ui.label("ALL REFERENCES").classes(
                             "text-[#444] font-mono text-[10px] tracking-widest flex-grow"
                         )
-                        ui.label(f"{len(all_refs)} clips  ·  {dur_str}").classes(
+                        ui.label(f"{len(active_refs)} clips  ·  {dur_str}").classes(
                             "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
                         )
 
@@ -414,11 +419,13 @@ def build_characters_tab(on_speak, on_change):
                                     rel = audio.relative_to(Path("outputs"))
                                     url = f"/outputs/{rel.as_posix()}"
                                     is_primary = ref["kind"] == "primary"
+                                    is_excluded = ref.get("excluded", False)
                                     issues = clip_quality_issues(audio)
 
                                     with ui.row().classes(
                                         "w-full items-center gap-1 px-2 py-1 rounded "
                                         "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
+                                        + (" opacity-40" if is_excluded else "")
                                     ):
                                         ui.button(
                                             icon="play_arrow",
@@ -427,6 +434,20 @@ def build_characters_tab(on_speak, on_change):
                                         ui.icon("star" if is_primary else "mic", size="12px").classes(
                                             ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
                                         )
+                                        if not is_primary:
+                                            def _toggle_excl(fk=ref["file_key"], cur=is_excluded):
+                                                set_ref_clip_excluded(name, fk, not cur)
+                                                _rebuild_detail()
+                                            ui.button(
+                                                icon="visibility_off" if is_excluded else "visibility",
+                                                on_click=_toggle_excl,
+                                            ).props(
+                                                f"flat dense color={'grey' if is_excluded else 'amber'}"
+                                            ).classes("shrink-0").tooltip(
+                                                "Excluded from voice cloning — click to re-include"
+                                                if is_excluded else
+                                                "Used for voice cloning — click to exclude"
+                                            )
                                         if issues:
                                             ui.icon("warning", size="12px").classes(
                                                 "text-amber-500 shrink-0"

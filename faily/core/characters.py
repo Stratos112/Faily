@@ -31,8 +31,15 @@ def get_character(name: str) -> dict | None:
     return json.loads(p.read_text()) if p.exists() else None
 
 
-def get_ref_chain(name: str) -> list[dict]:
-    """Walk ancestry root→name; return [{audio, transcript}] for all ref audio in each node."""
+def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
+    """Walk ancestry root→name; return [{audio, transcript}] for all ref audio in each node.
+
+    ref_clips entries flagged excluded=True are skipped by default — this is the single
+    choke point every generation/training/count call site goes through, so opting a clip
+    out here silently propagates everywhere. Pass include_excluded=True to see everything
+    (used by the CHARACTERS tab's reference list, which shows excluded clips dimmed so
+    they can be toggled back on).
+    """
     path_up, seen, current = [], set(), name
     while current and current not in seen:
         seen.add(current)
@@ -49,6 +56,8 @@ def get_ref_chain(name: str) -> list[dict]:
             if audio.exists():
                 chain.append({"audio": audio, "transcript": char.get("transcript", "")})
         for rc in char.get("ref_clips", []):
+            if rc.get("excluded") and not include_excluded:
+                continue
             audio = CHARACTERS_DIR / node / rc["file"]
             if audio.exists():
                 chain.append({"audio": audio, "transcript": rc.get("transcript", "")})
@@ -334,6 +343,19 @@ def rename_ref_audio(name: str, new_stem: str) -> Path:
     cfg["ref_audio"] = new_file
     p.write_text(json.dumps(cfg, indent=2))
     return new_path
+
+
+def set_ref_clip_excluded(name: str, file_key: str, excluded: bool) -> dict:
+    """Opt a ref clip in/out of the character's VC reference chain without deleting it.
+    All clips are included by default; this only ever narrows that default."""
+    p = _cfg(name)
+    cfg = json.loads(p.read_text())
+    for rc in cfg.get("ref_clips", []):
+        if rc["file"] == file_key:
+            rc["excluded"] = excluded
+            break
+    p.write_text(json.dumps(cfg, indent=2))
+    return cfg
 
 
 def update_ref_clip(name: str, file_key: str, new_stem: str | None = None, new_transcript: str | None = None) -> dict:

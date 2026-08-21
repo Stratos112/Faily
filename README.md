@@ -320,13 +320,38 @@ Tango 2 and AudioGen were removed (see [Backend Reference](#foley--sound-effect-
 - Raising STEPS (try 100–150) and CANDIDATES (best-of-N) in FOLEY's own controls is a free quality lever with what's already installed.
 - [ ] Research spike before adding any new backend: confirm a real Windows/cu128-compatible install path *and run an actual generation* before wiring it in — don't assume a model "should work" from its README.
 
+---
+
+## Needs manual verification (Windows/GPU)
+
+Implemented and passing syntax/import checks in the WSL2 dev container, but that container has no `torch`/GPU — these need a real click-through on the Windows machine before they're trusted.
+
+**Reference-clip noise/SNR gate** (`clip_quality_issues()` in `faily/core/characters.py`):
+- [ ] Run against real ref clips (not synthetic test tones) — confirm normal room-tone speech recordings don't false-positive as "noisy", and clips with actual background hiss/hum do get flagged.
+- [ ] Confirm the warning icon/tooltip renders correctly in the CHARACTERS tab ref-clip list for a flagged clip.
+
+**Piper output as EXPRESSION voice-conversion reference** (`generate_character_ref_sample()` in `faily/modules/piper.py`, REFERENCE SOURCE picker in `faily/ui/tabs/speak_tab.py`):
+- [ ] REFERENCE SOURCE picker appears in EXPRESSION sub-tab and defaults to "Piper (trained voice)" for a character with a trained model, "Reference clips" otherwise.
+- [ ] PREVIEW button plays the right audio for each source (Piper sample vs. primary ref clip).
+- [ ] A generation with "Piper" selected actually sounds different from "Reference clips" — confirms the VC stage is really receiving the Piper-synthesized reference, not silently falling back.
+- [ ] Try all three stage-2 VC backends (FreeVC, OpenVoice, Seed-VC) with the Piper reference source — nothing in the wiring is backend-specific, but only FreeVC/OpenVoice have been reasoned through, not run.
+- [ ] Retrain a character's Piper model, then confirm the cached `piper_ref_sample.wav` regenerates (mtime check) instead of serving the stale pre-retrain sample.
+- [ ] Switch between characters in EXPRESSION and confirm the picker's options/default update each time (including a character with no trained model at all).
+
+**Ref clip exclude toggle** (`set_ref_clip_excluded()` in `faily/core/characters.py`, CHARACTERS tab REFERENCES list):
+- [ ] Toggling a clip's visibility icon in CHARACTERS actually removes it from generation — clone a character with a clip excluded and confirm output no longer reflects that clip's voice.
+- [ ] Excluded clip renders dimmed with the correct icon/tooltip state, and toggling back on restores it — round-trip in the live UI (only verified programmatically so far, not clicked through).
+- [ ] REF CLIPS / REF AUDIO LENGTH / TRANSCRIPTS counts in the ABOUT tab match the active (non-excluded) set, and the "N excluded" suffix appears/disappears correctly.
+- [ ] Piper training's low-clip-count warning (`_do_train`) correctly counts only non-excluded clips, since it goes through the same `get_ref_chain()`.
+- [ ] **Actual quality judgment call**: does Piper-as-reference sound better than raw ref clips for at least one real character? This is a prototype of an open question, not a settled improvement — the roadmap item is "done" as in *implemented*, not as in *proven better*.
+
 ### Zero-shot cloning (CLONE / ZERO SHOT)
 
 Reference-clip quality dominates output quality here more than backend choice.
 
 - [x] High-pass filter + spectral-gating denoise, available as opt-in EDIT tab tools (not automatic anywhere — some noise is part of a character's voice, so it's the user's call per clip).
-- [ ] Surface clip duration/quality guidance in the CLONE tab UI (F5-TTS's 5–15s "optimal" window is currently only documented in a code comment).
-- [ ] Let the user choose *which* ref clips build the chain (currently `build_ref_audio` always uses the whole chain) — a few strong clips can outperform many mixed-quality ones.
+- [x] Surface clip duration/quality guidance in the CLONE tab UI — F5-TTS's 5–15s guidance shows as an in-UI warning when that backend is selected (`vc_tab.py`, REFERENCE TRANSCRIPT section).
+- [x] Let the user exclude individual ref clips from the chain — all clips are used by default, as before; each own ref clip in the CHARACTERS tab now has a visibility toggle to opt it *out* without deleting it (`ref_clips[].excluded` in config.json, filtered by `get_ref_chain()`, the single choke point every generation/training/count call site already goes through). Scoped to a character's own `ref_clips`; the base upload and inherited parent clips aren't independently toggleable from a sub-character.
 
 ### Character consolidation (growing a character's reference pool over time)
 
@@ -337,7 +362,6 @@ Reference-clip quality dominates output quality here more than backend choice.
 | **Future** | RVC (trained model) | Trained from all approved clips — sharpens with every good generation |
 
 - [ ] Streamline "promote a good generation back into the reference pool" — the add-to-ref-pool action already exists on every clip; consider surfacing it more prominently (e.g. auto-suggest after a favorite).
-- [ ] Auto-flag low-quality ref clips (too short, too quiet, clipping) so a character's pool doesn't silently degrade over time.
 - [ ] The RVC-trained-model path (lighter-weight than a full Piper fine-tune) is still just a roadmap item — worth prioritizing if Piper's data requirements prove too heavy for most characters.
 
 ---
