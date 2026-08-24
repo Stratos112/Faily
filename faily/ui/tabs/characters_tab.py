@@ -11,6 +11,8 @@ from faily.core.characters import (
 from faily.ui.components import section_label, show_error, send_to_edit
 from faily.modules.piper import BASE_VOICES, base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT
 from faily.core.model_manager import manager
+from faily.core.settings import get_default_base_voice, set_default_base_voice
+from faily.ui.tabs.buffer_training_dialog import open_buffer_training_dialog
 
 _BTN = "font-mono tracking-widest"
 
@@ -526,7 +528,10 @@ def build_characters_tab(on_speak, on_change):
                             opts[key] = f"{v['label']}{suffix}"
                         return opts
 
-                    _base_voice_key: list[str] = ["lessac"]
+                    _default_voice = get_default_base_voice()
+                    if _default_voice not in BASE_VOICES:
+                        _default_voice = "lessac"
+                    _base_voice_key: list[str] = [_default_voice]
                     with ui.row().classes("items-center gap-1"):
                         section_label("BASE VOICE")
                         ui.icon("info_outline", size="13px").classes(
@@ -543,12 +548,24 @@ def build_characters_tab(on_speak, on_change):
                         _base_voice_key[0] = e.value
                         base_voice_desc.set_text(BASE_VOICES.get(e.value, {}).get("desc", ""))
                         base_voice_preview_player.set_visibility(False)
+                        set_default_btn.set_visibility(e.value != get_default_base_voice())
 
-                    base_voice_select = (
-                        ui.select(options=_base_voice_opts(), value="lessac", on_change=_on_base_voice_change)
-                        .props("outlined dark dense").classes("w-full mb-2")
-                    )
-                    base_voice_desc = ui.label(BASE_VOICES["lessac"]["desc"]).classes(
+                    def _set_as_default():
+                        set_default_base_voice(_base_voice_key[0])
+                        set_default_btn.set_visibility(False)
+                        voice_label = BASE_VOICES.get(_base_voice_key[0], {}).get("label", _base_voice_key[0])
+                        ui.notify(f"{voice_label} set as default base voice", type="positive", timeout=2500)
+
+                    with ui.row().classes("w-full items-center gap-2"):
+                        base_voice_select = (
+                            ui.select(options=_base_voice_opts(), value=_default_voice, on_change=_on_base_voice_change)
+                            .props("outlined dark dense").classes("flex-grow mb-2")
+                        )
+                        set_default_btn = ui.button(
+                            "SET AS DEFAULT", icon="push_pin", on_click=_set_as_default,
+                        ).props("flat dense color=grey").classes("font-mono text-[9px] tracking-widest shrink-0")
+                    set_default_btn.set_visibility(_default_voice != get_default_base_voice())
+                    base_voice_desc = ui.label(BASE_VOICES[_default_voice]["desc"]).classes(
                         "text-[#444] font-mono text-[10px] tracking-wide mb-2"
                     )
 
@@ -586,14 +603,26 @@ def build_characters_tab(on_speak, on_change):
                             ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
                             return
                         # Piper only hard-requires 2 clips with transcripts, but good
-                        # fine-tunes typically need 30-200+ (several minutes of audio).
-                        # Warn below a lower floor without blocking — this is a soft
-                        # nudge, not a hard requirement.
-                        if len(chain) < 20:
+                        # fine-tunes need real coverage of the voice — clip COUNT is a
+                        # weak proxy (twenty 1s clips vs twenty 15s clips are very
+                        # different training sets), so warn on total duration instead.
+                        # ~10 min is a rough floor for a recognizable voice, 30-60+ for
+                        # strong resemblance. Warn below that floor without blocking —
+                        # this is a soft nudge, not a hard requirement.
+                        import soundfile as _sf
+                        total_dur = 0.0
+                        for c in chain:
+                            try:
+                                total_dur += _sf.info(str(c["audio"])).duration
+                            except Exception:
+                                pass
+                        if total_dur < 600:
                             ui.notify(
-                                f"Only {len(chain)} reference clip{'s' if len(chain) != 1 else ''} — "
-                                "Piper fine-tunes usually need 30-200+ for good results. "
-                                "Training will proceed, but quality may suffer.",
+                                f"Only {total_dur / 60:.1f} min of reference audio "
+                                f"({len(chain)} clips) — Piper fine-tunes usually need "
+                                "10+ min for a recognizable voice, 30-60+ for strong "
+                                "resemblance. Training will proceed, but timbre may not "
+                                "match well.",
                                 type="warning", timeout=6000,
                             )
 
@@ -741,6 +770,21 @@ def build_characters_tab(on_speak, on_change):
                             _ui_safe(lambda: show_error(exc))
                         finally:
                             _ui_safe(lambda: close_btn.set_visibility(True))
+
+                    ui.separator().classes("my-2 opacity-10")
+                    ui.label(
+                        "Optional — pad out reference audio before training"
+                    ).classes("text-[#444] font-mono text-[9px] tracking-widest")
+                    ui.button(
+                        "+ ADD BUFFER TRAINING", icon="dynamic_form",
+                        on_click=lambda n=name: open_buffer_training_dialog(n, _rebuild_detail),
+                    ).props("flat dense color=grey").classes(
+                        f"{_BTN} mb-1"
+                    ).tooltip(
+                        "Bulk-generate zero-shot clips of this character's own voice, "
+                        "across a diverse script bank, to grow the reference pool "
+                        "before training."
+                    )
 
                     train_label = "RETRAIN VOICE" if has_model else "TRAIN VOICE"
                     with ui.row().classes("gap-2 flex-wrap mt-1"):

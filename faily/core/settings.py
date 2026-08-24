@@ -4,6 +4,7 @@ from pathlib import Path
 _SETTINGS_FILE = Path(__file__).parent.parent.parent / "faily_settings.json"
 _DEFAULTS: dict = {
     "download_dir": str(Path.home() / "Downloads"),
+    "default_base_voice": "lessac",
 }
 
 
@@ -22,3 +23,13 @@ def save_settings(data: dict) -> None:
 
 def get_download_dir() -> Path:
     return Path(load_settings()["download_dir"])
+
+
+def get_default_base_voice() -> str:
+    return load_settings()["default_base_voice"]
+
+
+def set_default_base_voice(key: str) -> None:
+    data = load_settings()
+    data["default_base_voice"] = key
+    save_settings(data)

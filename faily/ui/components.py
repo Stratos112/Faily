@@ -56,7 +56,8 @@ def show_error(exc: Exception) -> None:
 def model_picker(options: dict, default: str, on_change) -> ui.column:
     """Selectable list with per-option hover tooltips.
 
-    options: {key: {"label": str, "desc": str, "available": bool (default True)}}
+    options: {key: {"label": str, "desc": str, "available": bool (default True),
+              "unavailable_label": str (default "soon")}}
     on_change(key: str) — sync or async, called on selection.
     """
     _active = [default]
@@ -87,7 +88,9 @@ def model_picker(options: dict, default: str, on_change) -> ui.column:
                     ).classes("shrink-0")
                     ui.label(info["label"]).classes("font-mono text-[10px] flex-grow")
                     if not available:
-                        ui.label("soon").classes("font-mono text-[9px] text-[#333] shrink-0")
+                        ui.label(info.get("unavailable_label", "soon")).classes(
+                            "font-mono text-[9px] text-[#333] shrink-0"
+                        )
 
                     if available:
                         def _click(k=key):

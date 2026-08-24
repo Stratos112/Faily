@@ -1,0 +1,381 @@
+# Buffer Training script bank — parsed by faily/modules/buffer_training.py:load_script_bank().
+# Format: "## CATEGORY_KEY" header lines, one script line per following line.
+# Blank lines are ignored. Lines starting with "#" (outside a header) are comments.
+# Category keys here must match faily.modules.buffer_training.CATEGORIES exactly.
+
+## plosives
+Pick a peck of pickled peppers before breakfast.
+The big dog dug a deep pit behind the barn.
+Grab the black bag and put it by the gate.
+Ted baked a batch of buttery biscuits.
+The captain docked the boat at the busy pier.
+Pack the boxes tight before the truck departs.
+Dad tapped the table twice to get their attention.
+The goat butted the gate until it broke.
+Kate cut the cake into eight equal pieces.
+Bob dropped the ball down the back steps.
+The band played a bold, driving beat.
+Peter packed a bag of ripe peaches.
+The cat crept past the barking dog.
+Todd dug up the garden bed by the porch.
+Grandpa gave Ted a big glass paperweight.
+The pilot checked the cockpit before takeoff.
+Debbie baked bread daily at the bakery.
+The boxer ducked and countered with a quick jab.
+Tom kept the puppy's toy box tidy.
+Kip dropped his backpack by the bike rack.
+The drummer kept a steady, thumping beat.
+Grab a cup of coffee before the debate begins.
+Dad backed the truck up to the loading dock.
+The kids built a fort out of cardboard boxes.
+Pete bought a ticket to the big game.
+The tiger paced back and forth in its pit.
+Karate practice starts promptly at eight.
+The baker dusted the dough with powdered sugar.
+Pack a extra pair of boots for the trip.
+The captain barked orders across the deck.
+Debate club meets at the top of the building.
+Tap the code into the keypad by the door.
+The goat kicked up dust on the dirt path.
+Todd's truck got stuck in the mud pit.
+Big Ben struck twelve as the crowd gathered.
+The carpenter drove the nail with two quick taps.
+Pat packed the tent and the poles together.
+The puppy dug a hole under the back deck.
+Bake the cake at a steady, moderate temperature.
+The boxer's quick jab caught him off guard.
+
+## sibilance
+She sells seashells down by the seashore.
+The snake slid silently through the tall grass.
+Sunshine streamed through the misty forest.
+Six sisters shared a small, sunny cottage.
+The fisherman cast his net across the shallow surf.
+Vicious storms swept across the southern shore.
+The chef sliced the fresh vegetables swiftly.
+Sarah whispered softly across the silent room.
+The sizzling sausages filled the kitchen with smoke.
+This season's fashion favors soft, flowing fabrics.
+The scissors sliced smoothly through the fabric.
+Sunset cast a soft glow across the misty valley.
+The wasps swarmed near the sweet, spilled soda.
+She stitched the torn seams with careful precision.
+The surgeon's steady hands moved with practiced ease.
+Soft snowflakes settled on the frosted windowsill.
+The sailors watched the ship vanish into the fog.
+Sizzling steaks filled the restaurant with a savory scent.
+Fresh strawberries and cream make a lovely dessert.
+The southern breeze carried the scent of salt and sea.
+Silent shadows stretched across the sunset shore.
+The scientist studied the shifting ocean currents.
+She sang a soothing song to the sleepy children.
+The vast desert stretched beyond the shifting dunes.
+Sunlight filtered softly through the swaying leaves.
+Seven ships sailed south toward the stormy horizon.
+The fishmonger sold fresh salmon at sunrise.
+Waves washed over the smooth, sandy shore.
+The seamstress finished the dress with a satin sash.
+A soft hiss escaped as she opened the soda can.
+The forecast warns of severe storms this weekend.
+She savored the spiced soup on a chilly evening.
+Sunflowers swayed in the summer breeze.
+The whistle's shrill sound echoed across the station.
+Fresh snow softened the sound of their footsteps.
+The violinist's bow glided smoothly across the strings.
+She served fresh salad with a light vinaigrette.
+The surfers waited for the next swelling wave.
+Whispers spread quickly through the silent hallway.
+The southern coast is famous for its sunsets.
+
+## nasals
+Many mountains loom over the winding river.
+The gentle rain fell on the meadow all morning.
+Learning new languages requires many years of practice.
+The lonely wanderer walked along the moonlit lane.
+Mom hummed a lullaby while rowing the canoe.
+The morning fog lingered over the rolling hills.
+Nine nimble runners lined up along the winding trail.
+The engineer measured the length of the long tunnel.
+A warm breeze moved gently through the willow trees.
+The young musician learned every melody by heart.
+Manny walked along the winding mountain road.
+The lantern's glow illuminated the misty lane.
+Learning to swim in the ocean takes real courage.
+The wolves howled beneath the glowing moon.
+Nina welcomed the new neighbors with a warm smile.
+The airplane's engine hummed steadily over the ocean.
+Ringing bells echoed through the mountain village.
+The gardener planted rows of blooming marigolds.
+Wandering minstrels sang along the winding lane.
+My grandmother knits woolen mittens every winter.
+The morning news reported a gentle, warming trend.
+Long, winding rivers meander through the valley.
+Renaming the old mill took many long meetings.
+The engine roared as the plane climbed higher.
+Warm milk and honey helped the child sleep.
+Nolan learned to play the violin at nine.
+The lingering rain made the meadow smell fresh.
+A gentle wind moved the leaves along the lane.
+The choir sang a mournful, lingering melody.
+Melvin's marmalade won a ribbon at the fair.
+Roaming herds moved slowly across the plain.
+The moon illuminated the winding mountain trail.
+Warm memories lingered long after they left home.
+The wailing siren grew louder near the marina.
+Learning music theory helped her write new melodies.
+Golden leaves lined the long, winding lane.
+The willow's branches swayed in the morning wind.
+A young lion roamed near the watering hole.
+My neighbor's garden is full of blooming roses.
+The train rumbled slowly along the mountain line.
+
+## vowels
+Autumn leaves drifted slowly through the cool evening air.
+I owe my old friend a favor for helping me move.
+The choir sang loud and clear beneath the open sky.
+He rode his bike alone along the quiet coastal road.
+Our neighbor grows tomatoes, onions, and okra every year.
+I heard the news about the storm early this morning.
+The artist chose soft blue and gray for the mural.
+We stayed awake late into the night telling stories.
+The old oak tree grew slowly over many quiet years.
+She wore a bright yellow coat to the outdoor fair.
+I know the road home even in the deepest fog.
+The boy threw the ball high above the open field.
+Everyone agreed the view from the hill was beautiful.
+I owe you an apology for arriving so late today.
+The ocean waves rolled gently onto the empty shore.
+He always eats a slow breakfast before going outside.
+The choir's voices rose and fell like a rolling tide.
+I woke up early to watch the sunrise over the bay.
+Our old house sits alone at the end of a quiet road.
+The baby giggled loudly at the silly, colorful toy.
+A cool breeze moved through the open, empty hallway.
+I know the answer, but I want you to guess it first.
+The teacher spoke slowly so everyone could follow along.
+He grew up on a farm near a wide, open valley.
+The evening sky glowed orange above the quiet town.
+I owe my success to years of early morning practice.
+The dog ran freely across the open, grassy field.
+We drove all day along the winding coastal highway.
+The old radio played soft music late into the evening.
+I always feel calm when I hear the ocean at night.
+The painter used bold strokes of gold and blue.
+Our vacation home overlooks a quiet, wooded valley.
+He spoke honestly about his hopes for the coming year.
+The choir rehearsed the same slow melody all afternoon.
+I owe it to myself to try something new this year.
+The sky turned a deep shade of orange at dusk.
+We watched the boats glide slowly across the bay.
+The old oak's branches reached toward the open sky.
+I know a quiet road that winds along the coast.
+The children played outside until the sun went down.
+
+## clusters
+The archaeologist unearthed an extraordinarily well-preserved artifact.
+Strengths and weaknesses were carefully documented in the report.
+The twelfths of the estate were divided among the siblings.
+Incomprehensible instructions frustrated the entire committee.
+The bureaucratic institution required extensive documentation.
+The sixths of the recipe needed to be measured precisely.
+Her unconventional approach to problem-solving impressed everyone.
+The counterintuitive results puzzled the research team.
+Postindustrial cities often struggle with infrastructure renewal.
+The interdisciplinary conference attracted scholars worldwide.
+Instructions strictly prohibited unauthorized entry to the facility.
+The multidisciplinary team collaborated on the complex proposal.
+Sixth-graders studied the ancient civilization's architecture.
+The overwhelmingly complex negotiations lasted several months.
+Statistically significant improvements were observed throughout.
+The disproportionate response sparked widespread controversy.
+Understandably, the misunderstanding caused considerable frustration.
+Her thoroughly researched thesis impressed the review board.
+The uncharacteristically harsh criticism surprised the audience.
+Extraterrestrial exploration requires extraordinarily precise instruments.
+The straightforward instructions simplified the entire process.
+Unquestionably, the strengths outweighed the drawbacks significantly.
+The comprehensive strategy addressed every conceivable obstacle.
+Twelfth-century manuscripts revealed surprisingly detailed illustrations.
+The philanthropist's contributions transformed the struggling institution.
+Instrumentalists rehearsed the strikingly complex symphony repeatedly.
+The archivist catalogued thousands of historically significant documents.
+Substantially stronger regulations were proposed after the incident.
+The straightforwardly written contract avoided unnecessary complications.
+Circumstantial evidence complicated the otherwise straightforward case.
+The environmentalists championed sustainable, uncomplicated solutions.
+Unprecedented growth strained the district's aging infrastructure.
+The extraordinarily complex machinery required specialized technicians.
+Her unmistakably distinct handwriting made the letters easy to identify.
+The constitutionally protected rights sparked intense debate.
+Interconnected systems require thoroughly tested contingency plans.
+The disproportionately large crowd overwhelmed the small venue.
+Uncharacteristically, the strictest critic praised the performance.
+The twelfth attempt finally solved the extraordinarily tricky puzzle.
+Extraordinarily strict guidelines governed the laboratory's protocols.
+
+## pacing
+Stop.
+Wait here.
+Go now.
+That's enough.
+I understand.
+Come with me.
+Not today.
+Try again.
+It's ready.
+Look closer.
+When the sun finally broke through the clouds after three days of steady rain, the whole valley seemed to exhale, and even the birds, which had been silent for so long, began to sing again as if nothing had happened at all.
+Because the meeting ran long and the traffic was worse than anyone expected, by the time she arrived home the dinner had gone cold, the candles had burned down to nothing, and everyone else had already gone to bed.
+Although the contract had been reviewed by three separate attorneys, each of whom raised different concerns about the liability clauses, the company ultimately decided to proceed without making any further revisions.
+First we packed the tents, then we loaded the canoes, then we checked the weather one last time, and finally, just as the sun was rising, we pushed off from the shore.
+Grab your coat, find your keys, lock the door, and meet me at the corner in exactly five minutes, because the train will not wait for us if we're late.
+We need eggs, milk, bread, butter, coffee, and whatever vegetables look freshest, so let's split the list and meet back here in twenty minutes.
+He walked in, hung up his coat, poured a cup of coffee, sat down at the table, and finally, after a long silence, began to explain what had happened.
+The old house, which had stood empty for nearly a decade and had slowly been reclaimed by ivy and moss, was finally sold at auction to a young couple from the city.
+Slowly, carefully, and without making a single sound, she crossed the creaking floorboards toward the door.
+Run.
+Hold on.
+It's over.
+Almost there.
+One more step.
+The report, which had taken the committee nearly six months to compile, drawing on interviews, surveys, and years of archived data, was finally presented to the board on a quiet Tuesday morning.
+Turn left at the bakery, walk two blocks past the old theater, cross the bridge, and the museum will be on your right.
+She read the letter once, then again, then a third time, before finally setting it down and staring out the window.
+Fine.
+Later.
+Not now.
+Sure thing.
+As the storm intensified and the power flickered on and off across the neighborhood, families gathered candles, checked their phones, and waited quietly for the worst of it to pass.
+Pack light, travel fast, trust no one, and above all, keep moving.
+The negotiations, which had stalled repeatedly over the course of the year due to disagreements about pricing, timelines, and delivery terms, finally reached a resolution late Friday evening.
+Yes.
+No.
+Maybe.
+I agree.
+After weighing every option carefully, consulting with her family, reviewing the finances one more time, and sleeping on it for a week, she finally decided to take the job.
+
+## intonation
+Is that really true?
+What time does the meeting start?
+Watch out for the wet floor!
+Close the window before you leave.
+Could you pass the salt, please?
+That's incredible!
+Where did you put the keys?
+Never do that again.
+I can't believe it worked!
+Are you coming with us tonight?
+Stop right there!
+Please have a seat and wait.
+Why didn't anyone tell me sooner?
+This is the best day ever!
+Turn off the lights when you're done.
+Did you hear that noise?
+Hurry, we're going to be late!
+Hand me the wrench, would you?
+How did you manage to fix that so quickly?
+Get out of the way!
+Would you mind opening the door?
+That's absolutely unacceptable!
+What on earth happened here?
+Bring your umbrella, it might rain.
+Is anyone else hungry?
+Watch your step on the stairs!
+Could this day get any longer?
+Follow me and stay close.
+Who left the door unlocked?
+Congratulations, you did it!
+Is the meeting still on for tomorrow?
+Don't touch that, it's still hot!
+Can you believe he actually said that?
+Sit down and take a breath.
+What a beautiful sunset tonight!
+Did you finish the report yet?
+Look out below!
+Please remember to lock up before you go.
+How could this have happened again?
+That's wonderful news!
+
+## numbers
+The meeting is scheduled for 9:30 a.m. on March 3rd.
+The total came to forty-two dollars and fifteen cents.
+She was born on July 4th, 1998, in a small town.
+The store closes at 8 p.m. sharp on weekdays.
+Room 214 is located on the second floor.
+The package weighs approximately 3.5 kilograms.
+Flight 207 departs from gate B12 at noon.
+The recipe calls for two and a half cups of flour.
+He scored 87 out of 100 on the final exam.
+The invoice, dated May 1st, totals $1,250.00.
+The thermometer read exactly 72 degrees Fahrenheit.
+Dr. Alvarez will see you at 3:45 this afternoon.
+The company reported a 12% increase in quarterly revenue.
+Turn left at Highway 9 and continue for six miles.
+The event starts promptly at 6:00 p.m. on Saturday.
+She ran the marathon in three hours and forty minutes.
+The building was constructed in 1932 and renovated in 2005.
+Add one teaspoon of salt and a half cup of sugar.
+The population grew from 12,000 to nearly 45,000.
+Mr. Chen's office is on the 14th floor, suite 1402.
+The train departs at 7:15 and arrives by 9:40.
+Interest rates rose by 0.25 percent this quarter.
+The conference runs from June 3rd through June 6th.
+Please submit the form by 5 p.m. on Friday, the 9th.
+The bridge spans just over 1.2 miles across the bay.
+Her essay was exactly 1,500 words, as required.
+The store offers a 15% discount for orders over $50.
+The satellite orbits the earth every 90 minutes.
+Class begins at 8:00 a.m. in room 101B.
+The bill, including tax, comes to $63.79.
+The hurricane was reported at Category 3 strength.
+The library is open from 10 a.m. to 6 p.m. daily.
+He ran the 100 meters in just under 11 seconds.
+The contract is valid for a period of 24 months.
+Table 6 has been reserved for a party of eight.
+The average temperature in July is around 85 degrees.
+The museum's new wing opens on October 21st.
+She saved 20% by buying the tickets in advance.
+The elevator only goes up to the ninth floor.
+Check-in time is 3 p.m., and checkout is at 11 a.m.
+
+## neutral
+I think I'll make some tea before we get started.
+The weather has been really nice this week.
+Let's grab lunch after we finish this meeting.
+I left my umbrella at the office again.
+Can you send me that file when you get a chance?
+We should probably leave a little earlier tomorrow.
+I'm not sure what to make for dinner tonight.
+The dog needs to go for a walk soon.
+Thanks for helping me move those boxes yesterday.
+I'll call you back in about ten minutes.
+Do you want to watch a movie later tonight?
+The garden is starting to look really nice this spring.
+I forgot to charge my phone last night.
+Let's plan to meet at the coffee shop around noon.
+I've been meaning to clean out the garage for weeks.
+The traffic wasn't too bad on the way here today.
+Can you remind me to pick up milk on the way home?
+I really appreciate you taking the time to help.
+We should get the car checked before the road trip.
+It's been a pretty quiet week around here.
+I think I left my keys in the other jacket.
+Let me know if you need anything else from the store.
+The new coffee place downtown is actually really good.
+I'll have that report finished by tomorrow morning.
+We're thinking about repainting the living room this year.
+Did you end up finishing that book you started?
+I might just stay in and relax this weekend.
+The kids are excited about the trip next month.
+I'll text you once I get to the station.
+Let's catch up properly sometime next week.
+The internet's been a little slow today for some reason.
+I put the leftovers in the fridge for later.
+We should probably water the plants before we leave.
+I'm going to try that new recipe this weekend.
+Thanks again for covering my shift last Tuesday.
+I think the meeting got moved to Thursday instead.
+Let me grab my jacket before we head out.
+The neighbors are having a small get-together this weekend.
+I'll follow up with them once I hear back.
+It's supposed to cool down a bit later this week.
