@@ -1,4 +1,5 @@
 """Voice style model — spectral + pitch transfer from reference clips."""
+import re
 from pathlib import Path
 import numpy as np
 import soundfile as sf
@@ -132,7 +133,7 @@ def speak_generate(
         audio = _shift_pitch(audio, pitch_shift)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    slug = text[:28].strip().replace(" ", "_").replace("/", "-")
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", text.strip())[:28].strip("_") or "line"
     out_path = output_dir / f"speak_{char_name or 'char'}_{slug}.wav"
     sf.write(str(out_path), audio, _SR)
     return out_path

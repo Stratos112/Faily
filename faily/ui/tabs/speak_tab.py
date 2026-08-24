@@ -1,3 +1,4 @@
+import re
 from contextlib import nullcontext
 from nicegui import ui, run as ni_run
 from pathlib import Path
@@ -324,6 +325,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
     _length_scale: list[float] = [1.0]
     _noise_scale:  list[float] = [0.667]
     _noise_w:      list[float] = [0.8]
+    _sent_silence: list[float] = [0.3]
 
     def _update_info(name: str):
         char_state[0] = name
@@ -362,12 +364,12 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                 _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
                 if char.get("piper_model"):
                     from faily.modules.piper import infer
-                    slug = text[:28].strip().replace(" ", "_").replace("/", "-")
+                    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", text.strip())[:28].strip("_") or "line"
                     suffix = f"_{i + 1:02d}" if n > 1 else ""
                     out_path = _VC_DIR / f"piper_{char_state[0]}_{slug}{suffix}.wav"
                     path = await ni_run.io_bound(
                         infer, text, Path(char["piper_model"]), out_path,
-                        _length_scale[0], _noise_scale[0], _noise_w[0],
+                        _length_scale[0], _noise_scale[0], _noise_w[0], _sent_silence[0],
                     )
                 else:
                     from faily.modules.rvc import speak_generate
@@ -424,6 +426,19 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                 )
                 def _on_noise_w(e): _noise_w[0] = float(e.value); noise_w_lbl.set_text(f"{e.value:.2f}")
                 ui.slider(min=0.0, max=1.5, step=0.01, value=0.8, on_change=_on_noise_w).classes("flex-grow").props("color=amber")
+
+            _section_row(
+                "SENTENCE PAUSE",
+                "Silence inserted between sentences. Piper synthesizes each sentence "
+                "independently — 0 runs them together with no pause and no sentence "
+                "structure. Default 0.30s.",
+            )
+            with ui.row().classes("w-full items-center gap-3"):
+                sent_silence_lbl = ui.label("0.30").classes(
+                    "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
+                )
+                def _on_sent_silence(e): _sent_silence[0] = float(e.value); sent_silence_lbl.set_text(f"{e.value:.2f}")
+                ui.slider(min=0.0, max=1.0, step=0.05, value=0.3, on_change=_on_sent_silence).classes("flex-grow").props("color=amber")
         piper_params_row.set_visibility(False)
 
         _section_row("LINE", "What the character says.")

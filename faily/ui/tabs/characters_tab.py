@@ -10,6 +10,7 @@ from faily.core.characters import (
 )
 from faily.ui.components import section_label, show_error, send_to_edit
 from faily.modules.piper import BASE_VOICES, base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT
+from faily.core.model_manager import manager
 
 _BTN = "font-mono tracking-widest"
 
@@ -717,6 +718,13 @@ def build_characters_tab(on_speak, on_change):
                                         ).props("flat dense color=amber").classes("font-mono text-[10px] shrink-0")
 
                         try:
+                            # piper_train runs as a separate OS process (piper_venv) — any TTS/VC
+                            # model still resident in this process's GPU memory is pure overhead
+                            # during training, competing with piper_train for the same physical
+                            # VRAM. Free it first so training gets as much headroom as possible.
+                            if manager.loaded:
+                                _log(f"Freeing GPU memory ({', '.join(manager.loaded)})…")
+                                manager.unload_all()
                             if not base_voice_ready(chosen_voice):
                                 _log(f"Downloading base voice: {BASE_VOICES.get(chosen_voice, {}).get('label', chosen_voice)}…")
                                 await download_base_voice(chosen_voice, _log)

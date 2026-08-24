@@ -787,13 +787,20 @@ def infer(
     length_scale: float = 1.0,
     noise_scale: float = 0.667,
     noise_w_scale: float = 0.8,
+    sentence_silence: float = 0.3,
 ) -> Path:
     """Blocking piper inference. Returns out_path.
 
     length_scale: phoneme length — lower is faster/higher-pitched speech, higher is slower.
     noise_scale: generator noise — controls prosodic variability/expressiveness.
     noise_w_scale: phoneme duration noise — controls pacing variability between phonemes.
-    Defaults match piper's own (and the values export_onnx.py bakes into the dummy
+    sentence_silence: seconds of silence piper inserts between sentences. Piper synthesizes
+    each sentence in the input as an independent utterance and concatenates them — its own
+    CLI default is 0.0, which runs multi-sentence lines together with no pause and no
+    cross-sentence prosody, sounding like broken/absent sentence structure. 0.3s here is a
+    saner default for anything longer than a single sentence; the one-sentence SAMPLE_TEXT
+    preview never hits this since there's no sentence boundary to expose it.
+    Defaults otherwise match piper's own (and the values export_onnx.py bakes into the dummy
     input used to export the model in the first place).
     """
     cfg = model_path.with_suffix(".onnx.json")
@@ -813,6 +820,7 @@ def infer(
             "--length-scale", str(length_scale),
             "--noise-scale", str(noise_scale),
             "--noise-w-scale", str(noise_w_scale),
+            "--sentence-silence", str(sentence_silence),
         ],
         input=text.encode(),
         capture_output=True,
