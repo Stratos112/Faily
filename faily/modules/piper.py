@@ -531,17 +531,35 @@ def _resample_to_22k(src: Path, dest: Path):
     sf.write(str(dest), audio, _SR)
 
 
-def _prep_dataset(clips: list[dict], dataset_dir: Path) -> int:
+def _prep_dataset(clips: list[dict], dataset_dir: Path, log_cb=None) -> int:
+    """Resample every usable clip into the dataset dir and write metadata.csv.
+
+    One unreadable/corrupt clip must not sink the other 299 — each clip is
+    resampled independently and a failure is logged and skipped rather than
+    raised, so a single bad file can't abort the entire prep step and throw
+    away everyone else's work. Returns the number of rows actually written,
+    which is what the caller should treat as the real dataset size (not
+    len(clips)) since this is the point where bad files actually get caught.
+    """
     wavs_dir = dataset_dir / "wavs"
     wavs_dir.mkdir(parents=True, exist_ok=True)
     rows = []
+    skipped = 0
     for i, entry in enumerate(clips):
         transcript = entry.get("transcript", "").strip()
         if not transcript:
             continue
         stem = f"clip_{i:04d}"
-        _resample_to_22k(entry["audio"], wavs_dir / f"{stem}.wav")
+        try:
+            _resample_to_22k(entry["audio"], wavs_dir / f"{stem}.wav")
+        except Exception as exc:
+            skipped += 1
+            if log_cb:
+                log_cb(f"  skipping unreadable clip {entry['audio']}: {exc}")
+            continue
         rows.append((stem, transcript))
+    if skipped and log_cb:
+        log_cb(f"Skipped {skipped} unreadable clip(s) out of {len(clips)}")
     with open(dataset_dir / "metadata.csv", "w", newline="", encoding="utf-8") as f:
         csv.writer(f, delimiter="|").writerows(rows)
     return len(rows)
@@ -692,7 +710,7 @@ async def train(
     await _probe(py, "pytorch_lightning", "import pytorch_lightning; print(pytorch_lightning.__version__)", log_cb)
     await _probe(py, "piper_train.vits.lightning", "import piper_train.vits.lightning", log_cb)
 
-    n = await asyncio.to_thread(_prep_dataset, usable, dataset_dir)
+    n = await asyncio.to_thread(_prep_dataset, usable, dataset_dir, log_cb)
     log_cb(f"Dataset ready: {n} clips")
     if n < _MICRO_BATCH:
         raise ValueError(

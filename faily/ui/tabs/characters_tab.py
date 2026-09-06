@@ -753,7 +753,15 @@ def build_characters_tab(on_speak, on_change):
                             proceed = await _review_long_clips(outliers, avg_dur)
                             if not proceed:
                                 return
+                            # Excluding clips in the review dialog can legitimately
+                            # empty out the training set — re-check here instead of
+                            # relying solely on train()'s deeper guard, so that case
+                            # exits cleanly instead of proceeding into GPU-freeing /
+                            # base-voice-download work first.
                             chain = get_ref_chain(n)
+                            if not chain:
+                                ui.notify("No reference clips left after review — nothing to train on", type="warning")
+                                return
                             durations = _durations(chain)
 
                         # Piper only hard-requires 2 clips with transcripts, but good

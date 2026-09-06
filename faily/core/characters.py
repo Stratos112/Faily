@@ -424,26 +424,44 @@ def split_long_ref_clip(name: str, file_key: str, target_seconds: float) -> int:
     for i, sent in enumerate(sentences):
         groups[min(i * n_pieces // len(sentences), n_pieces - 1)].append(sent)
 
+    # Validate every piece before writing anything — a partial commit here
+    # (some pieces added, original removed) would silently drop whatever
+    # audio/transcript landed in a skipped piece. This should be unreachable
+    # given n_pieces <= len(sentences) and find_silence_splits' own spacing
+    # guarantee (every segment is non-empty by construction), but the whole
+    # point of this pass is to not depend on that invariant holding forever.
+    pieces = []
+    for i in range(n_pieces):
+        seg = data[bounds[i]:bounds[i + 1]]
+        text = " ".join(groups[i]).strip()
+        if not text or len(seg) == 0:
+            return 0
+        pieces.append((seg, text))
+
     source = entry.get("source", "")
     category = entry.get("category", "")
     tmp_dir = Path(tempfile.mkdtemp(prefix="faily_split_"))
-    created = 0
+    added_keys: list[str] = []
     try:
-        for i in range(n_pieces):
-            seg = data[bounds[i]:bounds[i + 1]]
-            text = " ".join(groups[i]).strip()
-            if not text or len(seg) == 0:
-                continue
+        for i, (seg, text) in enumerate(pieces):
             tmp_path = tmp_dir / f"piece_{i:02d}.wav"
             _sf.write(str(tmp_path), seg, sr)
-            add_ref_clip(name, tmp_path, transcript=text, source=source, category=category)
-            created += 1
+            dest = add_ref_clip(name, tmp_path, transcript=text, source=source, category=category)
+            added_keys.append(f"refs/{dest.name}")
+    except Exception:
+        # Roll back whatever pieces did get added so we're left with the
+        # original clip intact rather than a lossy partial split.
+        for key in added_keys:
+            try:
+                remove_ref_clip(name, key)
+            except Exception:
+                pass
+        raise
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    if created:
-        remove_ref_clip(name, file_key)
-    return created
+    remove_ref_clip(name, file_key)
+    return len(pieces)
 
 
 def update_ref_clip(name: str, file_key: str, new_stem: str | None = None, new_transcript: str | None = None) -> dict:
