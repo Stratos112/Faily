@@ -105,6 +105,61 @@ def model_picker(options: dict, default: str, on_change) -> ui.column:
     return col
 
 
+def preview_meter(player: ui.audio):
+    """A 'buffering' bar for batch-generated clips (see vc.generate's chunked
+    path) — grows toward an estimated total length as chunks land on disk, and
+    hot-swaps the player's audio source to include newly-ready audio without
+    resetting playback position, so you can listen to what's done while the
+    rest keeps generating in the background — like scrubbing a slow stream.
+
+    Returns update(preview: dict | None) — call it with vc.generate's
+    preview_ref each tick (e.g. from the existing progress-poll timer). An
+    empty/falsy preview hides the bar.
+    """
+    bar = ui.linear_progress(value=0, size="6px").props("color=amber").classes("w-full rounded")
+    bar.set_visibility(False)
+    label = ui.label("").classes("text-[#444] font-mono text-[9px]")
+    _last_ready = [-1.0]
+
+    def update(preview: dict | None):
+        if not preview:
+            bar.set_visibility(False)
+            label.set_text("")
+            _last_ready[0] = -1.0
+            return
+
+        ready = preview.get("ready_seconds", 0.0)
+        total = max(preview.get("estimated_total_seconds", 0.0), ready, 0.01)
+        done = preview.get("done", False)
+
+        bar.set_visibility(not done)
+        bar.set_value(min(1.0, ready / total))
+        label.set_text(
+            f"{ready:.1f}s ready" if done else f"buffering…  {ready:.1f}s  /  ~{total:.1f}s estimated"
+        )
+
+        path = preview.get("path")
+        if path and ready > _last_ready[0] + 0.05:
+            _last_ready[0] = ready
+            rel = Path(path).relative_to(Path("outputs")).as_posix()
+            url = f"/outputs/{rel}?t={ready:.2f}"
+            ui.run_javascript(f"""
+                try {{
+                    const el = getElement({player.id}).$el ?? getElement({player.id});
+                    const audio = el.tagName === 'AUDIO' ? el : el.querySelector('audio');
+                    if (audio) {{
+                        const wasPlaying = !audio.paused;
+                        const t = audio.currentTime;
+                        audio.src = "{url}";
+                        audio.currentTime = t;
+                        if (wasPlaying) {{ audio.play().catch(() => {{}}); }}
+                    }}
+                }} catch (e) {{}}
+            """)
+
+    return update
+
+
 def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = False):
     """
     Builds the right-hand output column.

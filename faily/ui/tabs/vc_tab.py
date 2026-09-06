@@ -1,7 +1,7 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS, transcribe_ref
 from faily.core.characters import save_character, list_characters, delete_character
-from faily.ui.components import output_panel, section_label, show_error, model_picker
+from faily.ui.components import output_panel, section_label, show_error, model_picker, preview_meter
 from pathlib import Path
 
 _REFS_DIR = VC_OUTPUT_DIR / "refs"
@@ -21,6 +21,7 @@ def _fmt(val: float, step: float) -> str:
 
 def build_vc_tab():
     _progress: list[float] = [0.0]
+    _preview: dict = {}
     _ref_path: list[Path | None] = [None]
     _backend: list[str] = ["xtts_v2"]
     _param1: list[float] = [BACKENDS["xtts_v2"]["param1"]["default"]]
@@ -122,6 +123,7 @@ def build_vc_tab():
         gen_btn.disable()
         _out["status"].set_text("—")
         _progress[0] = 0.0
+        _preview.clear()
         _out["model_loader"].set_visibility(True)
         _poll.active = True
 
@@ -130,6 +132,7 @@ def build_vc_tab():
                 vc_generate, text, _ref_path[0], _progress, None,
                 _backend[0], _param1[0], _param2[0], ref_text_input.value,
                 char_name=name_input.value.strip() or None,
+                preview_ref=_preview,
             )
             _out["main_player"].set_source(f"/outputs/vc/{path.name}")
             _out["status"].set_text(f"✓  {path.name}")
@@ -139,6 +142,7 @@ def build_vc_tab():
             _out["status"].set_text("error")
         finally:
             _poll.active = False
+            _update_preview(None)
             _out["model_loader"].set_visibility(False)
             _out["progress_bar"].set_value(1.0)
             _out["progress_bar"].set_visibility(True)
@@ -198,6 +202,7 @@ def build_vc_tab():
                 .classes("w-full")
                 .props("outlined dark")
             )
+            preview_slot = ui.column().classes("w-full gap-0")
 
             params_col = ui.column().classes("w-full gap-4")
 
@@ -286,6 +291,9 @@ def build_vc_tab():
         pb, ml, mp, st, _, _, ath, _ = output_panel("vc", get_char_name=lambda: name_input.value.strip() or None)
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
+    with preview_slot:
+        _update_preview = preview_meter(_out["main_player"])
+
     _rebuild_list()
     _rebuild_params()
     _rebuild_char_list()
@@ -297,6 +305,7 @@ def build_vc_tab():
         _out["model_loader"].set_visibility(False)
         _out["progress_bar"].set_visibility(True)
         _out["progress_bar"].set_value(val)
+        _update_preview(_preview)
 
     _poll = ui.timer(0.15, _tick, active=False)
 

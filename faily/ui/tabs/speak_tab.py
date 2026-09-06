@@ -11,7 +11,7 @@ from faily.modules.piper import generate_character_ref_sample, SAMPLE_TEXT
 from faily.core.characters import (
     list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio,
 )
-from faily.ui.components import output_panel, section_label, show_error, model_picker
+from faily.ui.components import output_panel, section_label, show_error, model_picker, preview_meter
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
@@ -473,6 +473,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
 def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
     """Left controls for ZERO SHOT sub-tab. Returns refresh."""
     _progress:   list[float] = [0.0]
+    _preview:    dict        = {}
     _backend:    list[str]   = ["xtts_v2"]
     _param1:     list[float] = [BACKENDS["xtts_v2"]["param1"]["default"]]
     _param2:     list[float] = [BACKENDS["xtts_v2"]["param2"]["default"]]
@@ -532,12 +533,15 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 for i in range(n):
                     _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
                     _progress[0] = 0.0
+                    _preview.clear()
+                    preview_row.set_visibility(True)
                     path = await ni_run.io_bound(
                         vc_generate,
                         text, ref, _progress, None,
                         _backend[0], _param1[0], _param2[0],
                         ref_text_input.value or chain_transcript,
                         char_name=char_state[0],
+                        preview_ref=_preview,
                     )
                     results.append((path, text))
                     _out["add_to_history"](path, text)
@@ -549,6 +553,8 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 if results:
                     _out["set_candidates"](results)
                 _poll.active = False
+                preview_row.set_visibility(False)
+                _update_preview(None)
                 _out["model_loader"].set_visibility(False)
                 _out["progress_bar"].set_value(1.0)
                 _out["progress_bar"].set_visibility(True)
@@ -593,6 +599,17 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
             .classes("w-full").props("outlined dark rows=5")
         )
 
+        preview_row = ui.column().classes("w-full gap-0")
+        with preview_row:
+            _section_row(
+                "LIVE PREVIEW",
+                "While a long line is being generated in batches, listen to what's "
+                "done so far without waiting for the rest.",
+            )
+            preview_player = ui.audio("").classes("w-full rounded")
+            _update_preview = preview_meter(preview_player)
+        preview_row.set_visibility(False)
+
         _section_row("CANDIDATES", "Generate multiple takes in one pass. Each appears as a tile in CURRENT OUTPUT and in HISTORY.")
         with ui.row().classes("w-full items-center gap-3"):
             cand_lbl = ui.label("1").classes(
@@ -608,6 +625,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         )
 
     def _tick():
+        _update_preview(_preview)
         if _progress[0] == 0.0: return
         _out["model_loader"].set_visibility(False)
         _out["progress_bar"].set_visibility(True)

@@ -1,4 +1,6 @@
 import re
+import shutil
+import tempfile
 import soundfile as sf
 import torchaudio
 from pathlib import Path
@@ -81,6 +83,7 @@ BACKENDS = {
         "label": "SpeechT5",
         "desc": "Microsoft · X-vector speaker embedding. Fast and lightweight. Good for quick previews. Less natural than neural approaches and struggles to maintain speaker identity on longer outputs.",
         "text_hint": "Ideal: one short sentence, under ~200 characters. No length control on the decoder — longer text tends to trail off, repeat, or cut out early.",
+        "split_chars": 200,
         "param1": {"label": "VOICE STRENGTH", "tooltip": "Scales the speaker embedding. Below 1.0 is more neutral, above 1.0 exaggerates the voice's character.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
         "param2": {"label": "THRESHOLD", "tooltip": "Mel spectrogram stopping criterion. Lower = crisper and shorter output. Higher = smoother but may trail off.", "min": 0.1, "max": 0.9, "step": 0.05, "default": 0.5},
     },
@@ -88,6 +91,7 @@ BACKENDS = {
         "label": "XTTS v2",
         "desc": "Coqui AI · Zero-shot cross-attention conditioning. Best all-rounder for voice cloning. Natural prosody on short-to-medium clips. Slow initial load; can clip or cut off on very long inputs.",
         "text_hint": "Ideal: 1–2 sentences, under ~250 characters per call. Long unbroken text is where it clips or cuts off — split longer lines into multiple generations.",
+        "split_chars": 250,
         "param1": {"label": "TEMPERATURE", "tooltip": "Expressiveness. Low = flat and consistent. High = emotive but may wander.", "min": 0.1, "max": 1.0, "step": 0.05, "default": 0.75},
         "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
@@ -95,6 +99,7 @@ BACKENDS = {
         "label": "F5-TTS",
         "desc": "SWC Lab · Flow-matching diffusion. Highest speaker similarity when given a good transcript. Requires the reference transcript — auto-fills on upload. More steps = better quality but slower. Overkill for quick drafts.",
         "text_hint": "Ideal: keep generated text roughly proportional to reference length (up to ~2–3× the ref duration). Output duration is predicted from that ratio, so a long line against a short ref causes pacing drift.",
+        "split_chars": 300,
         "param1": {"label": "STEPS", "tooltip": "Diffusion steps. More = higher quality but slower. 32 is a good balance.", "min": 8, "max": 64, "step": 4, "default": 32},
         "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
@@ -102,6 +107,7 @@ BACKENDS = {
         "label": "Chatterbox",
         "desc": "Resemble AI · CFG-guided generation. Strong emotional range via the exaggeration dial. Less faithful to exact speaker identity than XTTS. Good for expressive or theatrical characters.",
         "text_hint": "Ideal: a few sentences, up to ~30–40s of output. Beyond that, exaggeration and pacing start to wander.",
+        "split_chars": 450,
         "param1": {"label": "EXAGGERATION", "tooltip": "Emotional intensity. Low = calm and neutral. High = expressive.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
         "param2": {"label": "CFG WEIGHT", "tooltip": "Guidance strength. Higher = more faithful to the reference voice style.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
     },
@@ -701,6 +707,160 @@ def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
     _sf.write(str(out), audio, 22050)
 
 
+def _dispatch_generate(backend: str, text: str, ref_path: Path | None, out: Path, p1: float, p2: float, ref_text: str) -> None:
+    if backend == "speecht5":
+        _speecht5_generate(text, ref_path, out, emb_scale=p1, threshold=p2)
+    elif backend == "xtts_v2":
+        _xtts_generate(text, ref_path, out, temperature=p1, speed=p2)
+    elif backend == "f5_tts":
+        _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)
+    elif backend == "chatterbox":
+        _chatterbox_generate(text, ref_path, out, exaggeration=p1, cfg_weight=p2)
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
+
+
+def _ideal_max_chars(backend: str, ref_path: Path | None) -> int:
+    """Per-backend character budget used to decide when a line needs auto-splitting.
+
+    F5-TTS predicts output duration from the ref:gen length ratio (see its text_hint),
+    so its budget scales with the actual reference clip instead of a flat number —
+    ~15 chars/sec of speech, allowed to run up to ~2.5x the reference duration.
+    """
+    if backend == "f5_tts" and ref_path is not None:
+        try:
+            dur = sf.info(str(ref_path)).duration
+            return max(80, int(dur * 15 * 2.5))
+        except Exception:
+            pass
+    return BACKENDS[backend].get("split_chars", 250)
+
+
+def _split_text_for_generation(text: str, max_chars: int) -> list[str]:
+    """Greedily pack sentences into chunks no longer than max_chars.
+
+    A sentence longer than max_chars on its own is further broken on word
+    boundaries so no chunk is ever left unbounded.
+    """
+    text = " ".join(text.split())
+    if len(text) <= max_chars:
+        return [text]
+
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    chunks: list[str] = []
+    current = ""
+    for sent in sentences:
+        if len(sent) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            piece = ""
+            for word in sent.split(" "):
+                candidate = f"{piece} {word}".strip()
+                if len(candidate) > max_chars and piece:
+                    chunks.append(piece)
+                    piece = word
+                else:
+                    piece = candidate
+            current = piece
+            continue
+        candidate = f"{current} {sent}".strip()
+        if len(candidate) > max_chars and current:
+            chunks.append(current)
+            current = sent
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+_CROSSFADE_SECONDS = 0.04
+_CHARS_PER_SECOND = 15.0  # rough speaking-rate estimate, used only to size the preview bar
+
+
+def _generate_chunked(
+    chunks: list[str], backend: str, ref_path: Path | None, out: Path,
+    p1: float, p2: float, ref_text: str,
+    progress_ref: list | None, preview_ref: dict | None = None,
+) -> None:
+    """Generate each chunk to a scratch file and blend it into `out` on disk with
+    a short crossfade at each seam. Only the current and previous chunk's audio is
+    ever held in memory — bounded, not growing with total length.
+
+    After every chunk, `out` is closed and reopened rather than kept open for the
+    whole batch, so its WAV header is finalized each time: `out` is a valid, fully
+    playable clip of everything generated so far at any point during the batch,
+    not just once the whole thing is done. preview_ref (if given) is updated in
+    place with {"path", "ready_seconds", "estimated_total_seconds", "done"} so a
+    UI can poll it to drive a buffering-style preview.
+    """
+    import numpy as np
+
+    if preview_ref is not None:
+        preview_ref.clear()
+        preview_ref.update(
+            path=str(out), done=False, ready_seconds=0.0,
+            estimated_total_seconds=sum(len(c) for c in chunks) / _CHARS_PER_SECOND,
+        )
+
+    scratch_dir = Path(tempfile.mkdtemp(prefix="faily_batch_"))
+    pending: "np.ndarray | None" = None
+    sr: int | None = None
+    channels: int | None = None
+    frames_written = 0
+    wrote_any = False
+
+    def _flush(segment) -> None:
+        nonlocal frames_written, wrote_any
+        if wrote_any:
+            f = sf.SoundFile(str(out), mode="r+")
+            f.seek(0, sf.SEEK_END)
+        else:
+            f = sf.SoundFile(str(out), mode="w", samplerate=sr, channels=channels)
+        try:
+            f.write(segment)
+        finally:
+            f.close()
+        wrote_any = True
+        frames_written += len(segment)
+        if preview_ref is not None:
+            preview_ref["ready_seconds"] = frames_written / sr
+
+    try:
+        for i, chunk in enumerate(chunks):
+            if progress_ref is not None:
+                progress_ref[0] = i / len(chunks)
+            chunk_path = scratch_dir / f"chunk_{i:03d}.wav"
+            _dispatch_generate(backend, chunk, ref_path, chunk_path, p1, p2, ref_text)
+            data, chunk_sr = sf.read(str(chunk_path), dtype="float32", always_2d=True)
+            if sr is None:
+                sr, channels = chunk_sr, data.shape[1]
+
+            if pending is None:
+                pending = data
+                continue
+
+            fade = min(int(_CROSSFADE_SECONDS * sr), len(pending), len(data))
+            if fade > 0:
+                fade_out = np.linspace(1.0, 0.0, fade, dtype="float32")[:, None]
+                fade_in = np.linspace(0.0, 1.0, fade, dtype="float32")[:, None]
+                blended = pending[-fade:] * fade_out + data[:fade] * fade_in
+                _flush(np.concatenate([pending[:-fade], blended]))
+                pending = data[fade:]
+            else:
+                _flush(pending)
+                pending = data
+        if pending is not None:
+            _flush(pending)
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+        if preview_ref is not None:
+            preview_ref["done"] = True
+            if sr:
+                preview_ref["estimated_total_seconds"] = frames_written / sr
+
+
 def generate(
     text: str,
     ref_path: Path | None,
@@ -711,6 +871,7 @@ def generate(
     param2: float | None = None,
     ref_text: str = "",
     char_name: str | None = None,
+    preview_ref: dict | None = None,
 ) -> Path:
     if output_dir is None:
         output_dir = VC_OUTPUT_DIR
@@ -724,25 +885,21 @@ def generate(
         progress_ref[0] = 0.2
 
     out = output_dir / _make_clip_name(char_name, backend, text, output_dir)
+    chunks = _split_text_for_generation(text, _ideal_max_chars(backend, ref_path))
 
-    if progress_ref is not None:
-        progress_ref[0] = 0.4
-
-    if backend == "speecht5":
-        _speecht5_generate(text, ref_path, out, emb_scale=p1, threshold=p2)
-    elif backend == "xtts_v2":
-        _xtts_generate(text, ref_path, out, temperature=p1, speed=p2)
-    elif backend == "f5_tts":
-        _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)
-    elif backend == "chatterbox":
-        _chatterbox_generate(text, ref_path, out, exaggeration=p1, cfg_weight=p2)
+    if len(chunks) == 1:
+        if progress_ref is not None:
+            progress_ref[0] = 0.4
+        _dispatch_generate(backend, text, ref_path, out, p1, p2, ref_text)
     else:
-        raise ValueError(f"Unknown backend: {backend}")
+        _generate_chunked(chunks, backend, ref_path, out, p1, p2, ref_text, progress_ref, preview_ref)
 
     if progress_ref is not None:
         progress_ref[0] = 1.0
 
     ensure_stereo(out)
+    if preview_ref is not None:
+        preview_ref["done"] = True
     return out
 
 
