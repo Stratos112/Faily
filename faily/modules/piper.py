@@ -633,6 +633,21 @@ async def train(
     log_cb(f"Character dir: {char_dir}")
     log_cb(f"Clips received: {len(clips)}")
 
+    # A per-step batch of 16 at fp32 OOMs on a 16GB card once the dataset grows
+    # (VITS pads every clip in a batch to the longest member, so bucket luck
+    # alone can tip it over). Split it into micro-batches accumulated over
+    # several steps instead — same effective batch size (same gradient
+    # quality, same training dynamics) at a fraction of the peak activation
+    # memory, just slower per epoch. Kept small (2) rather than a milder 4:
+    # piper_train buckets clips by length and needs at least _MICRO_BATCH
+    # same-bucket samples to form a batch at all — on a small or
+    # length-diverse dataset a bucket can easily fall short, and an empty
+    # dataloader crashes piper_train outright (native access violation, no
+    # Python traceback) instead of failing cleanly. Smaller requires less
+    # per-bucket depth to succeed.
+    _MICRO_BATCH = 2
+    _ACCUMULATE = 8
+
     reason = await asyncio.to_thread(diagnose)
     if reason:
         raise RuntimeError(f"Piper not ready — {reason}")
@@ -679,6 +694,14 @@ async def train(
 
     n = await asyncio.to_thread(_prep_dataset, usable, dataset_dir)
     log_cb(f"Dataset ready: {n} clips")
+    if n < _MICRO_BATCH:
+        raise ValueError(
+            f"Only {n} usable clip(s) after preprocessing, but training needs at "
+            f"least {_MICRO_BATCH} (the per-step batch size) — piper_train's length "
+            "bucketing can't fill even one batch below that and crashes outright "
+            "instead of failing cleanly. Add more reference clips, or re-include "
+            "some you excluded from the REFERENCES tab."
+        )
 
     # preprocess.py computes batch_size = num_utterances // (max_workers * 2)
     # and errors out ("n must be at least one") if that hits 0 — which it does
@@ -712,14 +735,6 @@ async def train(
     base_epoch = await _read_checkpoint_epoch(py, base_ckpt)
     target_epochs = base_epoch + max_epochs
 
-    # A per-step batch of 16 at fp32 OOMs on a 16GB card once the dataset grows
-    # (VITS pads every clip in a batch to the longest member, so bucket luck
-    # alone can tip it over). Split it into 4 micro-batches accumulated over 4
-    # steps instead — same effective batch size of 16 (same gradient quality,
-    # same training dynamics) at a quarter of the peak activation memory, just
-    # slower per epoch.
-    _MICRO_BATCH = 4
-    _ACCUMULATE = 4
     log_cb(
         f"Training — {max_epochs} additional epochs (base checkpoint at epoch "
         f"{base_epoch}, target {target_epochs}), batch {_MICRO_BATCH} x "
