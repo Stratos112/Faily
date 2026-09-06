@@ -39,8 +39,6 @@ def _patch_ffmpeg_read():
     au.ffmpeg_read = _sf_read
     au._faily_patched = True
 
-_patch_ffmpeg_read()
-
 VC_OUTPUT_DIR = Path("outputs/vc")
 
 
@@ -212,6 +210,7 @@ def _load_xtts():
 
 
 def transcribe_ref(ref_path: Path) -> str:
+    _patch_ffmpeg_read()
     from f5_tts.infer.utils_infer import transcribe
     return transcribe(str(ref_path))
 
