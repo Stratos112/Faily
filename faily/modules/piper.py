@@ -721,13 +721,18 @@ async def train(
             "some you excluded from the REFERENCES tab."
         )
 
-    # preprocess.py computes batch_size = num_utterances // (max_workers * 2)
-    # and errors out ("n must be at least one") if that hits 0 — which it does
-    # for small datasets (a handful of ref clips) on any machine with more than
-    # a few CPU cores, since it defaults max_workers to os.cpu_count(). Cap it
-    # so batch_size always comes out >= 1.
-    max_workers = max(1, min(os.cpu_count() or 4, n // 2))
-    log_cb(f"Preprocessing (phonemization)… max-workers={max_workers}")
+    # Phonemization shells out per-utterance to espeak-ng via our piper_phonemize
+    # shim (see _SHIM_CODE above). With --max-workers > 1, piper_train.preprocess
+    # phonemizes across real OS worker processes (Windows uses spawn) — those
+    # workers' stdout/stderr do NOT flow back through our captured subprocess
+    # output, so a per-worker failure (espeak-ng not resolving the same way in a
+    # freshly spawned process, contention across many concurrent shell-outs) can
+    # silently drop most or all utterances while the top-level process still
+    # exits 0. That's indistinguishable from success in this log until training
+    # crashes on an empty dataloader. Single-process phonemization is slower but
+    # actually reliable, and for a few hundred short utterances the wall-clock
+    # cost is trivial next to the training run itself — not worth the risk.
+    log_cb("Preprocessing (phonemization)… max-workers=1 (forced — see comment in piper.py)")
     await _stream([
         py, "-m", "piper_train.preprocess",
         "--language", "en-us",
@@ -736,9 +741,26 @@ async def train(
         "--sample-rate", str(_SR),
         "--dataset-format", "ljspeech",
         "--single-speaker",
-        "--max-workers", str(max_workers),
+        "--max-workers", "1",
     ], log_cb, proc_ref)
     log_cb("Preprocessing done")
+
+    # Belt and suspenders: verify piper_train.preprocess actually wrote a
+    # dataset.jsonl with enough rows to train on, rather than trusting its exit
+    # code alone — an empty/short output here is exactly what silently produced
+    # the "Total length of DataLoader ... is zero" crash before this fix.
+    dataset_jsonl = train_dir / "dataset.jsonl"
+    try:
+        jsonl_rows = sum(1 for line in dataset_jsonl.read_text(encoding="utf-8").splitlines() if line.strip())
+    except FileNotFoundError:
+        jsonl_rows = 0
+    log_cb(f"dataset.jsonl rows: {jsonl_rows}")
+    if jsonl_rows < _MICRO_BATCH:
+        raise RuntimeError(
+            f"piper_train.preprocess reported success but only wrote {jsonl_rows} "
+            f"row(s) to dataset.jsonl (expected {n}) — phonemization silently "
+            "dropped clips. Check that espeak-ng is installed and on PATH."
+        )
 
     # The base checkpoint already has a current_epoch baked in from its own
     # original training run. --max_epochs is an ABSOLUTE target, not a count
