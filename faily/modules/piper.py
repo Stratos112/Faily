@@ -750,6 +750,13 @@ async def train(
         "--accumulate_grad_batches", str(_ACCUMULATE),
         "--validation-split", "0.0",
         "--num-test-examples", "0",
+        # With validation-split 0.0 the val dataloader is intentionally empty —
+        # Lightning's default 2-step sanity check still runs against it before
+        # training starts, and this version (pre-ckpt_path, still on the
+        # deprecated resume_from_checkpoint API) can hard-crash with a native
+        # access violation on a truly empty sanity-check dataloader instead of
+        # skipping it cleanly. Turn it off since there's nothing to check.
+        "--num_sanity_val_steps", "0",
         "--max_epochs", str(target_epochs),
         "--resume_from_checkpoint", str(base_ckpt),
         "--checkpoint-epochs", "100",
