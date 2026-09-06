@@ -231,6 +231,7 @@ def build_characters_tab(on_speak, on_change):
                 own_refs.append({
                     "audio": rp, "transcript": rc.get("transcript", ""),
                     "kind": "clip", "file_key": rc["file"], "excluded": rc.get("excluded", False),
+                    "source": rc.get("source", ""), "category": rc.get("category", ""),
                 })
 
         full_chain = get_ref_chain(name)
@@ -417,7 +418,7 @@ def build_characters_tab(on_speak, on_change):
 
                         with ui.scroll_area().classes("w-full").style("height: 380px"):
                             with ui.column().classes("w-full gap-1"):
-                                for ref in own_refs:
+                                def _render_own_ref_row(ref):
                                     audio = ref["audio"]
                                     rel = audio.relative_to(Path("outputs"))
                                     url = f"/outputs/{rel.as_posix()}"
@@ -434,7 +435,10 @@ def build_characters_tab(on_speak, on_change):
                                             icon="play_arrow",
                                             on_click=lambda u=url, n=audio.stem: _play_ref(u, n),
                                         ).props("flat dense color=amber").classes("shrink-0")
-                                        ui.icon("star" if is_primary else "mic", size="12px").classes(
+                                        ui.icon(
+                                            "star" if is_primary else ("science" if ref.get("source") == "buffer" else "mic"),
+                                            size="12px",
+                                        ).classes(
                                             ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
                                         )
                                         if not is_primary:
@@ -469,6 +473,11 @@ def build_characters_tab(on_speak, on_change):
                                                 ui.label(f'"{t}"').classes(
                                                     "text-[#555] font-mono text-[10px] italic leading-tight truncate"
                                                 )
+                                        if ref.get("category"):
+                                            ui.label(ref["category"]).classes(
+                                                "text-[#3a3a3a] font-mono text-[9px] bg-[#161616] px-1.5 "
+                                                "rounded shrink-0"
+                                            )
                                         ui.button(
                                             icon="tune",
                                             on_click=lambda r=ref: send_to_edit(r["audio"], name),
@@ -489,6 +498,24 @@ def build_characters_tab(on_speak, on_change):
                                             ).props("flat dense color=grey").classes(
                                                 "shrink-0 opacity-40 hover:opacity-100"
                                             )
+
+                                buffer_refs = [r for r in own_refs if r.get("source") == "buffer"]
+                                direct_refs = [r for r in own_refs if r.get("source") != "buffer"]
+
+                                for ref in direct_refs:
+                                    _render_own_ref_row(ref)
+
+                                if buffer_refs:
+                                    with ui.row().classes("items-center gap-2 w-full mt-2 mb-1"):
+                                        ui.icon("science", size="12px").classes("text-[#555] shrink-0")
+                                        ui.label("BUFFER CLIPS — ZERO-SHOT PADDING").classes(
+                                            "text-[#555] font-mono text-[9px] tracking-widest flex-grow"
+                                        )
+                                        ui.label(str(len(buffer_refs))).classes(
+                                            "text-[#333] font-mono text-[9px] bg-[#1a1a1a] px-1.5 rounded"
+                                        )
+                                    for ref in buffer_refs:
+                                        _render_own_ref_row(ref)
 
                                 for entry in inherited:
                                     audio = entry["audio"]

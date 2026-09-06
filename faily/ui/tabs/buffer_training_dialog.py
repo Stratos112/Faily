@@ -342,7 +342,10 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                         if not c.accepted:
                             continue
                         try:
-                            add_ref_clip(char_name, c.path, transcript=" ".join(c.text.split()))
+                            add_ref_clip(
+                                char_name, c.path, transcript=" ".join(c.text.split()),
+                                source="buffer", category=c.category,
+                            )
                             ok += 1
                         except Exception:
                             failed += 1

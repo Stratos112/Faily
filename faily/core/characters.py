@@ -231,8 +231,14 @@ def clip_quality_issues(path: Path) -> list[str]:
     return issues
 
 
-def add_ref_clip(name: str, clip_path: Path, transcript: str = "") -> Path:
-    """Copy a generated clip into the character's ref pool and register it in config."""
+def add_ref_clip(name: str, clip_path: Path, transcript: str = "", source: str = "", category: str = "") -> Path:
+    """Copy a generated clip into the character's ref pool and register it in config.
+
+    source/category are optional provenance tags (e.g. source="buffer" for zero-shot
+    padding clips from the buffer training wizard) — they persist permanently on the
+    ref_clips entry so downstream code (get_ref_chain, training) doesn't need to
+    regenerate or re-derive them, and the UI can group clips by source.
+    """
     char_dir = CHARACTERS_DIR / name
     if not (char_dir / "config.json").exists():
         raise FileNotFoundError(f"Character '{name}' not found")
@@ -246,7 +252,12 @@ def add_ref_clip(name: str, clip_path: Path, transcript: str = "") -> Path:
         i += 1
     shutil.copy2(str(clip_path), str(dest))
     cfg = json.loads(_cfg(name).read_text())
-    cfg.setdefault("ref_clips", []).append({"file": f"refs/{dest.name}", "transcript": transcript})
+    entry = {"file": f"refs/{dest.name}", "transcript": transcript}
+    if source:
+        entry["source"] = source
+    if category:
+        entry["category"] = category
+    cfg.setdefault("ref_clips", []).append(entry)
     _cfg(name).write_text(json.dumps(cfg, indent=2))
     return dest
 
