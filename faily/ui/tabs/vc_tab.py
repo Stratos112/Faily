@@ -157,6 +157,7 @@ def build_vc_tab():
             async def _on_backend(key: str):
                 _backend[0] = key
                 ref_text_row.set_visibility(key == "f5_tts")
+                text_hint_label.set_text(BACKENDS[key].get("text_hint", ""))
                 _rebuild_params()
                 await _autofill_transcript()
 
@@ -189,6 +190,9 @@ def build_vc_tab():
                 ui.button(icon="check", on_click=_rename).props("flat dense color=amber").tooltip("Save name")
 
             _section_row("TEXT", "Short phrase to audition the cloned voice.")
+            text_hint_label = ui.label(BACKENDS["xtts_v2"].get("text_hint", "")).classes(
+                "text-[#444] font-mono text-[10px] leading-snug"
+            )
             text_input = (
                 ui.input(value="sample text")
                 .classes("w-full")

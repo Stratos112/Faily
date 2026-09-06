@@ -80,24 +80,28 @@ BACKENDS = {
     "speecht5": {
         "label": "SpeechT5",
         "desc": "Microsoft · X-vector speaker embedding. Fast and lightweight. Good for quick previews. Less natural than neural approaches and struggles to maintain speaker identity on longer outputs.",
+        "text_hint": "Ideal: one short sentence, under ~200 characters. No length control on the decoder — longer text tends to trail off, repeat, or cut out early.",
         "param1": {"label": "VOICE STRENGTH", "tooltip": "Scales the speaker embedding. Below 1.0 is more neutral, above 1.0 exaggerates the voice's character.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
         "param2": {"label": "THRESHOLD", "tooltip": "Mel spectrogram stopping criterion. Lower = crisper and shorter output. Higher = smoother but may trail off.", "min": 0.1, "max": 0.9, "step": 0.05, "default": 0.5},
     },
     "xtts_v2": {
         "label": "XTTS v2",
         "desc": "Coqui AI · Zero-shot cross-attention conditioning. Best all-rounder for voice cloning. Natural prosody on short-to-medium clips. Slow initial load; can clip or cut off on very long inputs.",
+        "text_hint": "Ideal: 1–2 sentences, under ~250 characters per call. Long unbroken text is where it clips or cuts off — split longer lines into multiple generations.",
         "param1": {"label": "TEMPERATURE", "tooltip": "Expressiveness. Low = flat and consistent. High = emotive but may wander.", "min": 0.1, "max": 1.0, "step": 0.05, "default": 0.75},
         "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
     "f5_tts": {
         "label": "F5-TTS",
         "desc": "SWC Lab · Flow-matching diffusion. Highest speaker similarity when given a good transcript. Requires the reference transcript — auto-fills on upload. More steps = better quality but slower. Overkill for quick drafts.",
+        "text_hint": "Ideal: keep generated text roughly proportional to reference length (up to ~2–3× the ref duration). Output duration is predicted from that ratio, so a long line against a short ref causes pacing drift.",
         "param1": {"label": "STEPS", "tooltip": "Diffusion steps. More = higher quality but slower. 32 is a good balance.", "min": 8, "max": 64, "step": 4, "default": 32},
         "param2": {"label": "SPEED", "tooltip": "Speech rate. 1.0 is natural pace.", "min": 0.05, "max": 2.0, "step": 0.05, "default": 1.0},
     },
     "chatterbox": {
         "label": "Chatterbox",
         "desc": "Resemble AI · CFG-guided generation. Strong emotional range via the exaggeration dial. Less faithful to exact speaker identity than XTTS. Good for expressive or theatrical characters.",
+        "text_hint": "Ideal: a few sentences, up to ~30–40s of output. Beyond that, exaggeration and pacing start to wander.",
         "param1": {"label": "EXAGGERATION", "tooltip": "Emotional intensity. Low = calm and neutral. High = expressive.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
         "param2": {"label": "CFG WEIGHT", "tooltip": "Guidance strength. Higher = more faithful to the reference voice style.", "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.5},
     },

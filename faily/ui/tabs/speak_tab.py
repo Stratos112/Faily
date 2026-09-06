@@ -511,6 +511,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
     def _on_backend(key: str):
         _backend[0] = key
         ref_text_row.set_visibility(key == "f5_tts")
+        text_hint_label.set_text(BACKENDS[key].get("text_hint", ""))
         _rebuild_params()
 
     async def _generate():
@@ -584,6 +585,9 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         ref_text_row.set_visibility(False)
 
         _section_row("TEXT", "What the character says.")
+        text_hint_label = ui.label(BACKENDS["xtts_v2"].get("text_hint", "")).classes(
+            "text-[#444] font-mono text-[10px] leading-snug"
+        )
         text_input = (
             ui.textarea(placeholder="Enter the line…")
             .classes("w-full").props("outlined dark rows=5")
