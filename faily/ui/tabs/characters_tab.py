@@ -638,11 +638,15 @@ def build_characters_tab(on_speak, on_change):
                         # this is a soft nudge, not a hard requirement.
                         import soundfile as _sf
                         total_dur = 0.0
+                        outliers = []
                         for c in chain:
                             try:
-                                total_dur += _sf.info(str(c["audio"])).duration
+                                dur = _sf.info(str(c["audio"])).duration
                             except Exception:
-                                pass
+                                continue
+                            total_dur += dur
+                            if dur > 20.0:
+                                outliers.append((c["audio"].name, dur))
                         if total_dur < 600:
                             ui.notify(
                                 f"Only {total_dur / 60:.1f} min of reference audio "
@@ -651,6 +655,21 @@ def build_characters_tab(on_speak, on_change):
                                 "resemblance. Training will proceed, but timbre may not "
                                 "match well.",
                                 type="warning", timeout=6000,
+                            )
+                        if outliers:
+                            # Training clips are meant to be short individual utterances —
+                            # VITS pads every clip in a batch to the longest member, so one
+                            # unusually long outlier (e.g. a multi-sentence batched TTS
+                            # generation added straight to the ref pool) can spike memory
+                            # for whatever batch it lands in and trigger a CUDA OOM that
+                            # otherwise looks unrelated to dataset size.
+                            names = ", ".join(f"{n} ({d:.0f}s)" for n, d in outliers[:5])
+                            more = f" and {len(outliers) - 5} more" if len(outliers) > 5 else ""
+                            ui.notify(
+                                f"{len(outliers)} unusually long clip(s) in the training set: "
+                                f"{names}{more} — consider trimming or excluding these, they "
+                                "raise the risk of a CUDA out-of-memory error during training.",
+                                type="warning", timeout=8000,
                             )
 
                         from faily.modules.piper import (
