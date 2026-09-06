@@ -32,13 +32,19 @@ def get_character(name: str) -> dict | None:
 
 
 def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
-    """Walk ancestry root→name; return [{audio, transcript}] for all ref audio in each node.
+    """Walk ancestry root→name; return [{audio, transcript, owner, file_key}] for
+    all ref audio in each node.
 
     ref_clips entries flagged excluded=True are skipped by default — this is the single
     choke point every generation/training/count call site goes through, so opting a clip
     out here silently propagates everywhere. Pass include_excluded=True to see everything
     (used by the CHARACTERS tab's reference list, which shows excluded clips dimmed so
     they can be toggled back on).
+
+    owner/file_key identify which character's config actually holds the clip (it may be
+    an ancestor's, for an inherited sub-character chain) and its ref_clips file key, so
+    callers can act on it in place (exclude/split) — file_key is None for a node's
+    primary ref_audio, which isn't a ref_clips entry and can't be removed/split that way.
     """
     path_up, seen, current = [], set(), name
     while current and current not in seen:
@@ -54,13 +60,13 @@ def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
         if "ref_audio" in char:
             audio = CHARACTERS_DIR / node / char["ref_audio"]
             if audio.exists():
-                chain.append({"audio": audio, "transcript": char.get("transcript", "")})
+                chain.append({"audio": audio, "transcript": char.get("transcript", ""), "owner": node, "file_key": None})
         for rc in char.get("ref_clips", []):
             if rc.get("excluded") and not include_excluded:
                 continue
             audio = CHARACTERS_DIR / node / rc["file"]
             if audio.exists():
-                chain.append({"audio": audio, "transcript": rc.get("transcript", "")})
+                chain.append({"audio": audio, "transcript": rc.get("transcript", ""), "owner": node, "file_key": rc["file"]})
     return chain
 
 
@@ -367,6 +373,77 @@ def set_ref_clip_excluded(name: str, file_key: str, excluded: bool) -> dict:
             break
     p.write_text(json.dumps(cfg, indent=2))
     return cfg
+
+
+def _split_sentences(text: str) -> list[str]:
+    import re
+    text = " ".join(text.split())
+    if not text:
+        return []
+    return [p for p in re.split(r'(?<=[.!?])\s+', text) if p]
+
+
+def split_long_ref_clip(name: str, file_key: str, target_seconds: float) -> int:
+    """Split an over-long ref_clips entry into shorter pieces near target_seconds,
+    cutting at detected internal silence gaps and dividing its transcript across
+    the pieces at sentence boundaries. Replaces the original entry with the new
+    ones (source/category carried over, so a buffer-generated clip stays tagged
+    as such). Returns the number of pieces created — 0 (original left untouched)
+    if there's fewer than 2 sentences to split across, or no usable silence gap
+    is found (e.g. one long unbroken sentence can't be cut without breaking
+    mid-word, so it's better left to the caller to exclude instead).
+    """
+    import soundfile as _sf
+    from faily.modules.edit import find_silence_splits
+
+    cfg = get_character(name)
+    if not cfg:
+        raise FileNotFoundError(f"Character '{name}' not found")
+    entry = next((rc for rc in cfg.get("ref_clips", []) if rc["file"] == file_key), None)
+    if entry is None:
+        raise ValueError(f"Ref clip '{file_key}' not found in '{name}'")
+
+    sentences = _split_sentences(entry.get("transcript", ""))
+    if len(sentences) < 2:
+        return 0
+
+    audio_path = CHARACTERS_DIR / name / file_key
+    data, sr = _sf.read(str(audio_path), dtype="float32", always_2d=False)
+    duration = len(data) / sr if sr else 0.0
+    desired_pieces = max(1, min(len(sentences), round(duration / target_seconds))) if target_seconds > 0 else 1
+    if desired_pieces < 2:
+        return 0
+
+    split_points = find_silence_splits(data, sr, desired_pieces - 1)
+    n_pieces = len(split_points) + 1
+    if n_pieces < 2:
+        return 0
+
+    bounds = [0] + split_points + [len(data)]
+    groups: list[list[str]] = [[] for _ in range(n_pieces)]
+    for i, sent in enumerate(sentences):
+        groups[min(i * n_pieces // len(sentences), n_pieces - 1)].append(sent)
+
+    source = entry.get("source", "")
+    category = entry.get("category", "")
+    tmp_dir = Path(tempfile.mkdtemp(prefix="faily_split_"))
+    created = 0
+    try:
+        for i in range(n_pieces):
+            seg = data[bounds[i]:bounds[i + 1]]
+            text = " ".join(groups[i]).strip()
+            if not text or len(seg) == 0:
+                continue
+            tmp_path = tmp_dir / f"piece_{i:02d}.wav"
+            _sf.write(str(tmp_path), seg, sr)
+            add_ref_clip(name, tmp_path, transcript=text, source=source, category=category)
+            created += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if created:
+        remove_ref_clip(name, file_key)
+    return created
 
 
 def update_ref_clip(name: str, file_key: str, new_stem: str | None = None, new_transcript: str | None = None) -> dict:

@@ -6,7 +6,7 @@ from faily.core.characters import (
     list_character_clips, list_character_favorites, rename_character_file,
     get_ref_chain, remove_ref_clip, set_rvc_model, set_piper_model,
     rename_ref_audio, update_ref_clip, clip_quality_issues, add_ref_clip,
-    set_ref_clip_excluded, CHARACTERS_DIR,
+    set_ref_clip_excluded, split_long_ref_clip, CHARACTERS_DIR,
 )
 from faily.ui.components import section_label, show_error, send_to_edit
 from faily.modules.piper import BASE_VOICES, base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT
@@ -624,11 +624,138 @@ def build_characters_tab(on_speak, on_change):
 
                     ui.separator().classes("my-3 opacity-20")
 
+                    async def _review_long_clips(outliers: list[tuple[dict, float]], avg_dur: float) -> bool:
+                        """Modal review for over-long training clips — split each at
+                        detected sentence/silence boundaries, exclude it from this
+                        training run, or leave it as-is. Returns True to continue
+                        training, False if the user cancelled."""
+                        remaining = {id(c): (c, d) for c, d in outliers}
+
+                        with ui.dialog().classes("w-full max-w-2xl") as rdlg, ui.card().classes(
+                            "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
+                        ):
+                            ui.label("UNUSUALLY LONG REFERENCE CLIPS").classes(
+                                "text-amber-400 font-mono text-xs tracking-widest"
+                            )
+                            ui.label(
+                                f"Average clip in this training set is {avg_dur:.1f}s — the clips "
+                                "below are much longer. VITS pads every clip in a batch to the "
+                                "longest member, so an outlier like this can spike memory for "
+                                "whatever batch it lands in and trigger a CUDA out-of-memory error. "
+                                "Split divides the clip into pieces near the average, cutting at "
+                                "detected pauses and dividing the transcript at sentence boundaries."
+                            ).classes("text-[#666] font-mono text-[10px] leading-snug")
+
+                            rows_col = ui.column().classes("w-full gap-1 mt-1")
+
+                            def _rebuild_rows():
+                                rows_col.clear()
+                                with rows_col:
+                                    if not remaining:
+                                        ui.label("All clear — nothing left to review.").classes(
+                                            "text-[#444] font-mono text-[10px] py-2"
+                                        )
+                                        return
+                                    for key, (c, d) in list(remaining.items()):
+                                        with ui.row().classes(
+                                            "w-full items-center gap-2 px-3 py-1.5 rounded "
+                                            "border border-[#1e1e1e]"
+                                        ):
+                                            ui.icon("warning", size="13px").classes("text-amber-500 shrink-0")
+                                            with ui.column().classes("gap-0 flex-grow min-w-0"):
+                                                ui.label(c["audio"].name).classes(
+                                                    "text-[#aaa] font-mono text-[10px] truncate"
+                                                )
+                                                ui.label(f"{d:.1f}s  (avg {avg_dur:.1f}s)").classes(
+                                                    "text-[#555] font-mono text-[9px]"
+                                                )
+                                            ui.button(
+                                                "SPLIT", icon="content_cut",
+                                                on_click=lambda k=key, c=c: _split(k, c),
+                                            ).props("flat dense color=amber").classes(
+                                                "font-mono text-[10px] shrink-0"
+                                            )
+                                            ui.button(
+                                                "EXCLUDE", icon="visibility_off",
+                                                on_click=lambda k=key, c=c: _exclude(k, c),
+                                            ).props("flat dense color=grey").classes(
+                                                "font-mono text-[10px] shrink-0"
+                                            )
+
+                            def _split(key, c):
+                                try:
+                                    n_pieces = split_long_ref_clip(c["owner"], c["file_key"], avg_dur)
+                                except Exception as exc:
+                                    show_error(exc)
+                                    return
+                                if n_pieces:
+                                    ui.notify(f"Split into {n_pieces} clips", type="positive", timeout=2000)
+                                    remaining.pop(key, None)
+                                else:
+                                    ui.notify(
+                                        "Couldn't find a clean place to split this clip (needs "
+                                        "≥2 sentences and a detectable pause) — exclude it "
+                                        "instead if it's a problem.",
+                                        type="warning", timeout=5000,
+                                    )
+                                _rebuild_rows()
+
+                            def _exclude(key, c):
+                                set_ref_clip_excluded(c["owner"], c["file_key"], True)
+                                remaining.pop(key, None)
+                                ui.notify("Excluded from training", timeout=2000)
+                                _rebuild_rows()
+
+                            _rebuild_rows()
+
+                            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                                ui.button(
+                                    "CANCEL TRAINING", on_click=lambda: rdlg.submit(False),
+                                ).props("flat dense color=grey").classes("font-mono text-[10px] tracking-widest")
+                                ui.button(
+                                    "CONTINUE", on_click=lambda: rdlg.submit(True),
+                                ).props("color=amber unelevated").classes("font-mono text-[10px] tracking-widest")
+
+                        result = await rdlg
+                        return bool(result)
+
                     async def _do_train(n=name):
                         chain = get_ref_chain(n)
                         if not chain:
                             ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
                             return
+
+                        import soundfile as _sf
+
+                        def _durations(chain):
+                            out = []
+                            for c in chain:
+                                try:
+                                    out.append((c, _sf.info(str(c["audio"])).duration))
+                                except Exception:
+                                    pass
+                            return out
+
+                        durations = _durations(chain)
+                        avg_dur = sum(d for _, d in durations) / len(durations) if durations else 0.0
+                        # "Unusually long" relative to this character's own dataset, not a
+                        # fixed number — a 10s clip is unremarkable averaging 8s but a clear
+                        # outlier averaging 2s. Floored so a dataset of already-short clips
+                        # doesn't flag normal variation. Only ref_clips entries (file_key
+                        # set) can be split/excluded in place — a primary ref_audio can't.
+                        outlier_threshold = max(avg_dur * 1.8, 8.0)
+                        outliers = [
+                            (c, d) for c, d in durations
+                            if d > outlier_threshold and c.get("file_key")
+                        ]
+
+                        if outliers:
+                            proceed = await _review_long_clips(outliers, avg_dur)
+                            if not proceed:
+                                return
+                            chain = get_ref_chain(n)
+                            durations = _durations(chain)
+
                         # Piper only hard-requires 2 clips with transcripts, but good
                         # fine-tunes need real coverage of the voice — clip COUNT is a
                         # weak proxy (twenty 1s clips vs twenty 15s clips are very
@@ -636,17 +763,7 @@ def build_characters_tab(on_speak, on_change):
                         # ~10 min is a rough floor for a recognizable voice, 30-60+ for
                         # strong resemblance. Warn below that floor without blocking —
                         # this is a soft nudge, not a hard requirement.
-                        import soundfile as _sf
-                        total_dur = 0.0
-                        outliers = []
-                        for c in chain:
-                            try:
-                                dur = _sf.info(str(c["audio"])).duration
-                            except Exception:
-                                continue
-                            total_dur += dur
-                            if dur > 20.0:
-                                outliers.append((c["audio"].name, dur))
+                        total_dur = sum(d for _, d in durations)
                         if total_dur < 600:
                             ui.notify(
                                 f"Only {total_dur / 60:.1f} min of reference audio "
@@ -655,21 +772,6 @@ def build_characters_tab(on_speak, on_change):
                                 "resemblance. Training will proceed, but timbre may not "
                                 "match well.",
                                 type="warning", timeout=6000,
-                            )
-                        if outliers:
-                            # Training clips are meant to be short individual utterances —
-                            # VITS pads every clip in a batch to the longest member, so one
-                            # unusually long outlier (e.g. a multi-sentence batched TTS
-                            # generation added straight to the ref pool) can spike memory
-                            # for whatever batch it lands in and trigger a CUDA OOM that
-                            # otherwise looks unrelated to dataset size.
-                            names = ", ".join(f"{n} ({d:.0f}s)" for n, d in outliers[:5])
-                            more = f" and {len(outliers) - 5} more" if len(outliers) > 5 else ""
-                            ui.notify(
-                                f"{len(outliers)} unusually long clip(s) in the training set: "
-                                f"{names}{more} — consider trimming or excluding these, they "
-                                "raise the risk of a CUDA out-of-memory error during training.",
-                                type="warning", timeout=8000,
                             )
 
                         from faily.modules.piper import (

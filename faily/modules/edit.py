@@ -15,6 +15,76 @@ def ensure_stereo(path: Path):
         sf.write(str(path), np.stack([data, data], axis=1), sr)
 
 
+def find_silence_splits(
+    data: np.ndarray, sr: int, max_splits: int,
+    min_gap_s: float = 0.15, min_piece_s: float = 1.0,
+) -> list[int]:
+    """Find up to max_splits good cut points inside a clip's internal silence
+    gaps (pauses between sentences) — used to break an over-long reference
+    clip into shorter pieces without cutting mid-word.
+
+    Scans windowed RMS energy, merges contiguous below-threshold windows into
+    candidate gaps, keeps only gaps at least min_gap_s long, and greedily
+    takes the strongest (longest, then quietest) candidates while enforcing
+    min_piece_s spacing from already-chosen cuts and from both ends, so no
+    resulting piece is a sliver. Returns sample indices (gap midpoints) in
+    ascending order — fewer than max_splits if that many good gaps don't
+    exist (e.g. one long unbroken sentence has none).
+    """
+    mono = data if data.ndim == 1 else data.mean(axis=1)
+    n = len(mono)
+    win = max(int(0.03 * sr), 1)
+    hop = max(win // 2, 1)
+    if max_splits <= 0 or n < win * 4:
+        return []
+
+    energies, centers = [], []
+    i = 0
+    while i + win <= n:
+        w = mono[i:i + win]
+        energies.append(float(np.sqrt(np.mean(w ** 2))))
+        centers.append(i + win // 2)
+        i += hop
+    energies = np.array(energies)
+    overall_rms = float(np.sqrt(np.mean(mono ** 2))) or 1e-6
+    threshold = max(overall_rms * 0.15, 1e-4)
+    quiet = energies < threshold
+
+    gaps = []  # (start_window, end_window) inclusive, contiguous quiet runs
+    start = None
+    for idx, q in enumerate(quiet):
+        if q and start is None:
+            start = idx
+        elif not q and start is not None:
+            gaps.append((start, idx - 1))
+            start = None
+    if start is not None:
+        gaps.append((start, len(quiet) - 1))
+
+    min_gap_windows = max(int(min_gap_s / (hop / sr)), 1)
+    candidates = []
+    for s, e in gaps:
+        if e - s + 1 < min_gap_windows:
+            continue
+        gap_energy = float(np.mean(energies[s:e + 1]))
+        gap_duration = (e - s + 1) * hop / sr
+        mid_sample = (centers[s] + centers[e]) // 2
+        candidates.append((gap_duration, -gap_energy, mid_sample))
+    candidates.sort(reverse=True)  # longest gap first, then quietest
+
+    min_piece_samples = int(min_piece_s * sr)
+    chosen: list[int] = []
+    for _duration, _neg_energy, pos in candidates:
+        if len(chosen) >= max_splits:
+            break
+        if pos < min_piece_samples or (n - pos) < min_piece_samples:
+            continue
+        if all(abs(pos - c) >= min_piece_samples for c in chosen):
+            chosen.append(pos)
+
+    return sorted(chosen)
+
+
 def _highpass(data: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
     """4th-order Butterworth high-pass — cuts rumble/hum below cutoff_hz.
     Pure filtering, no noise estimation, so it's safe/predictable on any input."""
