@@ -825,7 +825,21 @@ async def train(
         "--checkpoint-epochs", "100",
         "--precision", "32",
         "--default_root_dir", str(train_dir),
-    ], log_cb, proc_ref, extra_env={"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
+    ], log_cb, proc_ref, extra_env={
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        # Every data-side cause (clip count, phonemization, batch size, sanity
+        # steps, validation split, stale directories) is now ruled out — this
+        # crash is a silent native access violation with zero Python traceback,
+        # right at the point training would start actually touching the GPU.
+        # That shape (crash with no attributable Python-level error) is the
+        # classic symptom of an async CUDA kernel failing several calls after
+        # whatever queued it. CUDA_LAUNCH_BLOCKING forces synchronous
+        # execution so the error (if any) surfaces at the actual failing op
+        # instead of an opaque crash downstream — diagnostic, not a real fix;
+        # remove once we know what's actually failing, since it serializes
+        # every kernel launch and meaningfully slows real training.
+        "CUDA_LAUNCH_BLOCKING": "1",
+    })
     log_cb("Training done")
 
     ckpts = sorted(train_dir.rglob("*.ckpt"), key=lambda p: p.stat().st_mtime)
