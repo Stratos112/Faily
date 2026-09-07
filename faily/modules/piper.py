@@ -788,11 +788,27 @@ async def train(
     base_epoch = await _read_checkpoint_epoch(py, base_ckpt)
     target_epochs = base_epoch + max_epochs
 
+    # piper_train.vits.lightning._load_datasets does:
+    #   valid_set_size = int(len(full_dataset) * validation_split)
+    #   train_set_size = len(full_dataset) - valid_set_size - num_test_examples
+    #   random_split(full_dataset, [train_set_size, num_test_examples, valid_set_size])
+    # --validation-split 0.0 (this codebase's previous constant) makes
+    # valid_set_size exactly 0, so val_dataloader() is a DataLoader around a
+    # genuinely empty Subset. This pytorch_lightning version (1.7.7 — old
+    # enough to still use the deprecated resume_from_checkpoint API) doesn't
+    # just skip that gracefully: it crashes with a native access violation
+    # somewhere in its own per-epoch bookkeeping around a permanently empty
+    # val dataloader, independent of num_sanity_val_steps (confirmed — setting
+    # that to 0 didn't help, the crash is not limited to the sanity-check
+    # path). Ask for a small but guaranteed-nonzero split instead: 1/n scales
+    # up to a floor of 2% for larger datasets, and int(n * split) >= 1 for any
+    # n >= 1, so this dataloader is never empty in the first place.
+    validation_split = max(0.02, 1.0 / n)
     log_cb(
         f"Training — {max_epochs} additional epochs (base checkpoint at epoch "
         f"{base_epoch}, target {target_epochs}), batch {_MICRO_BATCH} x "
         f"{_ACCUMULATE} accumulation (effective {_MICRO_BATCH * _ACCUMULATE}), "
-        f"GPU, resuming from {base_ckpt.name}…"
+        f"validation split {validation_split:.3f}, GPU, resuming from {base_ckpt.name}…"
     )
     await _stream([
         py, "-m", "piper_train",
@@ -801,14 +817,8 @@ async def train(
         "--devices", "1",
         "--batch-size", str(_MICRO_BATCH),
         "--accumulate_grad_batches", str(_ACCUMULATE),
-        "--validation-split", "0.0",
+        "--validation-split", str(validation_split),
         "--num-test-examples", "0",
-        # With validation-split 0.0 the val dataloader is intentionally empty —
-        # Lightning's default 2-step sanity check still runs against it before
-        # training starts, and this version (pre-ckpt_path, still on the
-        # deprecated resume_from_checkpoint API) can hard-crash with a native
-        # access violation on a truly empty sanity-check dataloader instead of
-        # skipping it cleanly. Turn it off since there's nothing to check.
         "--num_sanity_val_steps", "0",
         "--max_epochs", str(target_epochs),
         "--resume_from_checkpoint", str(base_ckpt),
