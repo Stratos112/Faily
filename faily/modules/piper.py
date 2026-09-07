@@ -694,6 +694,19 @@ async def train(
 
     dataset_dir = char_dir / "piper_dataset"
     train_dir   = char_dir / "piper_train"
+    # Both are pure scratch space — the durable artifact is char_dir/piper.onnx,
+    # written by finalize_piper_model() after training, never anything under
+    # here. Wipe them fresh on every run: this dir gets reused across repeated
+    # training attempts on the same character while the ref pool keeps changing
+    # underneath it (splits, excludes, new clips), and neither piper_train.
+    # preprocess (which only ever adds wav files, never removes stale ones from
+    # a prior attempt's differently-sized clip set) nor Lightning's own
+    # checkpoint/cache state in here account for that — leftover files from an
+    # earlier attempt have no business surviving into this one.
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)
+    if train_dir.exists():
+        shutil.rmtree(train_dir)
     train_dir.mkdir(parents=True, exist_ok=True)
     log_cb(f"Dataset dir: {dataset_dir}")
     log_cb(f"Train dir: {train_dir}")
