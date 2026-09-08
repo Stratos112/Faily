@@ -336,21 +336,23 @@ _ensure_espeak_path()
 
 
 # ── phoneme ID map (loaded from piper config JSON) — must match the base
-# checkpoint's embedding table exactly, so we read it from the voice config
-# rather than hardcoding it. ──────────────────────────────────────────────────
+# checkpoint's embedding table exactly. Faily bakes in the exact config path
+# for whichever base voice is actually being trained (see train()'s call to
+# _ensure_phonemize_shim) rather than searching for one: piper_checkpoints/
+# only has voice configs sitting flat for "lessac" (bundled by setup) — every
+# other voice lives in its own piper_checkpoints/{voice}/ subfolder, so a
+# search here would silently find lessac's map while training any other
+# voice, with no error, since lessac's config always happens to exist. ──────
 def _load_phoneme_id_map() -> Dict[str, List[int]]:
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        cfgs = list((parent / "piper_checkpoints").glob("*.onnx.json"))
-        if cfgs:
-            try:
-                data = json.loads(cfgs[0].read_text(encoding="utf-8"))
-                if "phoneme_id_map" in data:
-                    return data["phoneme_id_map"]
-            except Exception:
-                pass
+    try:
+        data = json.loads(_PHONEME_CONFIG_PATH.read_text(encoding="utf-8"))
+        if "phoneme_id_map" in data:
+            return data["phoneme_id_map"]
+    except Exception:
+        pass
     return {}
 
+_PHONEME_CONFIG_PATH = Path(__PHONEME_CONFIG_PATH_LITERAL__)
 DEFAULT_PHONEME_ID_MAP: Dict[str, List[int]] = _load_phoneme_id_map()
 _PAD, _BOS, _EOS = "_", "^", "$"
 
@@ -487,28 +489,44 @@ _PHONEMIZE_NAMES = (
 )
 
 
-def _ensure_phonemize_shim():
+def _ensure_phonemize_shim(phoneme_config_path: Path):
     """
-    Write piper_phonemize shim into the venv if the real C extension isn't
-    there, or if a previously-written shim is missing names piper_train
-    actually imports (e.g. from an older version of this shim).
-    Safe to call on Linux too — skips if the real package already satisfies it.
-    """
-    probe = "from piper_phonemize import " + ", ".join(_PHONEMIZE_NAMES)
-    r = subprocess.run(
-        [str(_python()), "-c", probe],
-        capture_output=True, timeout=15,
-    )
-    if r.returncode == 0:
-        return  # real piper_phonemize (or an up-to-date shim) already satisfies this
+    Write piper_phonemize shim into the venv, pointed at the exact voice
+    config being trained against right now.
 
+    phoneme_config_path must be the .onnx.json for the base voice actually
+    being resumed from — its phoneme_id_map has to match that checkpoint's
+    embedding table exactly, or the freshly-built model's vocabulary silently
+    disagrees with the weights being loaded into it. The shim is always
+    (re)written with the current path: a shim from an earlier call (possibly
+    for a different voice) would still satisfy the bare `import` probe below
+    even though its embedded phoneme map is now wrong, so "it already
+    imports" can't be used as a signal that it's still correct — only that
+    something importable exists. Real (non-Faily) installs are left alone,
+    detected via the dist-info WHEEL marker this shim itself writes.
+    Safe to call on Linux too — skips if a genuine package is present.
+    """
     sp = _site_packages()
+    dist_info = sp / "piper_phonemize-1.1.0.dist-info"
+    is_our_shim = (dist_info / "WHEEL").exists() and "faily-shim" in (dist_info / "WHEEL").read_text(encoding="utf-8")
+
+    if not is_our_shim:
+        probe = "from piper_phonemize import " + ", ".join(_PHONEMIZE_NAMES)
+        r = subprocess.run(
+            [str(_python()), "-c", probe],
+            capture_output=True, timeout=15,
+        )
+        if r.returncode == 0:
+            return  # a genuine, non-Faily piper_phonemize package already satisfies this
+
     shim_dir = sp / "piper_phonemize"
     shim_dir.mkdir(exist_ok=True)
-    (shim_dir / "__init__.py").write_text(_SHIM_CODE, encoding="utf-8")
+    shim_code = _SHIM_CODE.replace(
+        "__PHONEME_CONFIG_PATH_LITERAL__", repr(str(phoneme_config_path.resolve()))
+    )
+    (shim_dir / "__init__.py").write_text(shim_code, encoding="utf-8")
 
     # Fake dist-info so pip treats piper-phonemize 1.1.0 as already installed
-    dist_info = sp / "piper_phonemize-1.1.0.dist-info"
     dist_info.mkdir(exist_ok=True)
     (dist_info / "METADATA").write_text(
         "Metadata-Version: 2.1\nName: piper-phonemize\nVersion: 1.1.0\n",
@@ -689,8 +707,8 @@ async def train(
     log_cb(f"Base checkpoint: {base_ckpt.name}")
     log_cb(f"Base config: {base_cfg.name}")
 
-    await asyncio.to_thread(_ensure_phonemize_shim)
-    log_cb("piper_phonemize shim ready")
+    await asyncio.to_thread(_ensure_phonemize_shim, base_cfg)
+    log_cb(f"piper_phonemize shim ready (phoneme map: {base_cfg.name})")
 
     dataset_dir = char_dir / "piper_dataset"
     train_dir   = char_dir / "piper_train"
