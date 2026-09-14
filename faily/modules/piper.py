@@ -819,9 +819,12 @@ async def train(
     # val dataloader, independent of num_sanity_val_steps (confirmed — setting
     # that to 0 didn't help, the crash is not limited to the sanity-check
     # path). Ask for a small but guaranteed-nonzero split instead: 1/n scales
-    # up to a floor of 2% for larger datasets, and int(n * split) >= 1 for any
-    # n >= 1, so this dataloader is never empty in the first place.
-    validation_split = max(0.02, 1.0 / n)
+    # up to a floor of 2% for larger datasets. Nudge the numerator past 1.0
+    # (not just 1.0/n) — piper_train recomputes int(n * validation_split) on
+    # its own float, and n * (1.0/n) can itself round down to just under 1.0
+    # (e.g. n=49: 49 * (1.0/49) == 0.9999999999999999), truncating right back
+    # to the empty dataloader this split was meant to rule out.
+    validation_split = max(0.02, (1.0 + 1e-6) / n)
     log_cb(
         f"Training — {max_epochs} additional epochs (base checkpoint at epoch "
         f"{base_epoch}, target {target_epochs}), batch {_MICRO_BATCH} x "
