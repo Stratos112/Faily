@@ -180,6 +180,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: piper-train has no --num-workers CLI flag, so its DataLoader default of
+:: num_workers=1 is unconditionally in effect — on Windows that spawns a real
+:: worker subprocess the moment training pulls its first batch. Force it to 0
+:: (in-process loading) to rule that spawn out as a training-crash cause.
+echo Patching piper-train to disable DataLoader worker subprocess...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_num_workers.py"
+if errorlevel 1 (
+    echo ERROR: piper-train num_workers patch failed.
+    pause
+    exit /b 1
+)
+
 :: After this step pip's resolver will report several dependency conflicts.
 :: These are ALL expected and handled — do not treat them as errors:
 ::

@@ -138,6 +138,13 @@ p.write_text(t.replace('from .monotonic_align.core import', 'from .core import')
     # Patch export_onnx.py to explicitly request the old exporter instead.
     echo "Patching piper-train for torch 2.9+ ONNX exporter default..."
     "$VENV/bin/python" "$PROJECT_DIR/scripts/patch_piper_train_onnx.py"
+
+    # piper-train has no --num-workers CLI flag, so its DataLoader default of
+    # num_workers=1 is unconditionally in effect — on Windows that spawns a
+    # real worker subprocess the moment training pulls its first batch. Force
+    # it to 0 (in-process loading) to rule that spawn out as a crash cause.
+    echo "Patching piper-train to disable DataLoader worker subprocess..."
+    "$VENV/bin/python" "$PROJECT_DIR/scripts/patch_piper_train_num_workers.py"
 fi
 
 # ── Download base checkpoint ─────────────────────────────────────────────────
