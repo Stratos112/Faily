@@ -849,17 +849,27 @@ async def train(
     ], log_cb, proc_ref, extra_env={
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         # Every data-side cause (clip count, phonemization, batch size, sanity
-        # steps, validation split, stale directories) is now ruled out — this
-        # crash is a silent native access violation with zero Python traceback,
-        # right at the point training would start actually touching the GPU.
-        # That shape (crash with no attributable Python-level error) is the
-        # classic symptom of an async CUDA kernel failing several calls after
-        # whatever queued it. CUDA_LAUNCH_BLOCKING forces synchronous
-        # execution so the error (if any) surfaces at the actual failing op
-        # instead of an opaque crash downstream — diagnostic, not a real fix;
-        # remove once we know what's actually failing, since it serializes
-        # every kernel launch and meaningfully slows real training.
+        # steps, validation split, stale directories) and the DataLoader
+        # worker-subprocess spawn are now ruled out — this crash is a silent
+        # native access violation with zero Python traceback, right at the
+        # point training starts actually running the model (first forward
+        # pass: model_g, which calls into the monotonic_align Cython/OpenMP
+        # extension compiled locally by setup_piper.bat, as well as CUDA
+        # ops). CUDA_LAUNCH_BLOCKING forces synchronous kernel execution so a
+        # genuine async CUDA error would surface as a Python exception right
+        # at the failing op — it hasn't, across repeated runs, which argues
+        # against an async CUDA kernel fault and toward something crashing
+        # below Python's exception handling entirely (a native extension
+        # segfault, e.g. monotonic_align). Kept as a diagnostic; remove once
+        # the real fault is identified, since it serializes every kernel
+        # launch and meaningfully slows real training.
         "CUDA_LAUNCH_BLOCKING": "1",
+        # faulthandler installs a Windows SEH handler at interpreter startup
+        # that prints the active Python-level traceback (which C call was in
+        # flight) before an access violation kills the process — the one way
+        # to get real information out of a silent native crash like this one
+        # without attaching a debugger.
+        "PYTHONFAULTHANDLER": "1",
     })
     log_cb("Training done")
 
