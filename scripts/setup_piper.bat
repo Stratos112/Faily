@@ -162,6 +162,19 @@ popd
 :: piper-train itself, not something the build step can fix. Patch it.
 "%VENV%\Scripts\python" -c "from pathlib import Path; p = Path(r'%MONO_DIR%\__init__.py'); t = p.read_text(); p.write_text(t.replace('from .monotonic_align.core import', 'from .core import'))"
 
+:: monotonic_align's batch loop runs via cython.parallel.prange (real OpenMP
+:: threading, built by MSVC) invoked for the first time in a process that has
+:: already initialized a CUDA context — a known-shaped cause of native
+:: crashes on Windows. Disable the parallelism (serial loop) to rule it out;
+:: see patch_piper_train_monotonic_align_serial.py for the full reasoning.
+echo Patching monotonic_align to run its batch loop serially (no OpenMP)...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_serial.py"
+if errorlevel 1 (
+    echo ERROR: monotonic_align serial-loop patch failed.
+    pause
+    exit /b 1
+)
+
 :: Diagnostic: assert t_t_max/t_s_max stay within path/neg_cent bounds right
 :: before the native maximum_path_c call, so a theorized out-of-bounds native
 :: index (currently silently corrupting memory instead of raising, since the
