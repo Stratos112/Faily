@@ -175,6 +175,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Diagnostic: assert neg_cent (the alignment log-likelihood matrix) has no
+:: NaN/Inf before it reaches the native call — see
+:: patch_piper_train_monotonic_align_nan_check.py for the full reasoning.
+echo Patching monotonic_align with a NaN/Inf diagnostic...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_nan_check.py"
+if errorlevel 1 (
+    echo ERROR: monotonic_align NaN/Inf diagnostic patch failed.
+    pause
+    exit /b 1
+)
+
 :: Diagnostic: assert t_t_max/t_s_max stay within path/neg_cent bounds right
 :: before the native maximum_path_c call, so a theorized out-of-bounds native
 :: index (currently silently corrupting memory instead of raising, since the
