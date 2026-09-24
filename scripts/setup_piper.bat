@@ -162,6 +162,19 @@ popd
 :: piper-train itself, not something the build step can fix. Patch it.
 "%VENV%\Scripts\python" -c "from pathlib import Path; p = Path(r'%MONO_DIR%\__init__.py'); t = p.read_text(); p.write_text(t.replace('from .monotonic_align.core import', 'from .core import'))"
 
+:: Diagnostic: assert t_t_max/t_s_max stay within path/neg_cent bounds right
+:: before the native maximum_path_c call, so a theorized out-of-bounds native
+:: index (currently silently corrupting memory instead of raising, since the
+:: extension is built with boundscheck off) surfaces as a clean Python
+:: AssertionError instead of an access violation with zero traceback.
+echo Patching monotonic_align with a bounds-check diagnostic...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_bounds_check.py"
+if errorlevel 1 (
+    echo ERROR: monotonic_align bounds-check diagnostic patch failed.
+    pause
+    exit /b 1
+)
+
 :: export_onnx.py needs the base `onnx` package to write .onnx files at all —
 :: piper-train's requirements.txt never declared it (only onnxruntime, which
 :: is for inference, not export). Always been an implicit gap.
