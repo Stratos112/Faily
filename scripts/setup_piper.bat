@@ -175,6 +175,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Neither native function is declared noexcept, so Cython inserts an
+:: implicit exception-state check (GIL acquire/release) after every call to
+:: maximum_path_each, regardless of prange vs serial — see
+:: patch_piper_train_monotonic_align_noexcept.py for the full reasoning.
+echo Patching monotonic_align functions as noexcept (removes implicit GIL check)...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_noexcept.py"
+if errorlevel 1 (
+    echo ERROR: monotonic_align noexcept patch failed.
+    pause
+    exit /b 1
+)
+
 :: Diagnostic: assert neg_cent (the alignment log-likelihood matrix) has no
 :: NaN/Inf before it reaches the native call — see
 :: patch_piper_train_monotonic_align_nan_check.py for the full reasoning.
