@@ -162,51 +162,19 @@ popd
 :: piper-train itself, not something the build step can fix. Patch it.
 "%VENV%\Scripts\python" -c "from pathlib import Path; p = Path(r'%MONO_DIR%\__init__.py'); t = p.read_text(); p.write_text(t.replace('from .monotonic_align.core import', 'from .core import'))"
 
-:: monotonic_align's batch loop runs via cython.parallel.prange (real OpenMP
-:: threading, built by MSVC) invoked for the first time in a process that has
-:: already initialized a CUDA context — a known-shaped cause of native
-:: crashes on Windows. Disable the parallelism (serial loop) to rule it out;
-:: see patch_piper_train_monotonic_align_serial.py for the full reasoning.
-echo Patching monotonic_align to run its batch loop serially (no OpenMP)...
-"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_serial.py"
+:: The compiled Cython extension (monotonic_align.core.maximum_path_c)
+:: crashes with a native access violation on the very first training batch,
+:: 100% reproducibly on this machine — ruled out in order: out-of-bounds
+:: t_t_max/t_s_max, a zero-length utterance driving a wraparound(False)
+:: negative index, NaN/Inf in neg_cent, prange/OpenMP threading, CUDA/GPU
+:: (crashes identically on CPU), and missing `noexcept` (implicit per-call
+:: GIL exception-check). See patch_piper_train_monotonic_align_pure_python.py
+:: for the full history. Bypass the extension entirely with an equivalent
+:: pure Python/NumPy implementation rather than continue guessing.
+echo Patching monotonic_align to use pure Python (bypassing the broken Cython extension)...
+"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_pure_python.py"
 if errorlevel 1 (
-    echo ERROR: monotonic_align serial-loop patch failed.
-    pause
-    exit /b 1
-)
-
-:: Neither native function is declared noexcept, so Cython inserts an
-:: implicit exception-state check (GIL acquire/release) after every call to
-:: maximum_path_each, regardless of prange vs serial — see
-:: patch_piper_train_monotonic_align_noexcept.py for the full reasoning.
-echo Patching monotonic_align functions as noexcept (removes implicit GIL check)...
-"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_noexcept.py"
-if errorlevel 1 (
-    echo ERROR: monotonic_align noexcept patch failed.
-    pause
-    exit /b 1
-)
-
-:: Diagnostic: assert neg_cent (the alignment log-likelihood matrix) has no
-:: NaN/Inf before it reaches the native call — see
-:: patch_piper_train_monotonic_align_nan_check.py for the full reasoning.
-echo Patching monotonic_align with a NaN/Inf diagnostic...
-"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_nan_check.py"
-if errorlevel 1 (
-    echo ERROR: monotonic_align NaN/Inf diagnostic patch failed.
-    pause
-    exit /b 1
-)
-
-:: Diagnostic: assert t_t_max/t_s_max stay within path/neg_cent bounds right
-:: before the native maximum_path_c call, so a theorized out-of-bounds native
-:: index (currently silently corrupting memory instead of raising, since the
-:: extension is built with boundscheck off) surfaces as a clean Python
-:: AssertionError instead of an access violation with zero traceback.
-echo Patching monotonic_align with a bounds-check diagnostic...
-"%VENV%\Scripts\python" "%SCRIPT_DIR%patch_piper_train_monotonic_align_bounds_check.py"
-if errorlevel 1 (
-    echo ERROR: monotonic_align bounds-check diagnostic patch failed.
+    echo ERROR: monotonic_align pure-Python patch failed.
     pause
     exit /b 1
 )
