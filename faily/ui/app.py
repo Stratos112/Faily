@@ -223,6 +223,9 @@ def run():
     ui.run(
         title="Faily",
         native=_native,
+        # Server mode: don't try to launch a browser on the host running the
+        # server — it's headless, and clients connect from elsewhere.
+        show=_native,
         window_size=(1280, 780) if _native else None,
         reload=False,
         dark=True,

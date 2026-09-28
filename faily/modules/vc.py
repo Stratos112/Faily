@@ -664,6 +664,19 @@ def _load_seedvc():
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
 
+    # Seed-VC vendors its own BigVGAN (modules/bigvgan), whose _from_pretrained
+    # still requires proxies/resume_download as keyword-only args. Current
+    # huggingface_hub no longer passes them → TypeError on load. Default them
+    # here rather than editing huggingface_hub itself (which would push the
+    # extra kwargs into every PyTorchModelHubMixin model's constructor).
+    from modules.bigvgan import bigvgan as _bv
+    if not getattr(_bv.BigVGAN, "_faily_patched", False):
+        _orig_fp = _bv.BigVGAN._from_pretrained.__func__
+        def _fp(cls, *, proxies=None, resume_download=False, **kwargs):
+            return _orig_fp(cls, proxies=proxies, resume_download=resume_download, **kwargs)
+        _bv.BigVGAN._from_pretrained = classmethod(_fp)
+        _bv.BigVGAN._faily_patched = True
+
     import torch as _torch
     import seed_vc_wrapper as _svc_mod
     return _svc_mod.SeedVCWrapper(device=_torch.device(str(manager.device)))

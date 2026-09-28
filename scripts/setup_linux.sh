@@ -10,7 +10,7 @@
 #
 # Phases:
 #   system  apt packages (espeak-ng, ffmpeg, build tools, audio libs) + uv
-#   main    .venv (Python 3.14): torch cu128, core deps, cloning/expression backends, patches
+#   main    .venv (Python 3.14): torch cu128, core deps, cloning/expression backends
 #   piper   piper_venv (Python 3.11): piper-tts + piper-train + patches, torch cu128
 #   app     register the faily package itself into .venv (needs the source tree)
 #   data    Seed-VC repo + Piper base checkpoint (writes into volume-mounted dirs,
@@ -169,6 +169,7 @@ phase_main() {
     # Read [project.dependencies] rather than `pip install -e .` so this works
     # before the app source is copied into the image (keeps this layer cached
     # across code changes). tomllib is stdlib on 3.11+.
+    local core
     mapfile -t core < <("$VENV/bin/python" -c "
 import tomllib
 print('\n'.join(tomllib.load(open('$PROJECT_DIR/pyproject.toml', 'rb'))['project']['dependencies']))
@@ -200,12 +201,22 @@ print('\n'.join(tomllib.load(open('$PROJECT_DIR/pyproject.toml', 'rb'))['project
         bigvgan munch einops descript-audio-codec resemblyzer pydub \
         hydra-core python-dotenv sounddevice jiwer
 
+    say "repair shared deps clobbered by backend pins"
+    # Each backend install above re-resolves shared packages to satisfy its
+    # own (often stale) pins, and pip's resolver doesn't protect what's
+    # already installed. Two of those actually break things at runtime:
+    #  - chatterbox pins gradio==6.8.0 → starlette<1.0, under nicegui (needs
+    #    >=1.3.1) — the whole UI. Reinstalling Faily's own deps fixes that.
+    #  - descript-audiotools (Seed-VC/parler) pins protobuf<3.20, but onnx
+    #    (chatterbox's s3tokenizer), wandb (f5-tts) and onnxruntime need >=5/6.
+    #    audiotools never imports protobuf itself — the pin is stale.
+    # Leftover `pip check` complaints after this are unused code paths only
+    # (gradio demos, audiotools' pins, parler's transformers pin).
+    "$pip" install "${core[@]}"
+    "$pip" install "protobuf>=6.31.1,<8"
+
     say "torch cu128 (re-check after backend installs)"
     ensure_cu128_torch "$VENV" torch torchaudio
-
-    say "bigvgan / huggingface_hub patches"
-    "$VENV/bin/python" "$SCRIPT_DIR/patch_bigvgan.py"   || warn "bigvgan patch failed — Seed-VC may not load"
-    "$VENV/bin/python" "$SCRIPT_DIR/patch_hub_mixin.py" || warn "hub_mixin patch failed — Seed-VC may not load"
 
     say "pip check (main venv) — conflicts here are expected, see comments above"
     "$pip" check || true

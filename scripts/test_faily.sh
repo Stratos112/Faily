@@ -173,7 +173,9 @@ if [ "$MODE" != "--static-only" ]; then
         else
             pass "Server startup"
             check_http "HTTP: main page"      "http://localhost:$PORT/"
-            check_http "HTTP: static assets"  "http://localhost:$PORT/_nicegui/static/favicon.ico"
+            # NiceGUI 3 versions its asset routes: /_nicegui/<version>/static/...
+            NG_VER=$("$PY" -c "import nicegui; print(nicegui.__version__)" 2>/dev/null || echo unknown)
+            check_http "HTTP: static assets"  "http://localhost:$PORT/_nicegui/$NG_VER/static/favicon.ico"
             check_http "HTTP: outputs route"  "http://localhost:$PORT/outputs/" "404"
 
             log "Killing server (PID $SERVER_PID)..."

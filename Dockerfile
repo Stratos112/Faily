@@ -28,7 +28,6 @@ RUN bash scripts/setup_linux.sh system
 # The pip cache mount keeps wheels across rebuilds (needs BuildKit, which is
 # Docker Desktop's default).
 COPY pyproject.toml /app/
-COPY scripts/patch_bigvgan.py scripts/patch_hub_mixin.py /app/scripts/
 RUN --mount=type=cache,target=/root/.cache/pip \
     bash scripts/setup_linux.sh main
 

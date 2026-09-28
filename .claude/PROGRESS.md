@@ -63,10 +63,21 @@ Phase 2 notes (2026-09-28):
 - Tested without installing anything: bash -n, phase dispatch, and pip_soft's retry/warn logic with a fake pip. Nothing actually installed yet.
 
 ### Phase 3: install + test in this box (NEEDS THE GPU FREE; ask the user first)
-- [ ] 3a. `bash scripts/setup_linux.sh` (~20 GB download; needs sudo for apt). Watch the warnings summary at the end
-- [ ] 3b. test_faily.sh passes (static + live)
+- [x] 3a. `bash scripts/setup_linux.sh`: done 2026-09-28. main=.venv py3.14.7 torch 2.11.0+cu128; piper_venv torch 2.11.0+cu128
+- [x] 3b. test_faily.sh passes (static + live): 42/42
 - [ ] 3c. One smoke generation per backend: SpeechT5, XTTS, F5, Chatterbox, Parler+FreeVC/OpenVoice/Seed-VC, AudioLDM2, Piper infer
 - [ ] 3d. Piper training run: does stock monotonic_align survive on Linux?
+
+Phase 3 notes (2026-09-28):
+- **Old .venv trap:** a Python 3.11 system-python `.venv` from Aug was silently reused on the first run. It had torch 2.12.1+cu130 next to torchaudio 2.11.0+cu128, and torchaudio failed to import. setup_linux.sh now moves a wrong-version venv aside (`.venv.old-pyXY`); the old one is at `.venv.old-py311` (6.6 GB, safe to delete). The torch check now accepts CUDA >= 12.8 and requires matching torch/torchaudio versions, with a clean reinstall as fallback.
+- **Shared deps clobbered by backend pins**, now repaired by a step in setup_linux.sh:
+  - chatterbox's gradio==6.8.0 dragged starlette to 0.52 under nicegui (needs >=1.3.1).
+  - descript-audiotools (Seed-VC deps) dragged protobuf to 3.19.6, breaking onnx/wandb/onnxruntime.
+- **bigvgan/hub_mixin patches were wrong-headed.** patch_bigvgan.py silently no-op'd, because bigvgan 2.4.1 moved `_from_pretrained` to bigvgan/bigvgan.py; and nothing imports pip `bigvgan` anyway. Seed-VC uses its OWN vendored `modules/bigvgan`. patch_hub_mixin.py globally injected proxies/resume_download into huggingface_hub, which would crash any PyTorchModelHubMixin model without its own `_from_pretrained`. Both are replaced by a runtime shim in `vc._load_seedvc`, and the scripts are no longer run (delete them in 4a).
+- Stock gcc monotonic_align imports and runs a toy maximum_path in piper_venv (a real training run is still 3d).
+- `ui.run(show=...)` now only opens a browser in native mode; server mode used to try to launch one on the host.
+- test_faily.sh static-asset URL fixed for NiceGUI 3's versioned `/_nicegui/<ver>/static`.
+- Remaining `pip check` noise is unused paths only: gradio, the audiotools protobuf pins, parler's transformers pin, and openvoice's stale pins.
 
 ### Phase 4: cleanup + hardening
 - [ ] 4a. Delete setup.bat / setup_piper.bat / setup_piper.sh (superseded by setup_linux.sh) / monotonic_align patch-trail scripts (keep the pure-python fallback) once 3d passes
