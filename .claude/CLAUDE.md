@@ -1,15 +1,19 @@
 # Faily — Claude Context
 
 ## What this is
-Local desktop audio app (NiceGUI) for TTS, voice cloning, and sound effects.
-Runs on Windows (user's machine at `E:\PROGRAMS\Faily`), dev happens in WSL2 at `/workspaces/projects/Faily`.
+Local audio app (NiceGUI) for TTS, voice cloning, and sound effects.
+Primary deployment is a Docker container (single image, two venvs — see `Dockerfile`) on the user's Windows 11 / RTX 5070 Ti (Blackwell) machine, GPU passed through via Docker Desktop + NVIDIA Container Toolkit. Dev happens in WSL2 at `/workspaces/projects/Faily`.
+
+Legacy: `scripts/setup.bat` / `scripts/setup_piper.bat` still exist for running natively on Windows (two local venvs, no Docker) but are no longer the primary path — native Windows was where the `monotonic_align` MSVC crash saga (see git history) came from, part of the motivation for moving to Docker.
 
 ## Running
 ```bash
-python main.py          # starts on http://localhost:7842
-bash scripts/test_faily.sh   # full test run + clean shutdown
+docker compose up --build   # starts on http://localhost:7842
+bash scripts/test_faily.sh  # full test run + clean shutdown (run against the container, or inside it)
 ```
-Windows kill: `for /f "tokens=5" %a in ('netstat -aon ^| findstr :7842') do taskkill /F /PID %a`
+Container restart/stop: `docker compose down` / `docker compose restart` (replaces the old Windows `taskkill`/`netstat` dance).
+
+Volumes (persist across rebuilds): `./outputs`, `./models`, `./piper_checkpoints`, plus a named `hf-cache` volume for the HuggingFace cache. `entrypoint.sh` handles the two setup steps that write into those volume-mounted dirs (Seed-VC repo clone, Piper base checkpoint download) at container start, since anything baked into those paths at image-build time would just be shadowed by the bind mounts.
 
 ## Architecture
 
@@ -45,11 +49,12 @@ faily/
 **Progress reporting** — functions accept `progress_ref: list[float]` and write 0.0–1.0 into it. UI polls via `ui.timer(0.15, ...)`.
 
 ## Platform notes
-- Python 3.14, PyTorch 2.11.0+cu128, Windows 11, RTX 5070 Ti (Blackwell sm_120)
-- torchcodec doesn't work → torchaudio.load patched to use soundfile
-- speechbrain LazyModule patched for Python 3.14 inspect changes
+- Container: Ubuntu 24.04, Python 3.12 (main app venv) + Python 3.11 (piper_venv), PyTorch cu128, RTX 5070 Ti (Blackwell sm_120) passed through from the Windows host via Docker Desktop + NVIDIA Container Toolkit
+- Main venv is 3.12, not 3.14, deliberately — `pyproject.toml` only requires `>=3.10`, and 3.12 has reliably-published Linux wheels for the whole ML dependency list (coqui-tts, f5-tts, chatterbox-tts, parler-tts, etc.); 3.14 was just what ended up installed on the old native-Windows setup
+- `torchaudio.load` still patched to soundfile (`_patch_torchaudio()` in vc.py) — harmless/still fine on Linux even though torchcodec is more likely to actually work here than it was on Windows
 - transformers 5.x → `isin_mps_friendly` patched back onto `pytorch_utils`
-- cu128 required for Blackwell GPU support
+- `piper_train`'s `monotonic_align` Cython extension is built from stock source on Linux (gcc, no MSVC-diagnostic patches applied) — if it turns out to crash on Linux too, `scripts/patch_piper_train_monotonic_align_pure_python.py` is the documented fallback (bypasses the extension with an equivalent pure-Python implementation)
+- `FAILY_NATIVE` env var must stay unset in the container — that path launches a pywebview native window, which has no display to attach to in a headless container. Server mode (the default) is what serves the browser UI at `:7842`
 
 ## Output dirs
 ```

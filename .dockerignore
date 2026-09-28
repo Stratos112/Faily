@@ -1,0 +1,11 @@
+.venv/
+piper_venv/
+models/
+outputs/
+piper_checkpoints/
+.git/
+__pycache__/
+**/__pycache__/
+*.egg-info/
+tokenizers
+.claude/

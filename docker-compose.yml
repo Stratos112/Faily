@@ -1,0 +1,26 @@
+services:
+  faily:
+    build: .
+    image: faily:latest
+    ports:
+      - "7842:7842"
+    volumes:
+      - ./outputs:/app/outputs
+      - ./models:/app/models
+      - ./piper_checkpoints:/app/piper_checkpoints
+      - hf-cache:/root/.cache/huggingface
+    # Never set FAILY_NATIVE=1 — that path spins up a pywebview native window,
+    # which doesn't exist in a headless container. Server mode (the default
+    # when unset) is what the browser hits at localhost:7842. Nothing to set
+    # here for that; leaving `environment:` out entirely.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  hf-cache:
