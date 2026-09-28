@@ -151,6 +151,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv.old-*/
 env/
 venv/
 ENV/
@@ -219,7 +220,11 @@ __marimo__/
 
 /models/
 
+# uv-managed Python interpreters (scripts/setup_linux.sh)
+/.python/
+
 # Local Faily config/secrets
+/config/
 faily_settings.json
 hf_token.txt
 

@@ -54,7 +54,7 @@ _GLOBAL_CSS = """
 
 
 def run():
-    for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs", OUTPUTS / "characters", OUTPUTS / "speak", OUTPUTS / "edit"]:
+    for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs", OUTPUTS / "characters", OUTPUTS / "speak", OUTPUTS / "edit", OUTPUTS / "mix"]:
         d.mkdir(parents=True, exist_ok=True)
     app.add_static_files("/outputs", str(OUTPUTS))
 
@@ -64,26 +64,11 @@ def run():
         ui.add_css(_GLOBAL_CSS)
 
         def _open_settings():
-            from faily.core.settings import load_settings, save_settings
             from faily.core.hf_token import get_hf_token, save_hf_token, clear_hf_token
-            cfg = load_settings()
             with ui.dialog() as dlg, ui.card().classes(
                 "bg-[#1a1a1a] border border-[#333] min-w-[460px] gap-3"
             ):
                 ui.label("SETTINGS").classes("text-white font-mono text-xs tracking-widest")
-                ui.separator().classes("opacity-20")
-                ui.label("DOWNLOAD LOCATION").classes(
-                    "text-[#444] font-mono text-[10px] tracking-widest"
-                )
-                path_inp = (
-                    ui.input(value=cfg.get("download_dir", str(Path.home() / "Downloads")))
-                    .props("outlined dark dense")
-                    .classes("w-full font-mono text-[11px]")
-                )
-                ui.label(
-                    "All download buttons save to this folder."
-                ).classes("text-[#333] font-mono text-[10px]")
-
                 ui.separator().classes("opacity-20")
                 ui.label("HUGGING FACE TOKEN").classes(
                     "text-[#444] font-mono text-[10px] tracking-widest"
@@ -122,15 +107,8 @@ def run():
                         "flat dense color=amber"
                     ).classes("font-mono text-[10px]")
 
-                def _save_cfg():
-                    new_dir = path_inp.value.strip() or str(Path.home() / "Downloads")
-                    save_settings({**cfg, "download_dir": new_dir})
-                    dlg.close()
-                    ui.notify("Settings saved", type="positive", timeout=2000)
-
                 with ui.row().classes("w-full justify-end gap-2 mt-1"):
                     ui.button("Close", on_click=dlg.close).props("flat dense color=grey")
-                    ui.button("Save", on_click=_save_cfg).props("color=amber unelevated dense")
             dlg.open()
 
         def _maybe_prompt_hf_token():

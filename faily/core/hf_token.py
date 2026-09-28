@@ -1,8 +1,11 @@
 """Hugging Face access token — pasted once via the startup dialog or Settings,
-stored locally, and reused for any gated-repo download."""
-from pathlib import Path
+stored locally, and reused for any gated-repo download. Falls back to the
+HF_TOKEN env var (e.g. set in docker-compose) when nothing is saved."""
+import os
 
-_TOKEN_FILE = Path(__file__).parent.parent.parent / "hf_token.txt"
+from faily.core.settings import config_file
+
+_TOKEN_FILE = config_file("hf_token.txt")
 
 
 def has_hf_token() -> bool:
@@ -12,8 +15,9 @@ def has_hf_token() -> bool:
 def get_hf_token() -> str | None:
     if _TOKEN_FILE.exists():
         tok = _TOKEN_FILE.read_text().strip()
-        return tok or None
-    return None
+        if tok:
+            return tok
+    return os.environ.get("HF_TOKEN", "").strip() or None
 
 
 def save_hf_token(token: str) -> None:

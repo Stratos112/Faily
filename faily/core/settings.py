@@ -1,9 +1,27 @@
 import json
+import os
+import shutil
 from pathlib import Path
 
-_SETTINGS_FILE = Path(__file__).parent.parent.parent / "faily_settings.json"
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+# Local config/secrets live in their own dir so Docker can volume-mount it —
+# the project root itself is baked into the image and lost on rebuild.
+CONFIG_DIR = Path(os.environ.get("FAILY_CONFIG_DIR") or _PROJECT_ROOT / "config")
+
+
+def config_file(name: str) -> Path:
+    """Path to a file in CONFIG_DIR, moving it over from the project root
+    first if an older install left it there."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    path = CONFIG_DIR / name
+    legacy = _PROJECT_ROOT / name
+    if not path.exists() and legacy.exists():
+        shutil.move(str(legacy), str(path))
+    return path
+
+
+_SETTINGS_FILE = config_file("faily_settings.json")
 _DEFAULTS: dict = {
-    "download_dir": str(Path.home() / "Downloads"),
     "default_base_voice": "lessac",
 }
 
@@ -19,10 +37,6 @@ def load_settings() -> dict:
 
 def save_settings(data: dict) -> None:
     _SETTINGS_FILE.write_text(json.dumps(data, indent=2))
-
-
-def get_download_dir() -> Path:
-    return Path(load_settings()["download_dir"])
 
 
 def get_default_base_voice() -> str:

@@ -1,6 +1,5 @@
 """Shared UI building blocks."""
 import asyncio
-import shutil
 import traceback
 from pathlib import Path
 from nicegui import ui
@@ -296,13 +295,10 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
             show_error(exc)
 
     def _download_local(path: Path):
+        # Served to the browser, not copied on the host — the server may not
+        # be the machine the user is sitting at.
         try:
-            from faily.core.settings import get_download_dir
-            downloads = get_download_dir()
-            downloads.mkdir(parents=True, exist_ok=True)
-            dest = downloads / path.name
-            shutil.copy2(str(path), str(dest))
-            ui.notify(f"Saved to {downloads.name}/{path.name}", type="positive", timeout=3000)
+            ui.download.file(path, path.name)
         except Exception as exc:
             show_error(exc)
 
@@ -343,7 +339,7 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
                 ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to Edit tab")
                 ui.button(icon="file_download", on_click=lambda p=path: _download_local(p)).props(
                     "flat dense color=grey"
-                ).classes("shrink-0").tooltip("Copy to Downloads")
+                ).classes("shrink-0").tooltip("Download")
 
     def _load_compare(path: Path):
         rel = path.relative_to(Path("outputs"))
@@ -399,7 +395,7 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
                 ).props("flat dense color=grey size=sm").classes("shrink-0").tooltip("Send to Edit tab")
                 ui.button(icon="file_download", on_click=lambda p=path: _download_local(p)).props(
                     "flat dense color=grey size=sm"
-                ).classes("shrink-0").tooltip("Copy to Downloads")
+                ).classes("shrink-0").tooltip("Download")
 
     def set_candidates(items: list[tuple[Path, str]]):
         """Populate CURRENT OUTPUT with a grid of square tiles (tile_output mode only)."""

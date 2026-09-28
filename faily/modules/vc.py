@@ -212,8 +212,20 @@ def _patch_xtts_transformers():
         pu.isin_mps_friendly = torch.isin
 
 
+def _coqui_env():
+    # Coqui asks for CPML acceptance via input() on first model download — a
+    # headless server has no stdin, so that blocks/crashes. Accepted once
+    # interactively on the old Windows setup; keep accepting it here.
+    # TTS_HOME puts coqui's model cache under models/ (a persisted volume)
+    # instead of ~/.local/share/tts, which is lost on every image rebuild.
+    import os
+    os.environ.setdefault("COQUI_TOS_AGREED", "1")
+    os.environ.setdefault("TTS_HOME", str((VC_MODELS_DIR / "coqui").resolve()))
+
+
 def _load_xtts():
     _patch_xtts_transformers()
+    _coqui_env()
     from TTS.api import TTS
     gpu = str(manager.device).startswith("cuda")
     return TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=gpu)
@@ -492,6 +504,7 @@ def _load_openvoice_converter():
 
 def _load_freevc():
     _patch_xtts_transformers()
+    _coqui_env()
     from TTS.api import TTS
     gpu = str(manager.device).startswith("cuda")
     return TTS("voice_conversion_models/multilingual/vctk/freevc24", gpu=gpu)
@@ -586,7 +599,7 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float
     except ImportError as _e:
         raise RuntimeError(
             f"OpenVoice dependency missing: {_e}\n"
-            'Re-run scripts/setup.bat, or manually:\n'
+            'Rebuild the image, or manually:\n'
             '  pip install --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"\n'
             "  pip install wavmark resampy faster-whisper cn2an eng_to_ipa langid jieba"
         ) from _e

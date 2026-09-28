@@ -8,6 +8,7 @@ services:
       - ./outputs:/app/outputs
       - ./models:/app/models
       - ./piper_checkpoints:/app/piper_checkpoints
+      - ./config:/app/config
       - hf-cache:/root/.cache/huggingface
     # Never set FAILY_NATIVE=1 — that path spins up a pywebview native window,
     # which doesn't exist in a headless container. Server mode (the default

@@ -1,4 +1,8 @@
 .venv/
+.python/
+config/
+faily_settings.json
+hf_token.txt
 piper_venv/
 models/
 outputs/
@@ -9,3 +13,4 @@ __pycache__/
 *.egg-info/
 tokenizers
 .claude/
+.venv.old-py311/

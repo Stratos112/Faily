@@ -9,6 +9,9 @@ set -euo pipefail
 
 PORT=7842
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# App venv for the live checks (/app/.venv in the image, ./.venv in a dev
+# checkout); system python3 is enough for the static checks.
+if [ -x "$ROOT/.venv/bin/python" ]; then PY="$ROOT/.venv/bin/python"; else PY="python3"; fi
 LOGFILE="/tmp/faily_test_$(date +%Y%m%d_%H%M%S).log"
 PASS=0
 FAIL=0
@@ -28,7 +31,7 @@ check_http() {
 
 check_py() {
     local desc="$1" snippet="$2"
-    if python3 - 2>>"$LOGFILE" <<EOF; then pass "$desc"; else fail "$desc" "see log"; fi
+    if "$PY" - 2>>"$LOGFILE" <<EOF; then pass "$desc"; else fail "$desc" "see log"; fi
 $snippet
 EOF
 }
@@ -40,8 +43,18 @@ check_syntax() {
         || fail  "syntax: ${f#$ROOT/}" "compile error"
 }
 
+# fuser (psmisc) isn't in every image — fall back to matching the server's
+# command line. Port state itself is probed over HTTP so it needs nothing extra.
+port_busy() {
+    curl -s -o /dev/null --max-time 2 "http://localhost:$PORT/" 2>/dev/null
+}
+
 kill_port() {
-    fuser -k "${PORT}/tcp" 2>/dev/null || true
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "${PORT}/tcp" 2>/dev/null || true
+    else
+        pkill -f "python.* main.py" 2>/dev/null || true
+    fi
     sleep 0.5
 }
 
@@ -51,6 +64,7 @@ cd "$ROOT"
 log "=== Faily Test Run  $(date) ==="
 log "Root : $ROOT"
 log "Log  : $LOGFILE"
+log "Py   : $PY"
 log ""
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -70,7 +84,7 @@ if [ "$MODE" != "--live-only" ]; then
     for d in outputs/tts outputs/vc outputs/vc/refs outputs/characters scripts; do
         [ -d "$ROOT/$d" ] && pass "dir: $d" || fail "dir: $d" "missing"
     done
-    [ -f "$ROOT/CLAUDE.md" ]           && pass "CLAUDE.md exists"     || fail "CLAUDE.md"           "missing"
+    [ -f "$ROOT/.claude/CLAUDE.md" ]   && pass "CLAUDE.md exists"     || fail "CLAUDE.md"           "missing"
     [ -f "$ROOT/.claude/skills/test-faily.md" ] && pass "skill: test-faily" || fail "skill: test-faily" "missing"
 
     log ""
@@ -124,15 +138,15 @@ print('AST ok — tune_tab.py parses cleanly')
 fi  # end static checks
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LIVE CHECKS — requires running server (Windows / env with torch)
+# LIVE CHECKS — requires running server (env with torch)
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "$MODE" != "--static-only" ]; then
     log ""
     log "── Live server checks ───────────────────────────────────────"
 
-    # Check if python3 can import torch before attempting server start
-    if ! python3 -c "import torch" 2>/dev/null; then
-        skip "Server startup" "torch not installed in this environment (run on Windows)"
+    # Check the app venv can import torch before attempting server start
+    if ! "$PY" -c "import torch" 2>/dev/null; then
+        skip "Server startup" "torch not importable by $PY (run scripts/setup_linux.sh)"
         skip "HTTP: main page"     "server not started"
         skip "HTTP: static assets" "server not started"
         skip "HTTP: outputs route" "server not started"
@@ -141,7 +155,7 @@ if [ "$MODE" != "--static-only" ]; then
         kill_port
 
         log "Starting server..."
-        python3 main.py >>"$LOGFILE" 2>&1 &
+        "$PY" main.py >>"$LOGFILE" 2>&1 &
         SERVER_PID=$!
         log "Server PID: $SERVER_PID"
 
@@ -164,8 +178,9 @@ if [ "$MODE" != "--static-only" ]; then
 
             log "Killing server (PID $SERVER_PID)..."
             kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
             kill_port
-            fuser "${PORT}/tcp" 2>/dev/null \
+            port_busy \
                 && fail "Port $PORT free after kill" "still occupied" \
                 || pass "Port $PORT free after kill"
         fi

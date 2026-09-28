@@ -10,6 +10,7 @@ from faily.ui.components import section_label, show_error
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select —"
+_MIX_DIR = Path("outputs/mix")
 
 # px constants that JS and Python must agree on
 _RH = 20   # ruler height
@@ -420,13 +421,11 @@ def build_daw_tab():
                 mix_lbl.set_text("mixing…")
                 try:
                     import datetime
-                    from faily.core.settings import get_download_dir
-                    dl = get_download_dir()
-                    dl.mkdir(parents=True, exist_ok=True)
-                    out = dl / f"faily_mix_{datetime.datetime.now():%Y%m%d_%H%M%S}.wav"
+                    _MIX_DIR.mkdir(parents=True, exist_ok=True)
+                    out = _MIX_DIR / f"faily_mix_{datetime.datetime.now():%Y%m%d_%H%M%S}.wav"
                     await ni_run.io_bound(mix_tracks, tracks_data, out)
                     mix_lbl.set_text(f"✓  {out.name}")
-                    ui.notify(f"Saved to {dl.name}/{out.name}", type="positive", timeout=3000)
+                    ui.download.file(out, out.name)
                 except Exception as exc:
                     show_error(exc)
                     mix_lbl.set_text("error")

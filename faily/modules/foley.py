@@ -62,7 +62,7 @@ def get_models() -> dict[str, str]:
 # ── AudioLDM2 / Tango 2 ───────────────────────────────────────────────────────
 
 def _patch_generate_lm(pipe):
-    """Windows diffusers uses output.last_hidden_state which doesn't exist on
+    """diffusers uses output.last_hidden_state which doesn't exist on
     CausalLMOutputWithCrossAttentions; patch to use output.hidden_states[-1].
     Also seeds cache_position for transformers 5.x KV-cache handling.
     Called after every manager.load() — guarded by flag on the pipe object."""

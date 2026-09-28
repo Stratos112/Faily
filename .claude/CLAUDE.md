@@ -2,18 +2,19 @@
 
 ## What this is
 Local audio app (NiceGUI) for TTS, voice cloning, and sound effects.
-Primary deployment is a Docker container (single image, two venvs — see `Dockerfile`) on the user's Windows 11 / RTX 5070 Ti (Blackwell) machine, GPU passed through via Docker Desktop + NVIDIA Container Toolkit. Dev happens in WSL2 at `/workspaces/projects/Faily`.
+Primary deployment is a Docker container (single image, two venvs — installed by `scripts/setup_linux.sh`, which the `Dockerfile` runs phase by phase) on the user's Windows 11 / RTX 5070 Ti (Blackwell) machine, GPU passed through via Docker Desktop + NVIDIA Container Toolkit. Dev happens in WSL2 at `/workspaces/projects/Faily`.
 
 Legacy: `scripts/setup.bat` / `scripts/setup_piper.bat` still exist for running natively on Windows (two local venvs, no Docker) but are no longer the primary path — native Windows was where the `monotonic_align` MSVC crash saga (see git history) came from, part of the motivation for moving to Docker.
 
 ## Running
 ```bash
 docker compose up --build   # starts on http://localhost:7842
+bash scripts/setup_linux.sh # bare-metal / dev-box install (all phases; or name phases: system main piper app data)
 bash scripts/test_faily.sh  # full test run + clean shutdown (run against the container, or inside it)
 ```
 Container restart/stop: `docker compose down` / `docker compose restart` (replaces the old Windows `taskkill`/`netstat` dance).
 
-Volumes (persist across rebuilds): `./outputs`, `./models`, `./piper_checkpoints`, plus a named `hf-cache` volume for the HuggingFace cache. `entrypoint.sh` handles the two setup steps that write into those volume-mounted dirs (Seed-VC repo clone, Piper base checkpoint download) at container start, since anything baked into those paths at image-build time would just be shadowed by the bind mounts.
+Volumes (persist across rebuilds): `./outputs`, `./models`, `./piper_checkpoints`, plus a named `hf-cache` volume for the HuggingFace cache. `entrypoint.sh` runs `setup_linux.sh data` — the two setup steps that write into those volume-mounted dirs (Seed-VC repo clone, Piper base checkpoint download) at container start, since anything baked into those paths at image-build time would just be shadowed by the bind mounts.
 
 ## Architecture
 
@@ -49,8 +50,8 @@ faily/
 **Progress reporting** — functions accept `progress_ref: list[float]` and write 0.0–1.0 into it. UI polls via `ui.timer(0.15, ...)`.
 
 ## Platform notes
-- Container: Ubuntu 24.04, Python 3.12 (main app venv) + Python 3.11 (piper_venv), PyTorch cu128, RTX 5070 Ti (Blackwell sm_120) passed through from the Windows host via Docker Desktop + NVIDIA Container Toolkit
-- Main venv is 3.12, not 3.14, deliberately — `pyproject.toml` only requires `>=3.10`, and 3.12 has reliably-published Linux wheels for the whole ML dependency list (coqui-tts, f5-tts, chatterbox-tts, parler-tts, etc.); 3.14 was just what ended up installed on the old native-Windows setup
+- Container: Ubuntu 24.04, Python 3.14 (main app venv) + Python 3.11 (piper_venv), both uv-managed (in `.python/`), PyTorch cu128, RTX 5070 Ti (Blackwell sm_120) passed through from the Windows host via Docker Desktop + NVIDIA Container Toolkit
+- Main venv is 3.14 deliberately — chatterbox-tts pins `torch==2.6.0` on Python < 3.14 (no Blackwell sm_120 kernels); only on 3.14 does it accept torch>=2.9. `setup_linux.sh` re-asserts cu128 torch after all backend installs anyway. parler-tts is installed `--no-deps` (it pins transformers==4.46.1; vc.py's patches target 5.x)
 - `torchaudio.load` still patched to soundfile (`_patch_torchaudio()` in vc.py) — harmless/still fine on Linux even though torchcodec is more likely to actually work here than it was on Windows
 - transformers 5.x → `isin_mps_friendly` patched back onto `pytorch_utils`
 - `piper_train`'s `monotonic_align` Cython extension is built from stock source on Linux (gcc, no MSVC-diagnostic patches applied) — if it turns out to crash on Linux too, `scripts/patch_piper_train_monotonic_align_pure_python.py` is the documented fallback (bypasses the extension with an equivalent pure-Python implementation)
