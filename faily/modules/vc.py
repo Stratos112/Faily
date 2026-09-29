@@ -234,7 +234,11 @@ def _load_xtts():
 def transcribe_ref(ref_path: Path) -> str:
     _patch_ffmpeg_read()
     from f5_tts.infer.utils_infer import transcribe
-    return transcribe(str(ref_path))
+    # Hand the ASR pipeline decoded samples, not a path: transformers 5 decodes
+    # paths through torchcodec (bypassing _patch_ffmpeg_read entirely), and
+    # torchcodec's native libs are the fragile part of this stack.
+    data, sr = sf.read(str(ref_path), dtype="float32", always_2d=True)
+    return transcribe({"raw": data.mean(axis=1), "sampling_rate": sr})
 
 
 def _load_f5():
@@ -633,13 +637,17 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float
 
     tgt_clean = _clean_wav(target_wav)
     src_clean = _clean_wav(source_wav)
+    # get_se writes per-call scratch into target_dir (default "processed",
+    # relative to cwd) and never cleans it up.
+    se_scratch = _tmp.mkdtemp(prefix="faily_ov_se_")
     try:
-        src_se, _ = se_extractor.get_se(str(src_clean), conv, vad=False)
-        tgt_se, _ = se_extractor.get_se(str(tgt_clean), conv, vad=False)
+        src_se, _ = se_extractor.get_se(str(src_clean), conv, target_dir=se_scratch, vad=False)
+        tgt_se, _ = se_extractor.get_se(str(tgt_clean), conv, target_dir=se_scratch, vad=False)
     finally:
         for _p in (src_clean, tgt_clean):
             try: _p.unlink()
             except OSError: pass
+        shutil.rmtree(se_scratch, ignore_errors=True)
     conv.convert(
         audio_src_path=str(source_wav),
         src_se=src_se,
@@ -650,6 +658,7 @@ def _openvoice_convert(source_wav: Path, target_wav: Path, out: Path, tau: float
 
 
 _SEEDVC_DIR = VC_MODELS_DIR / "seed-vc"
+_SEEDVC_CACHE = VC_MODELS_DIR / "seed-vc-checkpoints"
 
 
 def _load_seedvc():
@@ -676,6 +685,23 @@ def _load_seedvc():
             return _orig_fp(cls, proxies=proxies, resume_download=resume_download, **kwargs)
         _bv.BigVGAN._from_pretrained = classmethod(_fp)
         _bv.BigVGAN._faily_patched = True
+
+    # Seed-VC downloads its weights with cache_dir="./checkpoints", i.e.
+    # relative to wherever the app was started — in the container that's
+    # /app/checkpoints, outside every volume, so it'd re-download on each
+    # container recreate. Redirect into models/ (a volume). Must happen before
+    # seed_vc_wrapper is imported: it binds the function by name.
+    import hf_utils as _hf
+    if not getattr(_hf, "_faily_patched", False):
+        from huggingface_hub import hf_hub_download
+        def _load_from_hf(repo_id, model_filename="pytorch_model.bin", config_filename=None):
+            cache = str(_SEEDVC_CACHE.resolve())
+            model_path = hf_hub_download(repo_id=repo_id, filename=model_filename, cache_dir=cache)
+            if config_filename is None:
+                return model_path
+            return model_path, hf_hub_download(repo_id=repo_id, filename=config_filename, cache_dir=cache)
+        _hf.load_custom_model_from_hf = _load_from_hf
+        _hf._faily_patched = True
 
     import torch as _torch
     import seed_vc_wrapper as _svc_mod

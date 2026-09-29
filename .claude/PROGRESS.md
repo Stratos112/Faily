@@ -65,8 +65,8 @@ Phase 2 notes (2026-09-28):
 ### Phase 3: install + test in this box (NEEDS THE GPU FREE; ask the user first)
 - [x] 3a. `bash scripts/setup_linux.sh`: done 2026-09-28. main=.venv py3.14.7 torch 2.11.0+cu128; piper_venv torch 2.11.0+cu128
 - [x] 3b. test_faily.sh passes (static + live): 42/42
-- [ ] 3c. One smoke generation per backend: SpeechT5, XTTS, F5, Chatterbox, Parler+FreeVC/OpenVoice/Seed-VC, AudioLDM2, Piper infer
-- [ ] 3d. Piper training run: does stock monotonic_align survive on Linux?
+- [x] 3c. One smoke generation per backend: all pass (see results table below)
+- [x] 3d. Piper training run: YES. Stock gcc monotonic_align survives a real GPU epoch on Linux; the Windows crash doesn't reproduce
 
 Phase 3 notes (2026-09-28):
 - **Old .venv trap:** a Python 3.11 system-python `.venv` from Aug was silently reused on the first run. It had torch 2.12.1+cu130 next to torchaudio 2.11.0+cu128, and torchaudio failed to import. setup_linux.sh now moves a wrong-version venv aside (`.venv.old-pyXY`); the old one is at `.venv.old-py311` (6.6 GB, safe to delete). The torch check now accepts CUDA >= 12.8 and requires matching torch/torchaudio versions, with a clean reinstall as fallback.
@@ -78,6 +78,34 @@ Phase 3 notes (2026-09-28):
 - `ui.run(show=...)` now only opens a browser in native mode; server mode used to try to launch one on the host.
 - test_faily.sh static-asset URL fixed for NiceGUI 3's versioned `/_nicegui/<ver>/static`.
 - Remaining `pip check` noise is unused paths only: gradio, the audiotools protobuf pins, parler's transformers pin, and openvoice's stale pins.
+
+Phase 3c/3d results (2026-09-29; synthetic MMS reference voice; times include first-run model downloads):
+
+| case | result | time | peak VRAM |
+|---|---|---|---|
+| MMS-TTS | OK | 6s | 0.2G |
+| SpeechT5 | OK | 55s | 0.7G |
+| XTTS v2 | OK (cached in models/vc/coqui, no TOS prompt) | 152s | 1.8G |
+| F5-TTS | OK | 84s | 1.9G |
+| transcribe_ref (Whisper) | OK after fix | 10s | 1.7G |
+| Chatterbox | OK | 141s | 3.2G |
+| AudioLDM2 | OK | 15s | 2.3G |
+| Piper infer (lessac preview) | OK | 6s | n/a |
+| Parler + FreeVC | OK | 386s | 4.2G |
+| Parler + OpenVoice | OK | 30s | 4.1G |
+| Parler + Seed-VC | OK (runtime BigVGAN shim) | 189s | 5.7G |
+| Piper training, 1 epoch from lessac | OK, no crash | ~1 min | n/a |
+
+Fixes found by 3c/3d:
+- **torchcodec:** pip pulled 0.16.0 (CUDA 13 build, needs libnvrtc.so.13) and transformers 5 decodes ASR file paths through it, bypassing `_patch_ffmpeg_read`. Three fixes:
+  - `transcribe_ref` now passes decoded samples.
+  - setup pins torchcodec to the cu128 index (0.11.1) and installs `nvidia-npp-cu12`.
+  - `model_manager._preload_npp()` loads NPP RTLD_GLOBAL, because the wheel has no rpath to it.
+- **Piper epoch off-by-one (pre-existing, not Linux-specific):** a checkpoint's `epoch` is the epoch that just finished, so resume starts at +1. `max_epochs=1` trained 0 epochs and 1000 trained 999. Fixed in piper.py.
+- **Seed-VC wrote its 1.4 GB weight cache to `./checkpoints`** (cwd-relative; /app/checkpoints in the container, outside every volume). `_load_seedvc` now redirects it to `models/vc/seed-vc-checkpoints`. **OpenVoice's `get_se` left scratch in `./processed`** forever; it now gets a temp dir that's cleaned up. Both pipelines were re-verified, and nothing is written to the repo root anymore.
+- Open question for the user: `outputs/` and `piper_checkpoints/*.onnx` show as untracked. Should they be gitignored? They're user data/downloads on volumes.
+- `.venv.old-py311/` (6.6 GB) is the moved-aside old venv; delete it once happy.
+- The dev box's HF cache (`~/.cache/huggingface`: F5, Chatterbox, Parler, Whisper, ...) is NOT persisted across dev-container rebuilds. In Docker it's the `hf-cache` volume.
 
 ### Phase 4: cleanup + hardening
 - [ ] 4a. Delete setup.bat / setup_piper.bat / setup_piper.sh (superseded by setup_linux.sh) / monotonic_align patch-trail scripts (keep the pure-python fallback) once 3d passes

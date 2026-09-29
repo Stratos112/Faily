@@ -54,7 +54,9 @@ faily/
 - Main venv is 3.14 deliberately — chatterbox-tts pins `torch==2.6.0` on Python < 3.14 (no Blackwell sm_120 kernels); only on 3.14 does it accept torch>=2.9. `setup_linux.sh` re-asserts cu128 torch after all backend installs anyway. parler-tts is installed `--no-deps` (it pins transformers==4.46.1; vc.py's patches target 5.x)
 - `torchaudio.load` still patched to soundfile (`_patch_torchaudio()` in vc.py) — harmless/still fine on Linux even though torchcodec is more likely to actually work here than it was on Windows
 - transformers 5.x → `isin_mps_friendly` patched back onto `pytorch_utils`
-- `piper_train`'s `monotonic_align` Cython extension is built from stock source on Linux (gcc, no MSVC-diagnostic patches applied) — if it turns out to crash on Linux too, `scripts/patch_piper_train_monotonic_align_pure_python.py` is the documented fallback (bypasses the extension with an equivalent pure-Python implementation)
+- `piper_train`'s `monotonic_align` Cython extension is built from stock source on Linux (gcc) and survives real GPU training (verified 2026-09-29) — the MSVC crash was Windows-only. `scripts/patch_piper_train_monotonic_align_pure_python.py` remains as a fallback
+- torchcodec: the cu128-index build (not PyPI's CUDA-13 one) + `nvidia-npp-cu12`, loaded via `_preload_npp()` in model_manager.py (the wheel has no rpath to NPP). Faily's own code avoids torchcodec anyway (soundfile everywhere; `transcribe_ref` passes decoded samples)
+- Seed-VC vendors its own BigVGAN; `_load_seedvc` shims its `_from_pretrained` to default proxies/resume_download (no site-packages patching)
 - `FAILY_NATIVE` env var must stay unset in the container — that path launches a pywebview native window, which has no display to attach to in a headless container. Server mode (the default) is what serves the browser UI at `:7842`
 
 ## Output dirs

@@ -774,7 +774,11 @@ async def train(
     # not every base voice's filename follows the "epoch=N-..." convention.
     log_cb("Reading base checkpoint epoch…")
     base_epoch = await _read_checkpoint_epoch(py, base_ckpt)
-    target_epochs = base_epoch + max_epochs
+    # The stored epoch is the one that had just *finished* when the checkpoint
+    # was saved, so Lightning resumes at base_epoch + 1 — without the +1 here,
+    # max_epochs=1 trains zero epochs ("max_epochs=N reached" straight after
+    # restoring) and every run trains one fewer than asked.
+    target_epochs = base_epoch + 1 + max_epochs
 
     # piper_train.vits.lightning._load_datasets does:
     #   valid_set_size = int(len(full_dataset) * validation_split)

@@ -72,8 +72,10 @@ pip_soft() {
     done
 }
 
-# Prints "ok" if the venv's torch can run on Blackwell (CUDA build >= 12.8)
-# and torchaudio (if installed) matches torch's version; otherwise the reason.
+# Prints "ok" if the venv's torch can run on Blackwell (CUDA build >= 12.8),
+# torchaudio (if installed) matches torch's version, and torchcodec (if
+# installed) actually loads — its PyPI wheels are built for a different CUDA
+# (e.g. 0.16.0 needs libnvrtc.so.13) and fail at import; otherwise the reason.
 torch_status() {
     "$1/bin/python" - <<'PY' 2>/dev/null || echo "torch not importable"
 import importlib.util
@@ -88,10 +90,25 @@ elif importlib.util.find_spec("torchaudio"):
         print(f"torchaudio fails to import against torch {torch.__version__}: {type(e).__name__}")
         raise SystemExit
     mm = lambda v: v.split("+")[0].split(".")[:2]
-    print("ok" if mm(torch.__version__) == mm(torchaudio.__version__)
-          else f"torch {torch.__version__} / torchaudio {torchaudio.__version__} mismatch")
-else:
-    print("ok")
+    if mm(torch.__version__) != mm(torchaudio.__version__):
+        print(f"torch {torch.__version__} / torchaudio {torchaudio.__version__} mismatch")
+        raise SystemExit
+if importlib.util.find_spec("torchcodec"):
+    # Same NPP preload faily/core/model_manager.py does at runtime.
+    import ctypes, pathlib
+    try:
+        import nvidia.npp
+        for lib in sorted((pathlib.Path(list(nvidia.npp.__path__)[0]) / "lib").glob("libnpp*.so.*")) * 2:
+            try: ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
+            except OSError: pass
+    except ImportError:
+        pass
+    try:
+        import torchcodec.decoders  # loads the native libs
+    except Exception as e:
+        print(f"torchcodec fails to load: {str(e)[:120]}")
+        raise SystemExit
+print("ok")
 PY
 }
 
@@ -163,7 +180,7 @@ phase_main() {
     "$pip" install --upgrade pip
 
     say "torch cu128"
-    ensure_cu128_torch "$VENV" torch torchaudio
+    ensure_cu128_torch "$VENV" torch torchaudio torchcodec
 
     say "core deps (from pyproject.toml)"
     # Read [project.dependencies] rather than `pip install -e .` so this works
@@ -216,7 +233,10 @@ print('\n'.join(tomllib.load(open('$PROJECT_DIR/pyproject.toml', 'rb'))['project
     "$pip" install "protobuf>=6.31.1,<8"
 
     say "torch cu128 (re-check after backend installs)"
-    ensure_cu128_torch "$VENV" torch torchaudio
+    # torchcodec's cu128 build needs NVIDIA NPP, which torch doesn't pull in
+    # (loaded via a preload in model_manager.py — the wheel has no rpath to it).
+    "$pip" install "nvidia-npp-cu12==12.*"
+    ensure_cu128_torch "$VENV" torch torchaudio torchcodec
 
     say "pip check (main venv) — conflicts here are expected, see comments above"
     "$pip" check || true
