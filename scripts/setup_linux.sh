@@ -55,8 +55,8 @@ managed_python() {
     "$uv" python find --managed-python "$1"
 }
 
-# Install packages, but don't abort the whole setup if they fail — mirrors
-# setup.bat's "WARNING: X failed, feature Y won't work" behavior. On failure,
+# Install packages, but don't abort the whole setup if they fail — an
+# optional backend that won't install just disables that feature. On failure,
 # retry one by one so a single unbuildable package doesn't take its
 # neighbours down with it, and report exactly which ones are missing.
 pip_soft() {
@@ -298,6 +298,7 @@ phase_piper() {
         # torch>=2.9 dynamo ONNX exporter default; DataLoader worker subprocess.
         "$py" "$SCRIPT_DIR/patch_piper_train_onnx.py"
         "$py" "$SCRIPT_DIR/patch_piper_train_num_workers.py"
+        "$py" "$SCRIPT_DIR/patch_piper_train_cudnn_benchmark.py"
     fi
 
     # piper-train pulls torch 1.13.1+cu117 — no Blackwell kernels at all.

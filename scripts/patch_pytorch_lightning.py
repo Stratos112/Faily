@@ -14,7 +14,7 @@ with a modern NumPy/PyTorch stack. Idempotent — safe to run every setup.
      to WindowsPath for the duration of the load.
 
 Run after installing pytorch-lightning:
-    <piper_venv>\\Scripts\\python scripts\\patch_pytorch_lightning.py
+    piper_venv/bin/python scripts/patch_pytorch_lightning.py
 """
 import importlib.util
 import pathlib

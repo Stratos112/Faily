@@ -28,10 +28,12 @@ not a blocker), but it uses ordinary Python negative-indexing semantics, so
 even the y=0/index!=0 edge case that motivated the noexcept theory just reads
 the last row harmlessly instead of writing before the start of a buffer.
 
-Idempotent — safe to run every setup. No rebuild needed (pure Python).
+NOT applied by setup_linux.sh: on Linux/gcc the stock extension survives real
+GPU training (verified 2026-09-29). Kept only as a fallback if the crash ever
+reproduces here. Idempotent. No rebuild needed (pure Python).
 
 Run after installing piper-train:
-    <piper_venv>\\Scripts\\python scripts\\patch_piper_train_monotonic_align_pure_python.py
+    piper_venv/bin/python scripts/patch_piper_train_monotonic_align_pure_python.py
 """
 import importlib.util
 import pathlib

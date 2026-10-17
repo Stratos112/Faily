@@ -22,7 +22,7 @@ spawn entirely, which is the only lever available since there's no CLI flag.
 Idempotent — safe to run every setup.
 
 Run after installing piper-train:
-    <piper_venv>\\Scripts\\python scripts\\patch_piper_train_num_workers.py
+    piper_venv/bin/python scripts/patch_piper_train_num_workers.py
 """
 import importlib.util
 import pathlib

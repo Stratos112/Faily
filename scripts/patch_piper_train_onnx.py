@@ -12,7 +12,7 @@ the old exporter restores the behavior this script actually expects.
 Idempotent — safe to run every setup.
 
 Run after installing piper-train:
-    <piper_venv>\\Scripts\\python scripts\\patch_piper_train_onnx.py
+    piper_venv/bin/python scripts/patch_piper_train_onnx.py
 """
 import importlib.util
 import pathlib

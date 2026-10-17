@@ -779,6 +779,13 @@ async def train(
     # max_epochs=1 trains zero epochs ("max_epochs=N reached" straight after
     # restoring) and every run trains one fewer than asked.
     target_epochs = base_epoch + 1 + max_epochs
+    # Lightning's ModelCheckpoint only saves when the ABSOLUTE epoch count is a
+    # multiple of --checkpoint-epochs. The base checkpoint sits at an arbitrary
+    # epoch (2164 for lessac), so an unaligned target ends with no checkpoint
+    # for the final stretch (and a short run saves nothing at all). Round the
+    # target up to the next multiple so the last epoch is always saved.
+    ckpt_every = min(100, max_epochs)
+    target_epochs = -(-target_epochs // ckpt_every) * ckpt_every
 
     # piper_train.vits.lightning._load_datasets does:
     #   valid_set_size = int(len(full_dataset) * validation_split)
@@ -817,7 +824,7 @@ async def train(
         "--num_sanity_val_steps", "0",
         "--max_epochs", str(target_epochs),
         "--resume_from_checkpoint", str(base_ckpt),
-        "--checkpoint-epochs", "100",
+        "--checkpoint-epochs", str(ckpt_every),
         "--precision", "32",
         "--default_root_dir", str(train_dir),
     ], log_cb, proc_ref, extra_env={

@@ -1,3 +1,5 @@
+import base64
+import hmac
 import os
 from pathlib import Path
 from nicegui import app, ui
@@ -53,7 +55,36 @@ _GLOBAL_CSS = """
 """
 
 
+class _BasicAuth:
+    """Optional HTTP Basic auth over every HTTP request (pages, static files,
+    /outputs, uploads, the socket.io handshake). Plain ASGI rather than
+    BaseHTTPMiddleware so streaming responses pass through untouched.
+    WebSocket upgrades are let through: browsers don't reliably send Basic
+    credentials on them, and they're useless without a session id obtained
+    from an authenticated handshake anyway."""
+
+    def __init__(self, app, user: str, password: str):
+        self.app = app
+        self._expected = b"Basic " + base64.b64encode(f"{user}:{password}".encode())
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            got = dict(scope["headers"]).get(b"authorization", b"")
+            if not hmac.compare_digest(got, self._expected):
+                await send({"type": "http.response.start", "status": 401, "headers": [
+                    (b"www-authenticate", b'Basic realm="Faily"'), (b"content-type", b"text/plain"),
+                ]})
+                await send({"type": "http.response.body", "body": b"Authentication required"})
+                return
+        await self.app(scope, receive, send)
+
+
 def run():
+    # FAILY_PASSWORD unset = no auth (trusted LAN). Over the internet, put a
+    # TLS reverse proxy in front too: Basic auth over plain HTTP is cleartext.
+    _password = os.environ.get("FAILY_PASSWORD", "")
+    if _password:
+        app.add_middleware(_BasicAuth, user=os.environ.get("FAILY_USER", "faily"), password=_password)
     for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs", OUTPUTS / "characters", OUTPUTS / "speak", OUTPUTS / "edit", OUTPUTS / "mix"]:
         d.mkdir(parents=True, exist_ok=True)
     app.add_static_files("/outputs", str(OUTPUTS))
