@@ -1,10 +1,14 @@
 """Piper TTS training and inference via isolated subprocess."""
 import asyncio
+import codecs
 import csv
+import json
 import os
 import re
 import shutil
 import subprocess
+import time
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -554,7 +558,53 @@ def _prep_dataset(clips: list[dict], dataset_dir: Path, log_cb=None) -> int:
     return len(rows)
 
 
-async def _stream(cmd: list[str], log_cb, proc_ref: list, extra_env: dict | None = None):
+# Lightning's tqdm bar, e.g.
+#   Epoch 2165:  50%|█████     | 75/150 [00:30<00:30,  2.50it/s, loss=24.5, v_num=0]
+# It redraws in place with "\r" and only emits "\n" when the bar closes, so a
+# newline-only reader sees nothing for the whole run.
+_PROGRESS_RE = re.compile(
+    r"Epoch\s+(\d+):\s+\d+%\|[^|]*\|\s*(\d+)/(\d+)\s*\[([^\]]*)\]"
+)
+
+
+async def _poll_progress(path: Path, progress_cb, log_cb) -> None:
+    """Relay the trainer's progress.json (written by
+    scripts/patch_piper_train_progress.py) as progress_cb events. Lightning
+    prints no progress bar when its stdout is a pipe, so this file is the only
+    live progress source. One log line per finished epoch."""
+    last_mtime, last_epoch, last = 0.0, None, None
+    while True:
+        await asyncio.sleep(1.0)
+        try:
+            mtime = path.stat().st_mtime
+            if mtime == last_mtime:
+                continue
+            last_mtime = mtime
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        parts = [f"{k} {d[k]:.1f}" for k in ("gen", "val") if d.get(k) is not None]
+        info = {
+            "epoch": d["epoch"], "batch": d.get("batch", 0),
+            "batches": d.get("batches") or 1, "detail": "  ".join(parts),
+        }
+        if last_epoch is not None and info["epoch"] != last_epoch and last:
+            log_cb(f"epoch {last_epoch} done  [{last['detail']}]")
+        last_epoch, last = info["epoch"], info
+        progress_cb(info)
+
+
+async def _stream(
+    cmd: list[str], log_cb, proc_ref: list, extra_env: dict | None = None,
+    progress_cb=None,
+):
+    """Run cmd, forwarding its output to log_cb line by line.
+
+    With progress_cb, Lightning progress-bar redraws are parsed instead of
+    logged: progress_cb({"epoch", "batch", "batches", "detail"}) is called
+    (throttled to ~2/s, always on an epoch change) and log_cb gets one summary
+    line per finished epoch.
+    """
     log_cb(f"$ {' '.join(cmd)}")
     env = {**os.environ, **extra_env} if extra_env else None
     proc = await asyncio.create_subprocess_exec(
@@ -567,13 +617,50 @@ async def _stream(cmd: list[str], log_cb, proc_ref: list, extra_env: dict | None
     log_cb(f"[pid {proc.pid}] started")
     tail: list[str] = []
     n_lines = 0
-    async for raw in proc.stdout:
-        line = raw.decode(errors="replace").rstrip()
+    last: dict | None = None
+    last_emit = 0.0
+
+    def handle(line: str):
+        nonlocal n_lines, last, last_emit
+        line = line.strip()
+        if not line:
+            return
+        m = _PROGRESS_RE.search(line) if progress_cb else None
+        if m:
+            info = {
+                "epoch": int(m.group(1)), "batch": int(m.group(2)),
+                "batches": int(m.group(3)), "detail": m.group(4),
+            }
+            changed = last is not None and info["epoch"] != last["epoch"]
+            if changed:
+                log_cb(f"epoch {last['epoch']} done  [{last['detail']}]")
+            last = info
+            now = time.monotonic()
+            if changed or last_emit == 0.0 or now - last_emit >= 0.5:
+                last_emit = now
+                progress_cb(info)
+            return
         log_cb(line)
         n_lines += 1
         tail.append(line)
         if len(tail) > 40:
             tail.pop(0)
+
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    buf = ""
+    while True:
+        chunk = await proc.stdout.read(4096)
+        if not chunk:
+            break
+        buf += decoder.decode(chunk)
+        *lines, buf = re.split(r"[\r\n]", buf)
+        for line in lines:
+            handle(line)
+    handle(buf + decoder.decode(b"", final=True))
+    if last is not None:
+        progress_cb(last)
+        if last["batch"] == last["batches"]:
+            log_cb(f"epoch {last['epoch']} done  [{last['detail']}]")
     await proc.wait()
     proc_ref[0] = None
     log_cb(f"[pid {proc.pid}] exited {proc.returncode} ({n_lines} output lines)")
@@ -621,21 +708,302 @@ async def _probe(py: str, label: str, code: str, log_cb) -> None:
 
 # ── public API ────────────────────────────────────────────────────────────────
 
+# ── training status (survives UI reloads) ───────────────────────────────────
+# train() runs inside the server process, but the dialog that watches it lives
+# in one browser client. Status goes in a small JSON file in the character dir
+# (train() wipes piper_train/, not this) so any client can re-attach.
+# States: preparing | training | exporting | ready (candidates await a pick)
+#         | done (a candidate was promoted) | error | interrupted (derived)
+_STATUS_FILE = "piper_training.json"
+_SERVER_TOKEN = uuid.uuid4().hex   # changes on every server start
+_ACTIVE_STATES = ("preparing", "training", "exporting")
+
+
+def _status_path(char_dir: Path) -> Path:
+    return char_dir / _STATUS_FILE
+
+
+def _write_status(char_dir: Path, **fields) -> None:
+    path = _status_path(char_dir)
+    try:
+        cur = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cur = {}
+    cur.update(fields, updated=time.time(), server=_SERVER_TOKEN)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cur), encoding="utf-8")
+    tmp.replace(path)
+
+
+def read_training_status(char_dir: Path) -> dict | None:
+    """Current training status, or None if this character never trained.
+    A run recorded as active by a previous server process is reported as
+    "interrupted" — its trainer died with (or was orphaned by) that process."""
+    try:
+        st = json.loads(_status_path(char_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if st.get("state") in _ACTIVE_STATES and st.get("server") != _SERVER_TOKEN:
+        st["state"] = "interrupted"
+    return st
+
+
+# What the fine-tune should copy from the reference clips vs. keep from the
+# base voice. Each aspect maps to the generator submodules that carry it; a
+# submodule set to "base" is frozen (scripts/patch_piper_train_freeze.py), so
+# its weights stay bit-identical to the base checkpoint.
+#   pronunciation -> enc_p  (text encoder: text -> phoneme-level meaning)
+#   rhythm        -> dp     (duration predictor: how long each sound lasts)
+#   timbre        -> dec, flow, enc_q  (the acoustic side: what the voice sounds like)
+# The mapping is approximate (rhythm also depends a little on enc_p, timbre
+# leaks into the others), but measured on e-girl with an 8-sentence Whisper
+# word-error-rate check at 40 epochs: nothing frozen 0.12-0.19, enc_p frozen
+# 0.03, enc_p+dp frozen 0.00-0.02.
+MATCH_ASPECTS = {
+    "timbre": {
+        "label": "Timbre", "modules": ("dec", "flow", "enc_q"),
+        "desc": "What the voice sounds like — tone, texture, accent colour.",
+    },
+    "rhythm": {
+        "label": "Rhythm", "modules": ("dp",),
+        "desc": "Pacing — how long sounds and pauses last, how fast it talks.",
+    },
+    "pronunciation": {
+        "label": "Pronunciation", "modules": ("enc_p",),
+        "desc": "How words are said. Learning this from a small dataset tends to "
+                "scramble it (mangled words, rushed speech).",
+    },
+}
+MATCH_CHOICES = {"base": "Base Model", "reference": "Reference Clips"}
+DEFAULT_MATCH = {"timbre": "reference", "rhythm": "base", "pronunciation": "base"}
+
+
+def frozen_modules(match: dict | None) -> str:
+    """Comma list of submodules to freeze for a {aspect: "base"|"reference"}
+    choice (missing aspects use DEFAULT_MATCH). Raises if everything would be
+    frozen — there'd be nothing left to train."""
+    choice = {**DEFAULT_MATCH, **(match or {})}
+    frozen = [m for aspect, info in MATCH_ASPECTS.items()
+              if choice.get(aspect) != "reference" for m in info["modules"]]
+    every = {m for info in MATCH_ASPECTS.values() for m in info["modules"]}
+    if set(frozen) >= every:
+        raise ValueError(
+            "Every aspect is set to Base Model, so there is nothing to train — "
+            "set at least one of Timbre / Rhythm / Pronunciation to Reference Clips."
+        )
+    return ",".join(frozen)
+
+
+def freeze_patch_applied() -> bool:
+    try:
+        main_py = _site_packages() / "piper_train" / "__main__.py"
+        return "FAILY_PIPER_FREEZE" in main_py.read_text(encoding="utf-8")
+    except (OSError, RuntimeError):
+        return False
+
+
+def stop_patch_applied() -> bool:
+    """True if piper_train honors STOP_REQUEST (scripts/patch_piper_train_stop_request.py)."""
+    try:
+        main_py = _site_packages() / "piper_train" / "__main__.py"
+        return "FAILY_STOP_REQUEST" in main_py.read_text(encoding="utf-8")
+    except (OSError, RuntimeError):
+        return False
+
+
+def request_stop(char_dir: Path) -> bool:
+    """Ask the trainer to finish the current epoch, save a checkpoint of it,
+    and stop. Returns False if the running piper_train can't do that (unpatched
+    install, or a run that started before the patch) — the caller should then
+    fall back to killing the process, which loses work since the last
+    periodic checkpoint."""
+    if not stop_patch_applied():
+        return False
+    flag = char_dir / "piper_train" / "STOP_REQUEST"
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.write_text("")
+    _write_status(char_dir, stopping=True)
+    return True
+
+
+def read_loss_history(char_dir: Path, max_points: int = 400) -> dict:
+    """Loss curves for the character's most recent training, from the
+    TensorBoard events piper_train writes. Returns
+    {"epochs": [...], "gen": [...], "val": [...], "trend": str} with one entry
+    per epoch (or per bucket of epochs when there are more than max_points);
+    gen/val entries are None where that loss wasn't logged. Blocking —
+    TensorBoard parsing; call from a worker thread."""
+    empty = {"epochs": [], "gen": [], "val": [], "trend": ""}
+    try:
+        from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+    except ImportError:
+        return empty
+    import bisect
+
+    log_root = char_dir / "piper_train" / "lightning_logs"
+    steps: list[int] = []
+    step_epoch: list[float] = []
+    raw: dict[str, list[tuple[int, float]]] = {"loss_gen_all": [], "val_loss": []}
+    # A resumed run adds a new version_N; stitch them in order.
+    for vdir in sorted(log_root.glob("version_*"), key=lambda p: int(p.name.split("_")[1])):
+        for f in sorted(vdir.glob("events.out.tfevents.*")):
+            ea = EventAccumulator(str(f), size_guidance={"scalars": 0})
+            ea.Reload()
+            tags = ea.Tags().get("scalars", [])
+            if "epoch" not in tags:
+                continue
+            for e in ea.Scalars("epoch"):
+                steps.append(e.step)
+                step_epoch.append(e.value)
+            for tag in raw:
+                if tag in tags:
+                    raw[tag] += [(e.step, e.value) for e in ea.Scalars(tag)]
+    if not steps:
+        return empty
+
+    # Each loss point's x is the epoch that was running at its step.
+    per_epoch: dict[str, dict[int, list[float]]] = {t: {} for t in raw}
+    for tag, pts in raw.items():
+        for step, val in pts:
+            i = min(bisect.bisect_left(steps, step), len(steps) - 1)
+            per_epoch[tag].setdefault(int(step_epoch[i]), []).append(val)
+    all_epochs = sorted(set(per_epoch["loss_gen_all"]) | set(per_epoch["val_loss"]))
+    if not all_epochs:
+        return empty
+
+    def mean(xs):
+        return sum(xs) / len(xs) if xs else None
+
+    bucket = max(1, -(-len(all_epochs) // max_points))
+    epochs, gen, val = [], [], []
+    for i in range(0, len(all_epochs), bucket):
+        group = all_epochs[i:i + bucket]
+        epochs.append(group[-1])
+        gen.append(mean([v for e in group for v in per_epoch["loss_gen_all"].get(e, [])]))
+        val.append(mean([v for e in group for v in per_epoch["val_loss"].get(e, [])]))
+
+    # Is it still improving? Mean of the last 50 epochs vs. the 50 before them.
+    def window(tag, lo, hi):
+        return mean([v for e in all_epochs if lo <= e < hi for v in per_epoch[tag].get(e, [])])
+
+    last = all_epochs[-1]
+    trend = []
+    for tag, label in (("loss_gen_all", "gen"), ("val_loss", "val")):
+        now, before = window(tag, last - 49, last + 1), window(tag, last - 99, last - 49)
+        if now is not None and before is not None:
+            trend.append(f"{label} {now:.1f} ({now - before:+.2f} vs previous 50 epochs)")
+        elif now is not None:
+            trend.append(f"{label} {now:.1f}")
+    return {"epochs": epochs, "gen": gen, "val": val, "trend": "  ·  ".join(trend)}
+
+
+def training_in_progress(characters_dir: Path) -> str | None:
+    """Name of a character whose training is currently running, if any."""
+    for d in characters_dir.iterdir() if characters_dir.is_dir() else ():
+        st = read_training_status(d)
+        if st and st.get("state") in _ACTIVE_STATES:
+            return d.name
+    return None
+
+
+def list_candidates(char_dir: Path) -> list[tuple[int, Path]]:
+    """Exported-but-not-yet-chosen checkpoints, oldest epoch first."""
+    out = []
+    for p in (char_dir / "piper_candidates").glob("epoch_*.onnx"):
+        m = re.search(r"epoch_(\d+)", p.name)
+        if m:
+            out.append((int(m.group(1)), p))
+    return sorted(out)
+
+
 async def train(
     clips: list[dict],
     char_dir: Path,
     log_cb,
     proc_ref: list,
     max_epochs: int = 1000,
-    base_voice: str = "lessac",
+    base_voice: str = "amy",
+    learning_rate: float | None = None,
+    match: dict | None = None,
+    resume_model: dict | None = None,
+    replace_id: str | None = None,
 ) -> list[tuple[int, Path]]:
-    """Train piper voice model. Streams log lines via log_cb.
+    """Train piper voice model. Streams log lines via log_cb and records
+    progress in the character's status file (see read_training_status).
 
     Every saved checkpoint gets exported to its own ONNX file for preview —
     returns a list of (epoch, onnx_path) pairs, newest checkpoint last. Call
-    finalize_piper_model() with the caller's pick to promote it and discard
-    the rest.
+    promote_candidate() with the caller's pick to save it as a model.
     """
+    started = time.time()
+    _write_status(
+        char_dir, state="preparing", started=started, message="", stopping=False,
+        epoch=None, target=None, start_epoch=None, fraction=0.0, eta=None,
+        detail="", candidates=0, run=None,
+    )
+    run = {"e0": None, "t0": None, "last_write": 0.0}
+
+    def on_progress(info: dict):
+        st = read_training_status(char_dir) or {}
+        target, start = st.get("target"), st.get("start_epoch")
+        if not target or start is None:
+            return
+        now = time.time()
+        epoch = info["epoch"]
+        frac_in_epoch = info["batch"] / max(info["batches"], 1)
+        # Seconds/epoch is measured from the first epoch *boundary* we see, so
+        # the partial epoch we attached mid-way through doesn't skew it.
+        if run["e0"] is None:
+            run["e0"] = epoch
+            run["t0"] = None
+        elif run["t0"] is None and epoch > run["e0"]:
+            run["e0"], run["t0"] = epoch, now
+        eta = None
+        if run["t0"] is not None and epoch > run["e0"]:
+            sec_per_epoch = (now - run["t0"]) / (epoch - run["e0"] + frac_in_epoch)
+            eta = max(0.0, (target - epoch - frac_in_epoch) * sec_per_epoch)
+        if now - run["last_write"] < 2.0 and frac_in_epoch < 1.0:
+            return
+        run["last_write"] = now
+        _write_status(
+            char_dir, state="training", epoch=epoch,
+            fraction=min(1.0, max(0.0, (epoch - start + frac_in_epoch) / max(target - start, 1))),
+            eta=eta, detail=info["detail"], batch=info["batch"], batches=info["batches"],
+        )
+
+    def on_log(line: str):
+        log_cb(line)
+        # Cheap breadcrumbs for the status panel; the full log is only in the
+        # session that started training.
+        if line.startswith("Exporting checkpoint"):
+            _write_status(char_dir, state="exporting", message=line)
+
+    try:
+        result = await _train(
+            clips, char_dir, on_log, proc_ref, max_epochs, base_voice, learning_rate,
+            match, resume_model, replace_id, progress_cb=on_progress, status=lambda **kw: _write_status(char_dir, **kw),
+        )
+    except BaseException as exc:
+        _write_status(char_dir, state="error", message=str(exc)[-2000:] or type(exc).__name__)
+        raise
+    _write_status(char_dir, state="ready", candidates=len(result), message="")
+    return result
+
+
+async def _train(
+    clips: list[dict],
+    char_dir: Path,
+    log_cb,
+    proc_ref: list,
+    max_epochs: int,
+    base_voice: str,
+    learning_rate: float | None,
+    match: dict | None,
+    resume_model: dict | None,
+    replace_id: str | None,
+    progress_cb,
+    status,
+) -> list[tuple[int, Path]]:
     log_cb(f"Character dir: {char_dir}")
     log_cb(f"Clips received: {len(clips)}")
 
@@ -674,7 +1042,16 @@ async def train(
     base_ckpt, base_cfg = base_voice_paths(base_voice)
     voice_label = BASE_VOICES.get(base_voice, {}).get("label", base_voice)
     log_cb(f"Base voice: {voice_label}")
-    log_cb(f"Base checkpoint: {base_ckpt.name}")
+    if resume_model:
+        ck = resume_model.get("ckpt")
+        if not ck or not Path(ck).exists():
+            raise RuntimeError(
+                f"'{resume_model.get('name', 'That model')}' has no saved checkpoint, so it can't be "
+                "continued — start over from the base voice instead."
+            )
+        base_ckpt = Path(ck)
+        log_cb(f"Continuing '{resume_model.get('name')}' from its own checkpoint")
+    log_cb(f"Starting checkpoint: {base_ckpt.name}")
     log_cb(f"Base config: {base_cfg.name}")
 
     await asyncio.to_thread(_ensure_phonemize_shim, base_cfg)
@@ -683,7 +1060,7 @@ async def train(
     dataset_dir = char_dir / "piper_dataset"
     train_dir   = char_dir / "piper_train"
     # Both are pure scratch space — the durable artifact is char_dir/piper.onnx,
-    # written by finalize_piper_model() after training, never anything under
+    # written by promote_candidate() after training, never anything under
     # here. Wipe them fresh on every run: this dir gets reused across repeated
     # training attempts on the same character while the ref pool keeps changing
     # underneath it (splits, excludes, new clips), and neither piper_train.
@@ -810,30 +1187,76 @@ async def train(
         f"Training — {max_epochs} additional epochs (base checkpoint at epoch "
         f"{base_epoch}, target {target_epochs}), batch {_MICRO_BATCH} x "
         f"{_ACCUMULATE} accumulation (effective {_MICRO_BATCH * _ACCUMULATE}), "
-        f"validation split {validation_split:.3f}, GPU, resuming from {base_ckpt.name}…"
+        f"validation split {validation_split:.3f}, GPU, resuming from {base_ckpt.name}, "
+        + (f"learning rate {learning_rate:.3g}" if learning_rate else "learning rate from checkpoint")
+        + "…"
     )
-    await _stream([
-        py, "-m", "piper_train",
-        "--dataset-dir", str(train_dir),
-        "--accelerator", "gpu",
-        "--devices", "1",
-        "--batch-size", str(_MICRO_BATCH),
-        "--accumulate_grad_batches", str(_ACCUMULATE),
-        "--validation-split", str(validation_split),
-        "--num-test-examples", "0",
-        "--num_sanity_val_steps", "0",
-        "--max_epochs", str(target_epochs),
-        "--resume_from_checkpoint", str(base_ckpt),
-        "--checkpoint-epochs", str(ckpt_every),
-        "--precision", "32",
-        "--default_root_dir", str(train_dir),
-    ], log_cb, proc_ref, extra_env={
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        # Prints the Python-level traceback if a native extension (e.g. the
-        # monotonic_align Cython module) segfaults — the native-Windows build
-        # died that way with no traceback at all. Costs nothing otherwise.
-        "PYTHONFAULTHANDLER": "1",
+    def _dur(c):
+        try:
+            return sf.info(str(c["audio"])).duration
+        except Exception:
+            return 0.0
+    n_padding = sum(1 for c in usable if c.get("source") == "buffer")
+    status(run={
+        "base_voice": base_voice, "base_voice_label": voice_label,
+        "base_epoch": (resume_model or {}).get("base_epoch") if resume_model else base_epoch,
+        "resumed_from": resume_model.get("id") if resume_model else None,
+        "resumed_from_epoch": base_epoch if resume_model else None,
+        "replace_id": replace_id,
+        "learning_rate": learning_rate, "match": {**DEFAULT_MATCH, **(match or {})},
+        "frozen": frozen_modules(match),
+        "max_epochs": max_epochs, "target_epoch": target_epochs,
+        "batch": f"{_MICRO_BATCH} x {_ACCUMULATE}", "validation_split": round(validation_split, 4),
+        "clips": {"n": len(usable), "n_real": len(usable) - n_padding, "n_padding": n_padding,
+                  "minutes": round(sum(_dur(c) for c in usable) / 60, 1)},
     })
+    status(
+        state="training", target=target_epochs, start_epoch=base_epoch + 1,
+        epoch=base_epoch + 1, fraction=0.0, eta=None, detail="starting…",
+    )
+    freeze = frozen_modules(match)   # raises if nothing would be left to train
+    if freeze and not freeze_patch_applied():
+        raise RuntimeError(
+            "Match options need scripts/patch_piper_train_freeze.py applied to the piper "
+            "venv (bash scripts/setup_linux.sh piper, or run that script with "
+            "piper_venv/bin/python)."
+        )
+    choice = {**DEFAULT_MATCH, **(match or {})}
+    log_cb(
+        "Match: " + ", ".join(f"{MATCH_ASPECTS[a]['label']} = {MATCH_CHOICES[choice[a]]}" for a in MATCH_ASPECTS)
+        + (f"  (frozen: {freeze})" if freeze else "")
+    )
+    poller = asyncio.create_task(_poll_progress(train_dir / "progress.json", progress_cb, log_cb))
+    try:
+        await _stream([
+            py, "-m", "piper_train",
+            "--dataset-dir", str(train_dir),
+            "--accelerator", "gpu",
+            "--devices", "1",
+            "--batch-size", str(_MICRO_BATCH),
+            "--accumulate_grad_batches", str(_ACCUMULATE),
+            "--validation-split", str(validation_split),
+            "--num-test-examples", "0",
+            "--num_sanity_val_steps", "0",
+            "--max_epochs", str(target_epochs),
+            "--resume_from_checkpoint", str(base_ckpt),
+            "--checkpoint-epochs", str(ckpt_every),
+            "--precision", "32",
+            "--default_root_dir", str(train_dir),
+        ], log_cb, proc_ref, progress_cb=progress_cb, extra_env={
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "PYTHONUNBUFFERED": "1",
+            # Honored by scripts/patch_piper_train_learning_rate.py. Without it the
+            # base checkpoint's own (decayed, ~1.5e-4 for lessac) rate is kept.
+            **({"FAILY_PIPER_LR": repr(learning_rate)} if learning_rate else {}),
+            **({"FAILY_PIPER_FREEZE": freeze} if freeze else {}),
+            # Prints the Python-level traceback if a native extension (e.g. the
+            # monotonic_align Cython module) segfaults — the native-Windows build
+            # died that way with no traceback at all. Costs nothing otherwise.
+            "PYTHONFAULTHANDLER": "1",
+        })
+    finally:
+        poller.cancel()
     log_cb("Training done")
 
     ckpts = sorted(train_dir.rglob("*.ckpt"), key=lambda p: p.stat().st_mtime)
@@ -872,18 +1295,50 @@ async def train(
     return candidates
 
 
-def finalize_piper_model(char_dir: Path, chosen_onnx: Path) -> Path:
-    """Promote a chosen checkpoint candidate (from train()'s return value) to
-    the character's permanent Piper model, and discard the other exported
-    candidates. Blocking file I/O — small files, safe to call directly."""
-    final_onnx = char_dir / "piper.onnx"
-    final_cfg = char_dir / "piper.onnx.json"
-    shutil.copy2(str(chosen_onnx), str(final_onnx))
-    shutil.copy2(str(chosen_onnx.with_suffix(".onnx.json")), str(final_cfg))
-    candidates_dir = chosen_onnx.parent
-    if candidates_dir.name == "piper_candidates" and candidates_dir.is_dir():
-        shutil.rmtree(candidates_dir, ignore_errors=True)
-    return final_onnx
+def loss_at_epoch(char_dir: Path, epoch: int, window: int = 5) -> dict:
+    """Generator / validation loss around `epoch` (mean of the last `window`
+    epochs up to it) from the TensorBoard logs of the most recent training."""
+    h = read_loss_history(char_dir, max_points=100000)
+    idx = [i for i, e in enumerate(h["epochs"]) if e <= epoch][-window:]
+    def mean(vals):
+        vals = [v for v in vals if v is not None]
+        return round(sum(vals) / len(vals), 2) if vals else None
+    return {"gen": mean(h["gen"][i] for i in idx), "val": mean(h["val"][i] for i in idx), "epoch": epoch}
+
+
+def promote_candidate(char_dir: Path, onnx: Path, activate: bool = True) -> dict:
+    """Save an exported checkpoint candidate (from train()'s return value) as a
+    model in the character's registry, together with its checkpoint and how it
+    was trained. The other candidates are left alone. Blocking file I/O."""
+    from faily.core import piper_models as PM
+
+    name = char_dir.name
+    st = read_training_status(char_dir) or {}
+    run = st.get("run") or {}
+    m = re.search(r"epoch_(\d+)", onnx.name)
+    epoch = int(m.group(1)) if m else 0
+    ckpt = next(iter(sorted((char_dir / "piper_train").rglob(f"epoch={epoch}-*.ckpt"))), None)
+    start = run.get("resumed_from_epoch") if run.get("resumed_from") else run.get("base_epoch")
+    meta = {
+        "base_voice": run.get("base_voice"), "base_voice_label": run.get("base_voice_label"),
+        "base_epoch": run.get("base_epoch"), "epoch": epoch,
+        "epochs_trained": (epoch - start) if start is not None else None,
+        "epochs_since_base": (epoch - run["base_epoch"]) if run.get("base_epoch") is not None else None,
+        "learning_rate": run.get("learning_rate"), "match": run.get("match"), "frozen": run.get("frozen"),
+        "batch": run.get("batch"), "validation_split": run.get("validation_split"),
+        "clips": run.get("clips"), "parent": run.get("resumed_from"),
+        "trained_seconds": round(time.time() - st["started"]) if st.get("started") else None,
+    }
+    try:
+        meta["loss"] = loss_at_epoch(char_dir, epoch)
+    except Exception:
+        pass
+    replace = run.get("replace_id")
+    saved = PM.save_model(name, onnx=onnx, ckpt=ckpt, meta=meta, activate=activate, replace_id=replace)
+    if replace:       # the first save takes the replaced model's place; later ones are new models
+        _write_status(char_dir, run={**run, "replace_id": None})
+    _write_status(char_dir, state="done", message="")
+    return saved
 
 
 def infer(

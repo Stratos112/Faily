@@ -108,7 +108,24 @@ Fixes found by 3c/3d:
 - The dev box's HF cache (`~/.cache/huggingface`: F5, Chatterbox, Parler, Whisper, ...) is NOT persisted across dev-container rebuilds. In Docker it's the `hf-cache` volume.
 
 ### Phase 4: cleanup + hardening
-- [ ] 4a. Delete setup.bat / setup_piper.bat / setup_piper.sh (superseded by setup_linux.sh) / monotonic_align patch-trail scripts (keep the pure-python fallback) once 3d passes
-- [ ] 4b. Rewrite README setup for Docker/Linux; update the test-faily skill and CLAUDE.md
-- [ ] 4c. Model eviction in ModelManager (RAM/VRAM limit), e.g. an LRU or unload-before-load for big models
-- [ ] 4d. Auth or reverse-proxy guidance if the server is exposed beyond the LAN
+- [x] 4a. Delete setup.bat / setup_piper.bat / setup_piper.sh (superseded by setup_linux.sh) / monotonic_align patch-trail scripts (keep the pure-python fallback) once 3d passes
+- [x] 4b. Rewrite README setup for Docker/Linux; update the test-faily skill and CLAUDE.md
+- [x] 4c. Model eviction in ModelManager (RAM/VRAM limit), e.g. an LRU or unload-before-load for big models
+- [x] 4d. Auth or reverse-proxy guidance if the server is exposed beyond the LAN
+
+Phase 4 notes (2026-09-29):
+- **HF cache moved to `models/hf`** (`HF_HOME` set first thing in `faily/__init__.py`). The dev box's 7.7 GB `~/.cache/huggingface` was moved there and the compose `hf-cache` volume removed; `models/` covers it. Verified: Chatterbox/F5 load with `HF_HUB_OFFLINE=1`.
+- gitignored `/outputs/` and `/piper_checkpoints/*.onnx`. `git rm --cached` on lessac.wav + en_US-lessac-medium.onnx (60 MB, still in history from commit 3f28226). The empty tracked `tokenizers` file was removed.
+- 4a: deleted setup.bat, setup_piper.bat, setup_piper.sh, patch_bigvgan.py, patch_hub_mixin.py, and the monotonic_align serial/noexcept/nan/bounds patches. Kept pure_python (as a documented, unapplied fallback), onnx, num_workers, pytorch_lightning.
+- 4b: README setup rewritten (Docker + direct install, volumes table, env vars, security). CLAUDE.md and the test-faily skill updated.
+- 4c: ModelManager LRU eviction under a VRAM reserve (`FAILY_VRAM_RESERVE_GB`, default 6) plus an OOM retry and a lock. Tested with fake 4 GB tensors (LRU order), a simulated OOM, and real models in one process (XTTS→F5→Chatterbox→Parler+SeedVC→AudioLDM2 evicted in LRU order, no OOM). **WSL2/Docker Desktop never raises CUDA OOM**; it spills into shared system RAM (silent slowdown), so the pre-load eviction is what matters there.
+  - Known gap: f5's `transcribe()` keeps its Whisper pipeline in a module global (`asr_pipe`), outside the manager, so ~1.7 GB stays resident once CLONE's auto-transcribe has run.
+- 4d: optional `FAILY_PASSWORD`/`FAILY_USER` HTTP Basic auth (ASGI middleware, HTTP scope). Verified with curl: 401/200 on the page, static, /outputs and the socket.io handshake. Not yet clicked through in a real browser.
+- Harmless noise: a transformers `warning_once` "Logging error" (a stray FutureWarning arg) when Parler hits the deprecated attention-mask API.
+
+## Possible next steps
+- Actually `docker compose up --build` on the Windows host (never built as an image yet; everything above was verified in the dev box via setup_linux.sh).
+- Browser click-through with FAILY_PASSWORD set.
+- Delete `.venv.old-py311/` (6.6 GB).
+- Optionally route f5's Whisper ASR pipeline through ModelManager so it can be evicted too.
+

@@ -60,13 +60,15 @@ def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
         if "ref_audio" in char:
             audio = CHARACTERS_DIR / node / char["ref_audio"]
             if audio.exists():
-                chain.append({"audio": audio, "transcript": char.get("transcript", ""), "owner": node, "file_key": None})
+                chain.append({"audio": audio, "transcript": char.get("transcript", ""), "owner": node, "file_key": None,
+                          "source": "", "category": ""})
         for rc in char.get("ref_clips", []):
             if rc.get("excluded") and not include_excluded:
                 continue
             audio = CHARACTERS_DIR / node / rc["file"]
             if audio.exists():
-                chain.append({"audio": audio, "transcript": rc.get("transcript", ""), "owner": node, "file_key": rc["file"]})
+                chain.append({"audio": audio, "transcript": rc.get("transcript", ""), "owner": node, "file_key": rc["file"],
+                              "source": rc.get("source", ""), "category": rc.get("category", "")})
     return chain
 
 

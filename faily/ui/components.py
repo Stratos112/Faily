@@ -1,5 +1,6 @@
 """Shared UI building blocks."""
 import asyncio
+import json
 import traceback
 from pathlib import Path
 from nicegui import ui
@@ -102,6 +103,60 @@ def model_picker(options: dict, default: str, on_change) -> ui.column:
 
     _rebuild()
     return col
+
+
+# ── one-click audio playback ─────────────────────────────────────────────────
+# A single hidden <audio> for every list-row play button, so clicking play
+# plays immediately instead of revealing a player that needs a second click.
+# Clicking the playing clip pauses it; buttons carrying data-faily-play=<url>
+# show pause while that url plays. The handler runs in the browser (js_handler)
+# so the click counts as the user gesture autoplay rules require.
+AUDIO_JS = """
+window.failyPlay = (function () {
+  const a = new Audio();
+  let cur = null;
+  const btns = u => [...document.querySelectorAll('[data-faily-play]')].filter(b => b.dataset.failyPlay === u);
+  const icon = (u, name) => btns(u).forEach(b => { const i = b.querySelector('.q-icon'); if (i) i.textContent = name; });
+  const stopped = () => { if (cur) icon(cur, 'play_arrow'); cur = null; };
+  a.addEventListener('ended', stopped);
+  a.addEventListener('error', stopped);
+  function play(u) {
+    if (cur === u && !a.paused) { a.pause(); stopped(); return; }
+    stopped();
+    a.pause(); a.src = u; cur = u; icon(u, 'pause');
+    a.play().catch(stopped);
+  }
+  // Call from a real click before audio that is generated asynchronously:
+  // once this element has played from a gesture, later play() calls are allowed.
+  play.prime = function () {
+    a.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+    a.play().catch(() => {});
+  };
+  return play;
+})();
+"""
+
+
+def install_audio_js() -> None:
+    """Call once per page (app.index) before any bind_play()."""
+    ui.add_head_html(f"<script>{AUDIO_JS}</script>")
+
+
+def bind_play(*els, url: str) -> None:
+    """Clicking any of els plays `url` right away (click again to pause)."""
+    for el in els:
+        el.on("click", js_handler=f"() => window.failyPlay({json.dumps(url)})")
+        if isinstance(el, ui.button):
+            el._props["data-faily-play"] = url
+
+
+def prime_audio(btn) -> None:
+    """For a button whose handler generates audio and then calls play_url()."""
+    btn.on("click", js_handler="() => window.failyPlay.prime()")
+
+
+def play_url(url: str) -> None:
+    ui.run_javascript(f"window.failyPlay({json.dumps(url)})")
 
 
 def preview_meter(player: ui.audio):

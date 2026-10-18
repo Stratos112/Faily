@@ -93,6 +93,8 @@ def run():
     def index():
         ui.dark_mode().enable()
         ui.add_css(_GLOBAL_CSS)
+        from faily.ui.components import install_audio_js
+        install_audio_js()
 
         def _open_settings():
             from faily.core.hf_token import get_hf_token, save_hf_token, clear_hf_token
@@ -184,6 +186,11 @@ def run():
             )
             ui.space()
             from faily.core.model_manager import manager
+            from faily.ui.tabs.piper_training_dialog import global_training_chip
+            global_training_chip(
+                on_change=lambda: _on_char_change(),
+                on_done=lambda: _chars_refresh[0](),
+            )
             ui.label(manager.device.upper()).classes(
                 "text-[#555] font-mono text-[10px] tracking-widest border border-[#333] px-2 py-1 rounded"
             )

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from faily.core.characters import build_ref_audio, clip_quality_issues
+from faily.core.characters import build_ref_audio, clip_quality_issues, get_character
 from faily.modules.vc import generate
 
 _SCRIPT_BANK_PATH = Path("faily/data/buffer_scripts.txt")
@@ -117,43 +117,79 @@ def _allocate_counts(weights: dict[str, float], count: int) -> dict[str, int]:
     return floors
 
 
+def _norm(text: str) -> str:
+    """Key for "is this the same line": whitespace- and case-insensitive."""
+    return " ".join(text.split()).casefold()
+
+
+def used_buffer_lines(char_name: str) -> set[str]:
+    """Normalized text of every script line already committed as buffer
+    padding for this character or any ancestor (a sub-character's reference
+    chain includes its parents' clips). Excluded clips count: the line was
+    still used. Pass the result to sample_lines(exclude=...)."""
+    used: set[str] = set()
+    seen: set[str] = set()
+    current: str | None = char_name
+    while current and current not in seen:
+        seen.add(current)
+        char = get_character(current)
+        if not char:
+            break
+        for rc in char.get("ref_clips", []):
+            if rc.get("source") == "buffer" and rc.get("transcript"):
+                used.add(_norm(rc["transcript"]))
+        current = char.get("parent")
+    return used
+
+
 def sample_lines(
     bank: dict[str, list[str]],
     weights: dict[str, float],
     count: int,
     rng: random.Random | None = None,
+    exclude: set[str] | None = None,
 ) -> list[ScriptLine]:
-    """Weighted draw of up to `count` lines across categories.
+    """Weighted draw of up to `count` DISTINCT lines across categories.
 
-    Categories with weight <= 0 or an empty pool are excluded entirely (an
-    explicit "none of this", not redistributed to others). Allocation across
-    the remaining categories uses largest-remainder apportionment so the
-    total is exact. Within a category, if the allocation exceeds its pool
-    size, the pool is shuffled and repeated in full passes (no identical
-    line repeats until every line in the pool has been used once) rather
-    than sampled with replacement, which could repeat the same line
-    back-to-back by chance. The combined result is globally shuffled before
-    returning, so an early stop during generation still yields roughly
-    proportional category coverage instead of exhausting categories in a
-    fixed order.
+    No line is ever returned twice, and none in `exclude` (normalized texts —
+    see used_buffer_lines) is returned at all. Duplicates inside the bank
+    itself (same text in two places) count as one line.
+
+    Allocation across categories with weight > 0 uses largest-remainder
+    apportionment so the total is exact. When a category has fewer unused
+    lines than its share, the shortfall is re-apportioned across the other
+    weighted categories that still have unused lines, repeating until the
+    count is met. If every weighted category runs out, fewer than `count`
+    lines come back — the caller should say so. Categories with weight <= 0
+    stay excluded: an explicit "none of this" is never redistributed into.
+    The combined result is globally shuffled, so an early stop during
+    generation still yields roughly proportional category coverage.
     """
     rng = rng or random.Random()
-    usable_weights = {k: w for k, w in weights.items() if w > 0 and bank.get(k)}
-    allocation = _allocate_counts(usable_weights, count)
+    taken = set(exclude or ())
+    pools: dict[str, list[str]] = {}
+    for category, texts in bank.items():
+        fresh = []
+        for text in texts:
+            key = _norm(text)
+            if key not in taken:
+                taken.add(key)
+                fresh.append(text)
+        rng.shuffle(fresh)
+        pools[category] = fresh
 
+    usable = {k: w for k, w in weights.items() if w > 0 and pools.get(k)}
+    want = _allocate_counts(usable, count)
     lines: list[ScriptLine] = []
-    for category, k in allocation.items():
-        pool = bank[category]
-        if k <= len(pool):
-            drawn = rng.sample(pool, k)
-        else:
-            drawn = []
-            while len(drawn) < k:
-                pass_copy = pool[:]
-                rng.shuffle(pass_copy)
-                drawn.extend(pass_copy)
-            drawn = drawn[:k]
-        lines.extend(ScriptLine(category=category, text=text) for text in drawn)
+    while want:
+        shortfall = 0
+        for category, k in want.items():
+            pool = pools[category]
+            take = min(k, len(pool))
+            lines.extend(ScriptLine(category=category, text=pool.pop()) for _ in range(take))
+            shortfall += k - take
+        candidates = {k: w for k, w in usable.items() if pools[k]}
+        want = _allocate_counts(candidates, shortfall) if shortfall and candidates else {}
 
     rng.shuffle(lines)
     return lines

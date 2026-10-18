@@ -219,6 +219,14 @@ __marimo__/
 .streamlit/secrets.toml
 
 /models/
+/outputs/
+/piper_checkpoints/*.onnx
+/piper_checkpoints/*.ckpt
+# Base voices other than lessac download into per-voice subfolders
+# (piper_checkpoints/amy/, ...): checkpoints are ~800 MB each and are fetched
+# at runtime, never committed. (lessac's checkpoint is the one Git-LFS-tracked
+# exception, see .gitattributes.)
+/piper_checkpoints/*/
 
 # uv-managed Python interpreters (scripts/setup_linux.sh)
 /.python/

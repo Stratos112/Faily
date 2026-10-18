@@ -11,6 +11,5 @@ piper_checkpoints/
 __pycache__/
 **/__pycache__/
 *.egg-info/
-tokenizers
 .claude/
 .venv.old-py311/

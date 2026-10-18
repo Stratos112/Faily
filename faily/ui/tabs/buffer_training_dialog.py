@@ -13,9 +13,9 @@ from faily.core.model_manager import manager
 from faily.modules.vc import BACKENDS
 from faily.modules.buffer_training import (
     CATEGORIES, ScriptLine, BufferCandidate,
-    load_script_bank, sample_lines, generate_batch,
+    load_script_bank, sample_lines, generate_batch, used_buffer_lines,
 )
-from faily.ui.components import section_label, show_error, model_picker
+from faily.ui.components import section_label, show_error, model_picker, bind_play
 
 _STAGING_ROOT = Path("outputs/vc/_buffer_staging")
 
@@ -199,12 +199,23 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                     _started[0] = True
                     stepper.next()
 
+                    # Never repeat a script line this character's padding already used
+                    # (committed in an earlier run), nor within this run.
                     _lines[:] = sample_lines(
                         bank, {k: w[0] for k, w in _weights.items()}, _count[0],
+                        exclude=used_buffer_lines(char_name),
                     )
                     if not _lines:
-                        _ui_safe(lambda: gen_status.set_text("Nothing to generate — check category weights"))
+                        _ui_safe(lambda: gen_status.set_text(
+                            "Nothing to generate — every script line in the selected "
+                            "categories is already used (or all weights are 0)"
+                        ))
                         return
+                    if len(_lines) < _count[0]:
+                        _ui_safe(lambda: gen_log.push(
+                            f"Only {len(_lines)} unused script lines remain in the selected "
+                            f"categories (asked for {_count[0]}) — generating those."
+                        ))
 
                     def _stop():
                         _cancel[0] = True
@@ -249,13 +260,7 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
             # ══ STEP 4 — REVIEW & COMMIT ════════════════════════════════
             with ui.step("Review & Commit"):
                 review_header = ui.label("").classes("text-[#888] font-mono text-[10px] tracking-widest")
-                review_player = ui.audio("").classes("w-full rounded mt-1")
-                review_now_playing = ui.label("").classes("text-[#333] font-mono text-[9px]")
                 review_col = ui.column().classes("w-full gap-1 mt-1")
-
-                def _play(u, n):
-                    review_player.set_source(u)
-                    review_now_playing.set_text(f"▶  {n}")
 
                 def _refresh_header():
                     selected = [c for c in _candidates if c.accepted]
@@ -321,10 +326,12 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                                                 _refresh_header()
                                             cb.on_value_change(_on_toggle)
                                             checkboxes.append(cb)
-                                            ui.button(
-                                                icon="play_arrow",
-                                                on_click=lambda u=url, n=c.path.stem: _play(u, n),
-                                            ).props("flat dense color=amber").classes("shrink-0")
+                                            bind_play(
+                                                ui.button(icon="play_arrow").props(
+                                                    "flat dense color=amber"
+                                                ).classes("shrink-0"),
+                                                url=url,
+                                            )
                                             if c.issues:
                                                 ui.icon("warning", size="12px").classes(
                                                     "text-amber-500 shrink-0"

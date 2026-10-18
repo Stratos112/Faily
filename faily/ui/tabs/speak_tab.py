@@ -11,7 +11,10 @@ from faily.modules.piper import generate_character_ref_sample, SAMPLE_TEXT
 from faily.core.characters import (
     list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio,
 )
-from faily.ui.components import output_panel, section_label, show_error, model_picker, preview_meter
+from faily.ui.components import (
+    output_panel, section_label, show_error, model_picker, preview_meter,
+    prime_audio, play_url,
+)
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
@@ -85,7 +88,6 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         ref_source_select.set_options(opts, value=default)
         ref_source_select.set_visibility(True)
         ref_source_caption.set_text(f'"{SAMPLE_TEXT}"' if default == "piper" else "plays the primary reference clip")
-        ref_source_preview.set_visibility(False)
 
     async def _preview_ref_source():
         char = get_character(char_state[0])
@@ -99,8 +101,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 if path is None:
                     ui.notify("No reference audio for this character", type="warning"); return
             rel = path.relative_to(Path("outputs"))
-            ref_source_preview.set_source(f"/outputs/{rel.as_posix()}")
-            ref_source_preview.set_visibility(True)
+            play_url(f"/outputs/{rel.as_posix()}")
         except Exception as exc:
             show_error(exc)
         finally:
@@ -189,7 +190,6 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         )
         def _on_ref_source_change(e):
             _vc_source[0] = e.value
-            ref_source_preview.set_visibility(False)
             ref_source_caption.set_text(f'"{SAMPLE_TEXT}"' if e.value == "piper" else "plays the primary reference clip")
 
         ref_source_select = (
@@ -204,8 +204,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
             ref_source_caption = ui.label("plays the primary reference clip").classes(
                 "text-[#444] font-mono text-[10px] italic"
             )
-        ref_source_preview = ui.audio("").classes("w-full rounded mb-2")
-        ref_source_preview.set_visibility(False)
+        prime_audio(ref_source_preview_btn)
 
         _section_row("VOICE CONVERSION", "Applies the character's voice to the intermediate audio.")
         model_picker(STAGE2_BACKENDS, "freevc", _on_stage2)

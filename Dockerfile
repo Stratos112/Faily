@@ -33,7 +33,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # ── piper training venv ───────────────────────────────────────────────────────
 COPY scripts/patch_pytorch_lightning.py scripts/patch_piper_train_onnx.py \
-     scripts/patch_piper_train_num_workers.py /app/scripts/
+     scripts/patch_piper_train_num_workers.py \
+     scripts/patch_piper_train_cudnn_benchmark.py \
+     scripts/patch_piper_train_stop_request.py \
+     scripts/patch_piper_train_learning_rate.py \
+     scripts/patch_piper_train_progress.py \
+     scripts/patch_piper_train_freeze.py /app/scripts/
 RUN --mount=type=cache,target=/root/.cache/pip \
     bash scripts/setup_linux.sh piper
 
