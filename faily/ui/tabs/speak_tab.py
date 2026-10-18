@@ -365,7 +365,11 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                     from faily.modules.piper import infer
                     slug = re.sub(r"[^A-Za-z0-9_-]+", "_", text.strip())[:28].strip("_") or "line"
                     suffix = f"_{i + 1:02d}" if n > 1 else ""
-                    out_path = _VC_DIR / f"piper_{char_state[0]}_{slug}{suffix}.wav"
+                    # The model is part of the name: the same line spoken by two models must
+                    # not overwrite (or be mistaken for) each other.
+                    mp = Path(char["piper_model"])
+                    tag = f"_{mp.parent.name}" if mp.parent.parent.name == "models" else ""
+                    out_path = _VC_DIR / f"piper_{char_state[0]}{tag}_{slug}{suffix}.wav"
                     path = await ni_run.io_bound(
                         infer, text, Path(char["piper_model"]), out_path,
                         _length_scale[0], _noise_scale[0], _noise_w[0], _sent_silence[0],
@@ -402,15 +406,28 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
 
         with ui.column().classes("w-full gap-3") as piper_params_row:
-            _section_row("SPEED", "Phoneme length. Lower is faster/higher-pitched, higher is slower. Default 1.00.")
+            _section_row(
+                "SPEED",
+                "How fast it talks: right = faster, left = slower, 1.00× = the voice's natural pace. "
+                "Pitch is unchanged. The effect is a little smaller than the number suggests "
+                "(2.0× comes out about 1.5× faster) and pauses between sentences don't speed up — "
+                "use SENTENCE PAUSE for those.",
+            )
             with ui.row().classes("w-full items-center gap-3"):
-                length_lbl = ui.label("1.00").classes(
+                length_lbl = ui.label("1.00×").classes(
                     "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
                 )
-                def _on_length(e): _length_scale[0] = float(e.value); length_lbl.set_text(f"{e.value:.2f}")
+                # Piper's knob is phoneme LENGTH (bigger = slower); the slider is speed (bigger = faster).
+                def _on_length(e): _length_scale[0] = 1.0 / float(e.value); length_lbl.set_text(f"{e.value:.2f}×")
                 ui.slider(min=0.5, max=2.0, step=0.05, value=1.0, on_change=_on_length).classes("flex-grow").props("color=amber")
 
-            _section_row("EXPRESSIVENESS", "Generator noise. Controls prosodic variability — higher is more expressive but less stable. Default 0.667.")
+            _section_row(
+                "VARIATION",
+                "Randomness in the sound generator (Piper's “noise scale”). At 0 every take is identical; "
+                "above 0 each take differs slightly. Measured: from 0.3 to 1.5 it barely changes intonation "
+                "or pitch range, so it is not an expressiveness control — it mostly changes small "
+                "take-to-take differences. Default 0.667.",
+            )
             with ui.row().classes("w-full items-center gap-3"):
                 noise_lbl = ui.label("0.67").classes(
                     "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
@@ -418,13 +435,18 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                 def _on_noise(e): _noise_scale[0] = float(e.value); noise_lbl.set_text(f"{e.value:.2f}")
                 ui.slider(min=0.0, max=1.5, step=0.01, value=0.667, on_change=_on_noise).classes("flex-grow").props("color=amber")
 
-            _section_row("PACING VARIABILITY", "Phoneme duration noise. Higher adds more natural variation between phonemes. Default 0.80.")
+            _section_row(
+                "PACING VARIABILITY",
+                "Randomness in how long each sound lasts. 0 = identical timing every take; higher = more "
+                "natural, uneven rhythm. Capped at 1.0: at 1.2 and above, about 1 take in 10 ran away — "
+                "20 seconds of text came out 2 to 7 minutes long. Default 0.80.",
+            )
             with ui.row().classes("w-full items-center gap-3"):
                 noise_w_lbl = ui.label("0.80").classes(
                     "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
                 )
                 def _on_noise_w(e): _noise_w[0] = float(e.value); noise_w_lbl.set_text(f"{e.value:.2f}")
-                ui.slider(min=0.0, max=1.5, step=0.01, value=0.8, on_change=_on_noise_w).classes("flex-grow").props("color=amber")
+                ui.slider(min=0.0, max=1.0, step=0.01, value=0.8, on_change=_on_noise_w).classes("flex-grow").props("color=amber")
 
             _section_row(
                 "SENTENCE PAUSE",

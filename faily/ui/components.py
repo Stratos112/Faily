@@ -155,6 +155,18 @@ def prime_audio(btn) -> None:
     btn.on("click", js_handler="() => window.failyPlay.prime()")
 
 
+def output_url(path: Path) -> str:
+    """URL for a file under outputs/, stamped with its modification time. Files
+    get regenerated under the same name (same text, different model); without the
+    stamp the browser keeps showing/playing the previous copy."""
+    p = Path(path)
+    rel = p.relative_to(Path("outputs")).as_posix()
+    try:
+        return f"/outputs/{rel}?v={p.stat().st_mtime_ns}"
+    except OSError:
+        return f"/outputs/{rel}"
+
+
 def play_url(url: str) -> None:
     ui.run_javascript(f"window.failyPlay({json.dumps(url)})")
 
@@ -397,8 +409,7 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
                 ).classes("shrink-0").tooltip("Download")
 
     def _load_compare(path: Path):
-        rel = path.relative_to(Path("outputs"))
-        compare_player.set_source(f"/outputs/{rel.as_posix()}")
+        compare_player.set_source(output_url(path))
         compare_name.set_text(f"▶  {path.stem}")
         compare_section.set_visibility(True)
 
@@ -407,12 +418,11 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
 
     def _make_tile(path: Path, transcript: str = ""):
         playing = [False]
-        rel = path.relative_to(Path("outputs"))
         with ui.column().classes(
             "relative aspect-square w-full items-center justify-between rounded-lg "
             "border border-[#1e1e1e] hover:border-[#333] bg-[#111] p-2 gap-1"
         ):
-            audio_el = ui.audio(f"/outputs/{rel.as_posix()}").props("controls=false").classes("hidden")
+            audio_el = ui.audio(output_url(path)).props("controls=false").classes("hidden")
             play_btn = ui.button(icon="play_arrow").props("round flat color=amber size=lg")
 
             def _toggle(a=audio_el, b=play_btn, st=playing):
