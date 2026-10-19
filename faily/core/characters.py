@@ -18,7 +18,7 @@ def list_characters() -> list[dict]:
     result = []
     for d in sorted(CHARACTERS_DIR.iterdir()):
         p = d / "config.json"
-        if d.is_dir() and p.exists():
+        if d.is_dir() and p.exists() and not d.name.startswith("_"):     # "_stage_*" = import in progress
             try:
                 result.append(json.loads(p.read_text()))
             except Exception:

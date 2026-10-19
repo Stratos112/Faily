@@ -231,7 +231,7 @@ def run():
 
         with ui.tab_panels(tabs, value=speak_tab, on_change=_on_tab_change).classes("w-full flex-grow"):
             with ui.tab_panel(vc_tab):
-                _vc_refresh[0] = build_vc_tab()
+                _vc_refresh[0] = build_vc_tab(on_characters_changed=lambda: _on_char_change())
 
             with ui.tab_panel(chars_tab):
                 _chars_refresh[0] = build_characters_tab(

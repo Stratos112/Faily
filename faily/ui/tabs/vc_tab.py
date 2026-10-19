@@ -3,6 +3,7 @@ from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS, t
 from faily.core.characters import save_character, list_characters, delete_character
 from faily.ui.components import output_panel, section_label, show_error, model_picker, preview_meter
 from pathlib import Path
+from faily.ui.tabs.import_dialog import open_import_dialog
 
 _REFS_DIR = VC_OUTPUT_DIR / "refs"
 _EXTS = {".wav", ".mp3", ".flac", ".ogg"}
@@ -19,7 +20,7 @@ def _fmt(val: float, step: float) -> str:
     return str(int(val)) if step >= 1 else f"{val:.2f}"
 
 
-def build_vc_tab():
+def build_vc_tab(on_characters_changed=lambda: None):
     _progress: list[float] = [0.0]
     _preview: dict = {}
     _ref_path: list[Path | None] = [None]
@@ -179,6 +180,23 @@ def build_vc_tab():
                 .classes("w-full")
             )
             ref_list = ui.column().classes("w-full gap-1 mt-1")
+            import_host = ui.element("div").classes("hidden")      # long-lived parent for the import review dialog
+
+            def _split_and_clean():
+                if _ref_path[0] is None or not _ref_path[0].exists():
+                    ui.notify("Upload or select a recording first", type="warning")
+                    return
+                open_import_dialog(
+                    _ref_path[0], name_input.value.strip() or _ref_path[0].stem, import_host,
+                    on_added=lambda: (_rebuild_char_list(), on_characters_changed()),
+                )
+
+            ui.button("SPLIT & CLEAN…", icon="content_cut", on_click=_split_and_clean).props(
+                "flat dense color=amber"
+            ).classes(f"{_BTN} text-[10px]").tooltip(
+                "Slice the selected recording at its pauses, check each slice (volume, silence, "
+                "Whisper-suggested transcript) one by one, then add them to a character."
+            )
 
             _section_row(
                 "NAME",

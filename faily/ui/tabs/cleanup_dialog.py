@@ -15,6 +15,7 @@ from pathlib import Path
 from nicegui import run as ni_run, ui
 
 from faily.modules import cleanup as K
+from faily.modules.importer import commit_stage, discard_stage
 from faily.ui.components import bind_play, play_url, show_error
 
 _PASSES = ("volume", "trim", "transcript")
@@ -27,7 +28,14 @@ def _url(path: Path) -> str:
     return "/outputs/" + path.relative_to(Path("outputs")).as_posix()
 
 
-def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
+def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | None = None) -> None:
+    """Spell-check review of a character's own reference clips.
+
+    staging: set when reviewing freshly imported slices held in a hidden staging
+    character (modules/importer.py) — {"target": character they will join,
+    "is_new": bool, "on_commit": fn(result)}. The checks start immediately, the
+    transcript is pre-filled from Whisper, and the end of the review offers ADD /
+    DISCARD instead of just closing."""
     clips: dict[str, K.Clip] = {c.key: c for c in K.own_clips(char_name)}    # key -> current Clip
     if not clips:
         ui.notify("No reference clips of its own to clean up", type="warning")
@@ -48,7 +56,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
         "bg-[#0d0d0d] border border-[#252525] w-full max-w-3xl gap-3 p-5"
     ):
         with ui.row().classes("w-full items-center justify-between"):
-            ui.label(f"CLEAN UP DATA  ·  {char_name}").classes("text-white font-mono text-xs tracking-widest")
+            ui.label(
+                f"IMPORT  ·  {len(clips)} slices for {staging['target']}" if staging else f"CLEAN UP DATA  ·  {char_name}"
+            ).classes("text-white font-mono text-xs tracking-widest")
             ui.label(f"{len(clips)} clips").classes("text-[#555] font-mono text-[10px]")
 
         with ui.column().classes("w-full gap-2") as intro_box:
@@ -94,7 +104,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
         review_box.set_visibility(False)
 
         with ui.row().classes("w-full justify-end"):
-            finish_btn = ui.button("FINISH", icon="check", on_click=lambda: _close()).props(
+            finish_btn = ui.button(
+                "FINISH", icon="check", on_click=lambda: _finish_staging() if staging else _close()
+            ).props(
                 "flat dense color=amber"
             ).classes("font-mono tracking-widest")
 
@@ -110,6 +122,47 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
         dlg.close()
         if any(stats.values()):
             on_done()
+
+    def _release():
+        cancel[0] = True
+        shutil.rmtree(_PREVIEW_DIR, ignore_errors=True)
+        try:
+            from faily.modules.asr import unload
+            unload()
+        except Exception:
+            pass
+
+    def _commit():
+        try:
+            result = commit_stage(char_name, staging["target"], staging["is_new"])
+        except Exception as exc:
+            show_error(exc)
+            return
+        _release()
+        dlg.close()
+        staging["on_commit"](result)
+
+    def _discard():
+        discard_stage(char_name)
+        _release()
+        dlg.close()
+
+    def _finish_staging():
+        """FINISH during an import: ask what to do with the slices."""
+        missing = sum(1 for c in clips.values() if not c.transcript.strip())
+        with ui.dialog() as d, ui.card().classes("bg-[#1a1a1a] border border-[#333] gap-3"):
+            ui.label("LEAVE THE IMPORT?").classes("text-white font-mono text-xs tracking-widest")
+            ui.label(
+                f"{len(clips)} slices are staged"
+                + (f", {missing} without a transcript (they can't be used for training until given one)" if missing else "")
+                + ". Slices you haven't reviewed are added as they are."
+            ).classes("text-[#888] font-mono text-[11px] max-w-md")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("KEEP REVIEWING", on_click=d.close).props("flat dense color=grey")
+                ui.button("DISCARD ALL", on_click=lambda: (d.close(), _discard())).props("flat dense color=negative")
+                ui.button(f"ADD {len(clips)}", icon="playlist_add", on_click=lambda: (d.close(), _commit())).props(
+                    "color=amber unelevated dense")
+        d.open()
 
     def _rekey(old: str, new: str):
         """An accepted fix can change a clip's key (mp3 -> wav)."""
@@ -248,14 +301,17 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
         r = res["transcript"][key]
         clip = clips[key]
         _head(key, r)
-        ui.label("YOUR TRANSCRIPT").classes(_LBL)
-        ui.label(clip.transcript or "(empty)").classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
-        ui.label("WHISPER HEARS — edit before accepting").classes(_LBL)
         sug = r.get("suggested", "")
-        ui.html("&nbsp;".join(
-            f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(w)}</span>'
-            for w, kind in K.diff_words(clip.transcript, sug)
-        ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
+        if staging or not clip.transcript.strip():
+            ui.label("TRANSCRIPT — suggested by Whisper; adjust anything it got wrong").classes(_LBL)
+        else:
+            ui.label("YOUR TRANSCRIPT").classes(_LBL)
+            ui.label(clip.transcript).classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
+            ui.label("WHISPER HEARS — edit before accepting").classes(_LBL)
+            ui.html("&nbsp;".join(
+                f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(w)}</span>'
+                for w, kind in K.diff_words(clip.transcript, sug)
+            ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
         box = ui.textarea(value=sug).props("outlined dense dark autogrow").classes("w-full font-mono text-[12px]")
         if K.has_filler(clip.transcript):
             ui.label("Your text has “um”/“uh” that Whisper leaves out — keep them if they're real.").classes(
@@ -276,9 +332,21 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
                 ui.label(
                     "That's everything." if any(stats.values()) else "Nothing needed changing."
                 ).classes("text-white font-mono text-sm self-center")
-                ui.button("DONE", icon="check", on_click=_close).props("color=amber unelevated").classes(
-                    "font-mono tracking-widest self-center mt-2"
-                )
+                if staging:
+                    missing = sum(1 for c in clips.values() if not c.transcript.strip())
+                    ui.label(f"{len(clips)} clip{'s' if len(clips) != 1 else ''} ready"
+                             + (f" — {missing} without a transcript" if missing else "")).classes(
+                        "text-[#888] font-mono text-[11px] self-center"
+                    )
+                    with ui.row().classes("self-center gap-2 mt-2"):
+                        ui.button(f"ADD {len(clips)} TO {staging['target'].upper()}", icon="playlist_add",
+                                  on_click=_commit).props("color=amber unelevated").classes("font-mono tracking-widest")
+                        ui.button("DISCARD ALL", icon="delete_outline", on_click=_discard).props(
+                            "flat color=negative").classes("font-mono tracking-widest")
+                else:
+                    ui.button("DONE", icon="check", on_click=_close).props("color=amber unelevated").classes(
+                        "font-mono tracking-widest self-center mt-2"
+                    )
             finish_btn.set_visibility(False)
             return
         p, key = queue[pos[0]]
@@ -318,6 +386,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
             except Exception:
                 pass
         if found is None or cancel[0]:             # failed, cancelled, or app shutting down
+            if staging:
+                _discard()
+                return
             progress_box.set_visibility(False)
             intro_box.set_visibility(True)
             return
@@ -330,3 +401,6 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None) -> None:
         _show()
 
     dlg.open()
+    if staging:
+        intro_box.set_visibility(False)
+        ui.timer(0.2, lambda: _start(_PASSES), once=True)
