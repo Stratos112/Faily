@@ -1,10 +1,11 @@
-"""Clean-up wizard for a character's reference clips — a spell-check-style review.
+"""Clean-up wizard for reference clips — a spell-check-style review, one clip per screen.
 
-CHECK EVERYTHING analyzes the clips (volume/clipping, leading/trailing silence
-and noise, transcripts that disagree with what Whisper hears), then walks
-through every suggestion one at a time, like a spelling-and-grammar check:
-ACCEPT (as suggested or after adjusting it yourself), IGNORE, or DELETE the
-clip. Nothing is applied without you looking at it. Logic lives in
+CHECK EVERYTHING analyzes the clips (volume/clipping, leading/trailing silence and
+noise, transcripts that disagree with what Whisper hears), then shows each clip that
+needs attention on ONE screen: a headline of everything wrong with it ("6.6 dB too
+loud · 1.4 s of silence at the end · 2 transcript differences") and a control for each
+fix. ACCEPT applies the fixes that are ticked, IGNORE leaves the clip alone, DELETE
+removes it. Nothing is applied without you looking at it. Logic lives in
 faily/modules/cleanup.py.
 """
 import html
@@ -22,10 +23,42 @@ _PASSES = ("volume", "trim", "transcript")
 _TITLES = {"volume": "VOLUME", "trim": "TRIM", "transcript": "TRANSCRIPT"}
 _PREVIEW_DIR = Path("outputs/_cleanup_preview")
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
+_SECTION = "w-full gap-1 rounded border border-[#222] bg-[#101010] p-3"
 
 
 def _url(path: Path) -> str:
     return "/outputs/" + path.relative_to(Path("outputs")).as_posix()
+
+
+def _headline(suggestions: dict[str, dict], clip: K.Clip, staging: bool) -> str:
+    """'6.6 dB too loud · 1.4 s of silence at the end · 2 transcript differences'"""
+    parts = []
+    v = suggestions.get("volume")
+    if v:
+        if any(i.startswith("clipping") for i in v["issues"]):
+            parts.append(f"clipping ({abs(v['gain_db']):.1f} dB of gain reduction suggested)")
+        else:
+            off = v.get("off_db", -v["gain_db"])
+            parts.append(f"{abs(off):.1f} dB too {'loud' if off > 0 else 'quiet'}")
+    t = suggestions.get("trim")
+    if t:
+        lead, tail = t["speech_start"], t["duration"] - t["speech_end"]
+        bits = []
+        if t["trim_start"] > 0:
+            bits.append(f"{lead:.1f} s of space at the start")
+        if t["trim_end"] < t["duration"]:
+            bits.append(f"{tail:.1f} s at the end" if bits else f"{tail:.1f} s of space at the end")
+        if any("noise" in i for i in t["issues"]):
+            bits.append("stray noise at the edge")
+        parts.append(" and ".join(bits))
+    tr = suggestions.get("transcript")
+    if tr:
+        if staging or not clip.transcript.strip():
+            parts.append("transcript to confirm")
+        else:
+            n = K.count_differences(clip.transcript, tr.get("suggested", ""))
+            parts.append(f"{n} transcript difference{'s' if n != 1 else ''}")
+    return "  ·  ".join(p for p in parts if p)
 
 
 def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | None = None) -> None:
@@ -40,11 +73,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
     if not clips:
         ui.notify("No reference clips of its own to clean up", type="warning")
         return
-    res: dict[str, dict[str, dict]] = {p: {} for p in _PASSES}     # pass -> key -> suggestion
-    queue: list[tuple[str, str]] = []                              # (pass, key) in review order
+    by_clip: dict[str, dict[str, dict]] = {}       # clip key -> {pass: suggestion}
+    queue: list[str] = []                          # clip keys in review order
     pos = [0]
-    total = [0]                                                    # items in this review (shrinks on delete)
-    handled = [0]
     stats = {"accepted": 0, "ignored": 0, "deleted": 0}
     state = {"analyzing": False}
     prog = {"text": "", "frac": 0.0}
@@ -63,10 +94,11 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
 
         with ui.column().classes("w-full gap-2") as intro_box:
             ui.label(
-                "Checks your reference clips and walks you through each problem it finds, one at a "
-                "time, like a spelling check: accept the suggested fix (or adjust it first), ignore "
-                "it, or delete the clip. Nothing changes until you accept. Original audio is kept in "
-                "refs_original/ and deleted clips in refs_trash/."
+                "Checks your reference clips and shows each one that needs attention on a single "
+                "screen: everything wrong with it, and a control for each fix. Accept the fixes you "
+                "want (adjust them first if you like), ignore the clip, or delete it. Nothing changes "
+                "until you accept. Original audio is kept in refs_original/ and deleted clips in "
+                "refs_trash/."
             ).classes("text-[#888] font-mono text-[11px] leading-snug")
             for t, d in (
                 ("VOLUME", "Clipping, too quiet, or far louder/quieter than the rest → suggested gain."),
@@ -81,7 +113,7 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             with ui.row().classes("gap-2 mt-2 items-center"):
                 ui.button("CHECK EVERYTHING", icon="spellcheck", on_click=lambda: _start(_PASSES)).props(
                     "color=amber unelevated"
-                ).classes("font-mono tracking-widest").tooltip("Run all three checks, then review each suggestion")
+                ).classes("font-mono tracking-widest").tooltip("Run all three checks, then review each clip")
                 for p in _PASSES:
                     ui.button(f"{_TITLES[p]} ONLY", on_click=lambda p=p: _start((p,))).props(
                         "flat dense color=grey"
@@ -106,23 +138,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
         with ui.row().classes("w-full justify-end"):
             finish_btn = ui.button(
                 "FINISH", icon="check", on_click=lambda: _finish_staging() if staging else _close()
-            ).props(
-                "flat dense color=amber"
-            ).classes("font-mono tracking-widest")
+            ).props("flat dense color=amber").classes("font-mono tracking-widest")
 
     # ── bookkeeping ──────────────────────────────────────────────────────
-    def _close():
-        cancel[0] = True
-        shutil.rmtree(_PREVIEW_DIR, ignore_errors=True)
-        try:
-            from faily.modules.asr import unload
-            unload()
-        except Exception:
-            pass
-        dlg.close()
-        if any(stats.values()):
-            on_done()
-
     def _release():
         cancel[0] = True
         shutil.rmtree(_PREVIEW_DIR, ignore_errors=True)
@@ -131,6 +149,12 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             unload()
         except Exception:
             pass
+
+    def _close():
+        _release()
+        dlg.close()
+        if any(stats.values()):
+            on_done()
 
     def _commit():
         try:
@@ -164,61 +188,16 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                     "color=amber unelevated dense")
         d.open()
 
-    def _rekey(old: str, new: str):
-        """An accepted fix can change a clip's key (mp3 -> wav)."""
-        if old == new:
-            return
-        for p in _PASSES:
-            if old in res[p]:
-                res[p][new] = res[p].pop(old)
-        clips[new] = clips.pop(old)
-        for i, (p, k) in enumerate(queue):
-            if k == old:
-                queue[i] = (p, new)
-
-    def _advance(kind: str | None):
-        if kind:
-            stats[kind] += 1
-        handled[0] += 1
+    def _advance(kind: str):
+        stats[kind] += 1
         pos[0] += 1
         _show()
 
-    def _pending_for(key: str) -> int:
-        return sum(1 for p, k in queue[pos[0] + 1:] if k == key and k in res[p])
-
-    # ── actions ──────────────────────────────────────────────────────────
-    def _accept_audio(key: str, gain: float, t0: float, t1: float | None, p: str):
-        try:
-            new = K.apply_audio_fix(char_name, clips[key], gain_db=gain, trim_start=t0, trim_end=t1)
-        except Exception as exc:
-            show_error(exc)
-            return
-        res[p].pop(key, None)
-        _rekey(key, new.key)
-        clips[new.key] = new
-        _advance("accepted")
-
-    def _accept_transcript(key: str, text: str):
-        text = (text or "").strip()
-        if not text:
-            ui.notify("Transcript is empty", type="warning")
-            return
-        K.set_transcript(char_name, clips[key], text)
-        clips[key] = K.Clip(clips[key].key, clips[key].audio, text, clips[key].source)
-        res["transcript"].pop(key, None)
-        _advance("accepted")
-
-    def _ignore(p: str, key: str):
-        res[p].pop(key, None)
-        _advance("ignored")
-
-    def _delete(p: str, key: str):
+    # ── actions on the current clip ──────────────────────────────────────
+    def _delete(key: str):
         clip = clips[key]
         if not K.delete_clip(char_name, clip):
             return
-        total[0] -= _pending_for(key)              # its other suggestions vanish with it
-        for q in _PASSES:
-            res[q].pop(key, None)
         clips.pop(key, None)
         ui.notify(f"Deleted {clip.audio.stem} (kept in refs_trash/)", timeout=2500)
         _advance("deleted")
@@ -232,25 +211,13 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             return
         play_url(_url(out))
 
-    # ── rendering one suggestion ─────────────────────────────────────────
-    def _actions(p: str, key: str, accept):
-        with ui.row().classes("w-full items-center gap-2 mt-2"):
-            ui.button("ACCEPT", icon="check", on_click=accept).props("color=amber unelevated").classes(
-                "font-mono tracking-widest"
-            )
-            ui.button("IGNORE", icon="skip_next", on_click=lambda: _ignore(p, key)).props(
-                "outline color=grey"
-            ).classes("font-mono tracking-widest")
-            ui.space()
-            if key != K.PRIMARY:
-                ui.button("DELETE CLIP", icon="delete_outline", on_click=lambda: _delete(p, key)).props(
-                    "flat color=negative"
-                ).classes("font-mono tracking-widest").tooltip(
-                    "Remove this clip from the character (kept in refs_trash/)"
-                )
-
-    def _head(key: str, r: dict):
+    # ── one clip, all of its fixes ───────────────────────────────────────
+    def _show_clip(key: str):
+        sug = by_clip[key]
         clip = clips[key]
+        use = {}                      # pass -> checkbox
+        ctl = {}                      # control widgets by name
+
         with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
             btn = ui.button(icon="play_arrow").props("round flat color=amber")
             bind_play(btn, url=_url(clip.audio))
@@ -258,71 +225,125 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                 ui.label(clip.audio.stem + ("   · padding clip" if clip.source == "buffer" else "")).classes(
                     "text-white font-mono text-sm [overflow-wrap:anywhere]"
                 )
-                ui.label("; ".join(r["issues"])).classes("text-[#c9a227] font-mono text-[11px]")
+                ui.label(_headline(sug, clip, bool(staging))).classes("text-[#e0b13a] font-mono text-[12px]")
 
-    def _show_volume(key: str):
-        r = res["volume"][key]
-        _head(key, r)
-        ui.label(f"Speech level {r['level_db']:.0f} dBFS · peak {r['peak']:.2f}"
-                 + (f"  —  {r['note']}" if r.get("note") else "")).classes("text-[#666] font-mono text-[10px]")
-        ui.label("SUGGESTED CHANGE").classes(_LBL)
-        with ui.row().classes("items-center gap-2"):
-            gain = ui.number(value=r["gain_db"], format="%.1f", step=0.5, min=-24, max=24).props(
-                "dense outlined dark suffix=dB"
-            ).classes("w-32 font-mono")
-            ui.button("PREVIEW", icon="volume_up", on_click=lambda: _preview(key, gain.value or 0.0, 0.0, None)).props(
-                "flat dense color=grey"
-            ).classes("font-mono text-[10px]")
-        _actions("volume", key, lambda: _accept_audio(key, gain.value or 0.0, 0.0, None, "volume"))
+        if "volume" in sug:
+            r = sug["volume"]
+            with ui.column().classes(_SECTION):
+                with ui.row().classes("w-full items-center gap-2"):
+                    use["volume"] = ui.checkbox("VOLUME", value=True).props("dense color=amber").classes(
+                        "font-mono text-[11px] text-[#bbb]"
+                    )
+                    ui.label("; ".join(r["issues"])).classes("text-[#c9a227] font-mono text-[10px] flex-grow")
+                ui.label(f"Speech level {r['level_db']:.0f} dBFS · peak {r['peak']:.2f}"
+                         + (f"  —  {r['note']}" if r.get("note") else "")).classes("text-[#666] font-mono text-[10px]")
+                with ui.row().classes("items-center gap-2"):
+                    ctl["gain"] = ui.number(value=r["gain_db"], format="%.1f", step=0.5, min=-24, max=24, label="change").props(
+                        "dense outlined dark suffix=dB"
+                    ).classes("w-32 font-mono")
 
-    def _show_trim(key: str):
-        r = res["trim"][key]
-        _head(key, r)
-        ui.label(f"{r['duration']:.1f}s long · speech runs {r['speech_start']:.1f}s – {r['speech_end']:.1f}s").classes(
-            "text-[#666] font-mono text-[10px]"
-        )
-        if r.get("caution"):
-            ui.label("⚠ " + r["caution"]).classes("text-amber-500 font-mono text-[10px]")
-        ui.label("KEEP FROM / TO").classes(_LBL)
-        with ui.row().classes("items-center gap-2"):
-            t0 = ui.number(value=r["trim_start"], format="%.2f", step=0.05, min=0).props(
-                "dense outlined dark suffix=s"
-            ).classes("w-28 font-mono")
-            t1 = ui.number(value=r["trim_end"], format="%.2f", step=0.05, min=0).props(
-                "dense outlined dark suffix=s"
-            ).classes("w-28 font-mono")
-            ui.button("PREVIEW", icon="content_cut",
-                      on_click=lambda: _preview(key, 0.0, t0.value or 0.0, t1.value)).props(
-                "flat dense color=grey"
-            ).classes("font-mono text-[10px]")
-        _actions("trim", key, lambda: _accept_audio(key, 0.0, t0.value or 0.0, t1.value, "trim"))
+        if "trim" in sug:
+            r = sug["trim"]
+            with ui.column().classes(_SECTION):
+                with ui.row().classes("w-full items-center gap-2"):
+                    use["trim"] = ui.checkbox("TRIM", value=True).props("dense color=amber").classes(
+                        "font-mono text-[11px] text-[#bbb]"
+                    )
+                    ui.label("; ".join(r["issues"])).classes("text-[#c9a227] font-mono text-[10px] flex-grow")
+                ui.label(f"{r['duration']:.1f} s long · speech runs {r['speech_start']:.1f} – {r['speech_end']:.1f} s").classes(
+                    "text-[#666] font-mono text-[10px]"
+                )
+                if r.get("caution"):
+                    ui.label("⚠ " + r["caution"]).classes("text-amber-500 font-mono text-[10px]")
+                with ui.row().classes("items-center gap-2"):
+                    ctl["t0"] = ui.number(value=r["trim_start"], format="%.2f", step=0.05, min=0, label="keep from").props(
+                        "dense outlined dark suffix=s"
+                    ).classes("w-32 font-mono")
+                    ctl["t1"] = ui.number(value=r["trim_end"], format="%.2f", step=0.05, min=0, label="keep to").props(
+                        "dense outlined dark suffix=s"
+                    ).classes("w-32 font-mono")
 
-    def _show_transcript(key: str):
-        r = res["transcript"][key]
-        clip = clips[key]
-        _head(key, r)
-        sug = r.get("suggested", "")
-        if staging or not clip.transcript.strip():
-            ui.label("TRANSCRIPT — suggested by Whisper; adjust anything it got wrong").classes(_LBL)
-        else:
-            ui.label("YOUR TRANSCRIPT").classes(_LBL)
-            ui.label(clip.transcript).classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
-            ui.label("WHISPER HEARS — edit before accepting").classes(_LBL)
-            ui.html("&nbsp;".join(
-                f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(w)}</span>'
-                for w, kind in K.diff_words(clip.transcript, sug)
-            ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
-        box = ui.textarea(value=sug).props("outlined dense dark autogrow").classes("w-full font-mono text-[12px]")
-        if K.has_filler(clip.transcript):
-            ui.label("Your text has “um”/“uh” that Whisper leaves out — keep them if they're real.").classes(
-                "text-[#666] font-mono text-[10px]"
-            )
-        _actions("transcript", key, lambda: _accept_transcript(key, box.value))
+        if "transcript" in sug:
+            r = sug["transcript"]
+            suggestion = r.get("suggested", "")
+            with ui.column().classes(_SECTION):
+                with ui.row().classes("w-full items-center gap-2"):
+                    use["transcript"] = ui.checkbox("TRANSCRIPT", value=True).props("dense color=amber").classes(
+                        "font-mono text-[11px] text-[#bbb]"
+                    )
+                    ui.label("; ".join(r["issues"])).classes("text-[#c9a227] font-mono text-[10px] flex-grow")
+                if staging or not clip.transcript.strip():
+                    ui.label("Suggested by Whisper — adjust anything it got wrong").classes(_LBL)
+                else:
+                    ui.label("YOURS").classes(_LBL)
+                    ui.label(clip.transcript).classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
+                    ui.label("WHISPER HEARS — edit before accepting").classes(_LBL)
+                    ui.html("&nbsp;".join(
+                        f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(w)}</span>'
+                        for w, kind in K.diff_words(clip.transcript, suggestion)
+                    ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
+                ctl["text"] = ui.textarea(value=suggestion).props("outlined dense dark autogrow").classes(
+                    "w-full font-mono text-[12px]"
+                )
+                if K.has_filler(clip.transcript):
+                    ui.label("Your text has “um”/“uh” that Whisper leaves out — keep them if they're real.").classes(
+                        "text-[#666] font-mono text-[10px]"
+                    )
+
+        def audio_args() -> tuple[float, float, float | None]:
+            gain = (ctl["gain"].value or 0.0) if "volume" in use and use["volume"].value else 0.0
+            if "trim" in use and use["trim"].value:
+                return gain, ctl["t0"].value or 0.0, ctl["t1"].value
+            return gain, 0.0, None
+
+        def accept():
+            gain, t0, t1 = audio_args()
+            text = (ctl["text"].value or "").strip() if "transcript" in use and use["transcript"].value else None
+            if "transcript" in use and use["transcript"].value and not text:
+                ui.notify("The transcript is empty — type one, or untick TRANSCRIPT", type="warning")
+                return
+            did = False
+            cur = clips[key]
+            try:
+                if gain or t0 > 0 or t1 is not None:
+                    new = K.apply_audio_fix(char_name, cur, gain_db=gain, trim_start=t0, trim_end=t1)
+                    if new.key != key:                       # mp3 -> wav changes the key
+                        clips[new.key] = clips.pop(key)
+                    clips[new.key] = cur = new
+                    did = True
+                if text is not None:
+                    K.set_transcript(char_name, cur, text)
+                    clips[cur.key] = K.Clip(cur.key, cur.audio, text, cur.source)
+                    did = True
+            except Exception as exc:
+                show_error(exc)
+                return
+            _advance("accepted" if did else "ignored")
+
+        with ui.row().classes("w-full items-center gap-2 mt-2"):
+            ui.button("ACCEPT", icon="check", on_click=accept).props("color=amber unelevated").classes(
+                "font-mono tracking-widest"
+            ).tooltip("Apply the ticked fixes to this clip")
+            ui.button("IGNORE", icon="skip_next", on_click=lambda: _advance("ignored")).props(
+                "outline color=grey"
+            ).classes("font-mono tracking-widest")
+            if "volume" in sug or "trim" in sug:
+                ui.button(
+                    "PREVIEW", icon="volume_up",
+                    on_click=lambda: _preview(key, *audio_args()),
+                ).props("flat dense color=grey").classes("font-mono text-[10px]").tooltip(
+                    "Hear the clip with the ticked volume and trim fixes applied"
+                )
+            ui.space()
+            if key != K.PRIMARY:
+                ui.button("DELETE CLIP", icon="delete_outline", on_click=lambda: _delete(key)).props(
+                    "flat color=negative"
+                ).classes("font-mono tracking-widest").tooltip(
+                    "Remove this clip from the character (kept in refs_trash/)"
+                )
 
     def _show():
         item_box.clear()
-        while pos[0] < len(queue) and queue[pos[0]][1] not in res[queue[pos[0]][0]]:
-            pos[0] += 1                           # already handled (e.g. clip deleted)
         tally_lbl.set_text(f"{stats['accepted']} accepted · {stats['ignored']} ignored · {stats['deleted']} deleted")
         if pos[0] >= len(queue):
             step_lbl.set_text("ALL DONE")
@@ -349,11 +370,10 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                     )
             finish_btn.set_visibility(False)
             return
-        p, key = queue[pos[0]]
-        step_lbl.set_text(f"{_TITLES[p]}  ·  {min(handled[0] + 1, total[0])} of {total[0]}")
-        review_bar.set_value(handled[0] / max(total[0], 1))
+        step_lbl.set_text(f"CLIP {pos[0] + 1} OF {len(queue)}")
+        review_bar.set_value(pos[0] / max(len(queue), 1))
         with item_box:
-            {"volume": _show_volume, "trim": _show_trim, "transcript": _show_transcript}[p](key)
+            _show_clip(queue[pos[0]])
 
     # ── analysis ─────────────────────────────────────────────────────────
     async def _start(passes: tuple[str, ...]):
@@ -392,10 +412,12 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             progress_box.set_visibility(False)
             intro_box.set_visibility(True)
             return
+        by_clip.clear()
         for p in passes:
-            res[p] = found.get(p, {})
-        queue[:] = [(p, k) for p in _PASSES for k in res[p]]
-        total[0], handled[0], pos[0] = len(queue), 0, 0
+            for k, sug in found.get(p, {}).items():
+                by_clip.setdefault(k, {})[p] = sug
+        queue[:] = [k for k in clips if k in by_clip]          # file order
+        pos[0] = 0
         progress_box.set_visibility(False)
         review_box.set_visibility(True)
         _show()

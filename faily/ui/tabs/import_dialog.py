@@ -18,9 +18,15 @@ _TMP = Path("outputs/vc/_slices_tmp")
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 
 
-def open_import_dialog(source: Path, default_name: str, host, on_added=lambda: None) -> None:
+def open_import_dialog(
+    source: Path, default_name: str, host, on_added=lambda: None,
+    fixed_target: str | None = None, delete_source: bool = False,
+) -> None:
     """host: a long-lived element to create the review dialog under (this dialog is
-    closed before the review opens, and a dialog nested in a closed one would vanish)."""
+    closed before the review opens, and a dialog nested in a closed one would vanish).
+    fixed_target: add the slices to this existing character and don't ask where.
+    delete_source: `source` is a temporary upload — remove it once it has been sliced
+    (or the dialog is cancelled)."""
     try:
         info = sf.info(str(source))
         length = f"{info.duration:.0f} s" if info.duration < 120 else f"{info.duration / 60:.1f} min"
@@ -38,7 +44,7 @@ def open_import_dialog(source: Path, default_name: str, host, on_added=lambda: N
             "adjust. Nothing is added to a character until you confirm at the end."
         ).classes("text-[#888] font-mono text-[11px] leading-snug")
 
-        ui.label("ADD THE CLIPS TO").classes(_LBL)
+        ui.label(f"ADDING TO  {fixed_target}" if fixed_target else "ADD THE CLIPS TO").classes(_LBL)
         target_kind = ui.radio(
             {"new": "A new character", "existing": "An existing character"},
             value="new" if default_name or not bases else "existing",
@@ -56,6 +62,9 @@ def open_import_dialog(source: Path, default_name: str, host, on_added=lambda: N
             existing_sel.set_visibility(target_kind.value == "existing")
         target_kind.on_value_change(lambda _: _sync())
         _sync()
+        if fixed_target:
+            for el in (target_kind, name_in, existing_sel):
+                el.set_visibility(False)
 
         ui.label("SLICE LENGTH").classes(_LBL)
         preset = ui.toggle(
@@ -67,14 +76,20 @@ def open_import_dialog(source: Path, default_name: str, host, on_added=lambda: N
 
         status = ui.label("").classes("text-amber-400 font-mono text-[11px]")
         with ui.row().classes("w-full justify-end gap-2"):
-            cancel_btn = ui.button("Cancel", on_click=dlg.close).props("flat dense color=grey")
+            cancel_btn = ui.button("Cancel", on_click=lambda: (_drop_source(), dlg.close())).props(
+                "flat dense color=grey"
+            )
             go_btn = ui.button("SPLIT & CHECK", icon="content_cut", on_click=lambda: _go()).props(
                 "color=amber unelevated dense"
             ).classes("font-mono tracking-widest")
 
+    def _drop_source():
+        if delete_source:
+            source.unlink(missing_ok=True)
+
     async def _go():
-        is_new = target_kind.value == "new"
-        target = (name_in.value or "").strip() if is_new else existing_sel.value
+        is_new = target_kind.value == "new" and not fixed_target
+        target = fixed_target or ((name_in.value or "").strip() if is_new else existing_sel.value)
         if not target:
             ui.notify("Choose a character name first", type="warning")
             return
@@ -100,6 +115,7 @@ def open_import_dialog(source: Path, default_name: str, host, on_added=lambda: N
             return
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        _drop_source()
         dur = [s.duration for _, s in files]
         ui.notify(f"{len(files)} slices ({min(dur):.1f}–{max(dur):.1f} s) — checking each now", timeout=3500)
         dlg.close()

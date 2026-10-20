@@ -124,7 +124,8 @@ def analyze_volume(path: Path, target_db: float) -> dict | None:
         return None
     return {
         "issues": issues, "gain_db": round(gain, 1), "level_db": round(level, 1),
-        "peak": round(peak, 3),
+        "peak": round(peak, 3), "target_db": round(target_db, 1),
+        "off_db": round(level - target_db, 1),            # >0: louder than the set's typical level
         "note": ("Lowering the volume evens it out but can't restore the flattened peaks."
                  if n_clipped >= CLIP_MIN_SAMPLES else ""),
     }
@@ -246,6 +247,15 @@ def word_error_rate(ref: list[str], hyp: list[str]) -> float:
         for j in range(1, len(hyp) + 1):
             d[i, j] = min(d[i - 1, j] + 1, d[i, j - 1] + 1, d[i - 1, j - 1] + (ref[i - 1] != hyp[j - 1]))
     return float(d[-1, -1]) / len(ref)
+
+
+def count_differences(current: str, suggested: str) -> int:
+    """How many words differ between two transcripts (ignoring case, punctuation,
+    fillers and spoken-vs-contracted forms)."""
+    a, b = normalize_words(current), normalize_words(suggested)
+    return sum(max(i2 - i1, j2 - j1)
+               for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes()
+               if op != "equal")
 
 
 def diff_words(current: str, suggested: str) -> list[tuple[str, str]]:
@@ -403,6 +413,28 @@ def apply_audio_fix(name: str, clip: Clip, gain_db: float = 0.0,
     cfg_path.write_text(json.dumps(cfg, indent=2))
     clip.audio.unlink()                      # the original is in refs_original/
     return Clip(new_key, new_audio, clip.transcript, clip.source)
+
+
+def delete_padding_clips(name: str) -> int:
+    """Remove every generated padding ("buffer") clip from the character's own
+    reference clips — excluded ones too. The audio goes to refs_trash/ (so it can be
+    recovered by hand) and the config is rewritten once. Returns how many were removed."""
+    cfg_path = _char_dir(name) / "config.json"
+    cfg = json.loads(cfg_path.read_text())
+    keep, gone = [], []
+    for rc in cfg.get("ref_clips", []):
+        (gone if rc.get("source") == "buffer" else keep).append(rc)
+    if not gone:
+        return 0
+    trash = _char_dir(name) / "refs_trash"
+    trash.mkdir(exist_ok=True)
+    for rc in gone:
+        audio = _char_dir(name) / rc["file"]
+        if audio.exists():
+            shutil.move(str(audio), str(trash / audio.name))
+    cfg["ref_clips"] = keep
+    cfg_path.write_text(json.dumps(cfg, indent=2))
+    return len(gone)
 
 
 def set_transcript(name: str, clip: Clip, text: str) -> None:

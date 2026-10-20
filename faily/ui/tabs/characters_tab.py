@@ -9,6 +9,7 @@ from faily.core.characters import (
     rename_ref_audio, update_ref_clip, clip_quality_issues, add_ref_clip,
     set_ref_clip_excluded, split_long_ref_clip, CHARACTERS_DIR,
 )
+from faily.modules.cleanup import delete_padding_clips
 from faily.ui.components import (
     section_label, show_error, send_to_edit, bind_play, prime_audio, play_url,
 )
@@ -23,6 +24,7 @@ from faily.core.settings import (
 )
 from faily.ui.tabs.buffer_training_dialog import open_buffer_training_dialog
 from faily.ui.tabs.cleanup_dialog import open_cleanup_dialog
+from faily.ui.tabs.import_dialog import open_import_dialog
 from faily.ui.tabs.models_panel import build_models_panel
 from faily.ui.tabs.piper_training_dialog import (
     open_training_dialog, start_training, training_status_chip,
@@ -257,6 +259,27 @@ def build_characters_tab(on_speak, on_change):
         # active_refs = what's actually used to build the VC reference — excludes
         # opted-out own clips; inherited is already excluded-filtered by get_ref_chain.
         excluded_count = sum(1 for r in own_refs if r.get("excluded"))
+        n_padding = sum(1 for r in own_refs if r.get("source") == "buffer")
+
+        def _confirm_delete_padding(n=name):
+            with ui.dialog() as d, ui.card().classes("bg-[#1a1a1a] border border-[#333] gap-3"):
+                ui.label("DELETE ALL PADDING CLIPS?").classes("text-white font-mono text-xs tracking-widest")
+                ui.label(
+                    f"Removes all {n_padding} generated padding clips from {n} (your own recordings are not "
+                    "touched). The audio is moved to refs_trash/ in the character's folder, so it can be "
+                    "recovered by hand. Already-trained models are unaffected."
+                ).classes("text-[#888] font-mono text-[11px] max-w-md")
+                with ui.row().classes("w-full justify-end gap-2"):
+                    ui.button("Cancel", on_click=d.close).props("flat dense color=grey")
+
+                    def go():
+                        removed = delete_padding_clips(n)
+                        d.close()
+                        ui.notify(f"Deleted {removed} padding clips (kept in refs_trash/)", timeout=4000)
+                        _rebuild_detail()        # last: it deletes the elements this handler runs in
+                    ui.button(f"DELETE {n_padding}", icon="delete_forever", on_click=go).props(
+                        "color=negative unelevated dense")
+            d.open()
         active_refs = [r for r in own_refs if not r.get("excluded")] + inherited
 
         total_dur = 0.0
@@ -378,9 +401,24 @@ def build_characters_tab(on_speak, on_change):
                 with ui.tab_panel(tab_refs).classes("gap-2 p-0 pt-3"):
                     section_label("ADD REFERENCE")
 
+                    _upload_mode = ["add"]      # "add" = one clip as-is, "split" = slice, check, add
+
                     async def _on_ref_upload(e, n=name):
                         import os
                         import tempfile
+                        if _upload_mode[0] == "split":
+                            _upload_mode[0] = "add"
+                            import uuid
+                            keep = Path("outputs/vc/_import_tmp")
+                            keep.mkdir(parents=True, exist_ok=True)
+                            saved = keep / f"{uuid.uuid4().hex[:8]}_{Path(e.file.name).name}"
+                            saved.write_bytes(await e.file.read())
+                            with dialog_host:
+                                open_import_dialog(
+                                    saved, Path(e.file.name).stem, dialog_host, on_added=_rebuild_detail,
+                                    fixed_target=n, delete_source=True,
+                                )
+                            return
                         suffix = Path(e.file.name).suffix or ".wav"
                         fd, tmp_name = tempfile.mkstemp(suffix=suffix)
                         tmp_path = Path(tmp_name)
@@ -409,10 +447,19 @@ def build_characters_tab(on_speak, on_change):
                         .props("outlined dark dense")
                         .classes("w-full mt-2 font-mono text-[11px]")
                     )
-                    ui.button(
-                        "Upload", icon="cloud_upload",
-                        on_click=lambda: ref_upload.run_method("upload"),
-                    ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest mt-1")
+                    with ui.row().classes("gap-2 mt-1"):
+                        ui.button(
+                            "Upload", icon="cloud_upload",
+                            on_click=lambda: (_upload_mode.__setitem__(0, "add"), ref_upload.run_method("upload")),
+                        ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest")
+                        ui.button(
+                            "Split & clean…", icon="content_cut",
+                            on_click=lambda: (_upload_mode.__setitem__(0, "split"), ref_upload.run_method("upload")),
+                        ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest").tooltip(
+                            "Slice the selected recording at its pauses, check each slice (volume, "
+                            "silence, Whisper-suggested transcript) one by one, then add them here. "
+                            "Ignores the transcript box."
+                        )
 
                     ui.separator().classes("my-3 opacity-20")
                     with ui.row().classes("items-center gap-2 w-full"):
@@ -544,6 +591,11 @@ def build_characters_tab(on_speak, on_change):
                                         ui.label(str(len(buffer_refs))).classes(
                                             "text-[#333] font-mono text-[9px] bg-[#1a1a1a] px-1.5 rounded"
                                         )
+                                        ui.button(
+                                            "DELETE ALL", icon="delete_sweep", on_click=_confirm_delete_padding,
+                                        ).props("flat dense color=negative").classes("font-mono text-[9px]").tooltip(
+                                            "Remove every generated padding clip (kept in refs_trash/)"
+                                        )
                                     for ref in buffer_refs:
                                         _render_own_ref_row(ref)
 
@@ -661,6 +713,14 @@ def build_characters_tab(on_speak, on_change):
                         "sounds your references might miss. Turn off to train on your "
                         "own recordings only."
                     )
+                    if n_padding:
+                        with ui.row().classes("items-center gap-2 -mt-1 mb-2"):
+                            ui.label(f"{n_padding} padding clips on this character").classes(
+                                "text-[#555] font-mono text-[10px]"
+                            )
+                            ui.button(
+                                "DELETE ALL…", icon="delete_sweep", on_click=_confirm_delete_padding,
+                            ).props("flat dense color=negative").classes("font-mono text-[10px]")
 
                     # ── learning rate ───────────────────────────────────────
                     def _on_lr_change(e):
@@ -1070,6 +1130,9 @@ def build_characters_tab(on_speak, on_change):
                     on_click=lambda: (_rebuild_list(), _rebuild_detail()),
                 ).props("flat dense color=grey").tooltip("Reload")
             left_col = ui.column().classes("w-full gap-1 mt-2")
+            # Long-lived parent for the split-and-clean dialogs: right_col is rebuilt (and
+            # everything in it deleted) whenever a clip is edited or added.
+            dialog_host = ui.element("div").classes("hidden")
 
         with ui.column().classes("gap-3 p-8 overflow-y-auto"):
             right_col = ui.column().classes("w-full gap-2")
