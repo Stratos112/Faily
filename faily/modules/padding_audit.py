@@ -261,16 +261,17 @@ def _verified(x: np.ndarray, sr: int, events: list[Event], transcribe) -> list[E
 
 def audit_clip(
     path: Path, script: str, transcribe: Callable[[np.ndarray, int], str], generated: bool = True,
-) -> dict | None:
-    """Everything wrong with one clip's audio, or None if it is clean.
+) -> dict:
+    """Everything wrong with one clip's audio.
 
     generated=True (a padding clip, whose text is the script it was made from): also
     compares the words with the script, and flags a too-noisy background.
     generated=False (a human recording): noise events only — its transcript is checked
     by the normal transcript check, and a noisy room is normal.
 
-    Returns {"issues", "edge_issues", "events", "mute": [(a, b)], "trim": {...} | None,
-    "words": {...} | None, "recommend_delete": bool, "reason": str, "snr_db", "duration"}."""
+    Always returns a result; "ok" is True when nothing is wrong. {"issues", "edge_issues",
+    "events", "mute": [(a, b)], "trim": {...} | None, "words": {...} | None,
+    "recommend_delete": bool, "reason": str, "snr_db", "duration", "ok"}."""
     x, sr = _read(path)
     dur = len(x) / sr
     events, info = find_noise_events(x, sr)
@@ -366,10 +367,11 @@ def audit_clip(
         out["recommend_delete"] = True
         out["reason"] = out["reason"] or "its background noise can't be removed"
 
-    if not issues and not edge_issues:
-        return None
     out["issues"] = issues
     out["edge_issues"] = edge_issues
+    out["ok"] = not (issues or edge_issues)
+    if generated and out["words"] is None:
+        out["words"] = {"heard": heard, "kind": "ok", "verified": True}    # says exactly its script
     return out
 
 
@@ -401,11 +403,12 @@ def audit_character(
             r = audit_clip(c.audio, c.transcript, transcribe, generated)
         except Exception as exc:
             r = {"issues": [f"couldn't audit: {exc}"], "edge_issues": [], "events": [], "mute": [], "trim": None,
-                 "words": None, "recommend_delete": False, "reason": "", "duration": 0, "snr_db": 0, "error": True}
+                 "words": None, "recommend_delete": False, "reason": "", "duration": 0, "snr_db": 0, "error": True, "ok": False}
         if dup_of:
             r = r or {"events": [], "mute": [], "trim": None, "words": None, "recommend_delete": False,
                       "reason": "", "duration": 0, "snr_db": 0, "issues": [], "edge_issues": []}
             r["issues"] = [f"duplicate of {dup_of}"] + r["issues"]
+            r["ok"] = False
             r["recommend_delete"], r["reason"] = True, f"same script as {dup_of}"
         if r:
             result[c.key] = r

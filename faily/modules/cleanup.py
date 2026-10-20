@@ -113,17 +113,22 @@ def analyze_volume(path: Path, target_db: float) -> dict | None:
     gain = target_db - level
     if abs(gain) >= GAIN_FLAG_DB and not issues:
         issues.append(("too loud" if gain < 0 else "too quiet") + f" ({level:.0f} dBFS vs {target_db:.0f} target)")
+    # What a clip with nothing wrong looks like — the review still shows it, as "no issue".
+    fine = {
+        "issues": [], "ok": True, "gain_db": 0.0, "level_db": round(level, 1), "peak": round(peak, 3),
+        "target_db": round(target_db, 1), "off_db": round(level - target_db, 1), "note": "",
+    }
     if not issues:
-        return None
+        return fine
     gain = float(np.clip(gain, -MAX_GAIN_DB, MAX_GAIN_DB))
     if peak > 0:                                   # never push the peak past the ceiling
         gain = min(gain, 20 * np.log10(PEAK_CEILING / peak))
     # A "too quiet" clip whose peaks already reach the ceiling can't be boosted;
     # don't suggest a no-op fix.
     if abs(gain) < 1.0 and not any(i.startswith(("clipping", "very quiet")) for i in issues):
-        return None
+        return {**fine, "note": "A little off the typical level, but its peaks already reach the ceiling, so it can't be boosted."}
     return {
-        "issues": issues, "gain_db": round(gain, 1), "level_db": round(level, 1),
+        "issues": issues, "ok": False, "gain_db": round(gain, 1), "level_db": round(level, 1),
         "peak": round(peak, 3), "target_db": round(target_db, 1),
         "off_db": round(level - target_db, 1),            # >0: louder than the set's typical level
         "note": ("Lowering the volume evens it out but can't restore the flattened peaks."
@@ -136,8 +141,10 @@ def analyze_volume(path: Path, target_db: float) -> dict | None:
 def analyze_trim(path: Path, transcript: str = "") -> dict | None:
     x, sr = _read(path)
     dur = len(x) / sr if sr else 0
+    whole = {"issues": [], "ok": True, "duration": round(dur, 2), "trim_start": 0.0, "trim_end": round(dur, 2),
+             "speech_start": 0.0, "speech_end": round(dur, 2)}
     if dur < 0.6:
-        return None
+        return whole
     db = _frame_db(x, sr)
     hop = 0.01
     floor = float(np.percentile(db, 10))
@@ -156,7 +163,7 @@ def analyze_trim(path: Path, transcript: str = "") -> dict | None:
         else:
             i += 1
     if not segs:
-        return None
+        return whole
     merged = [segs[0]]
     for s_, e_, m_ in segs[1:]:                  # bridge short between-word gaps
         if s_ - merged[-1][1] < 0.25:
@@ -194,9 +201,9 @@ def analyze_trim(path: Path, transcript: str = "") -> dict | None:
     if tail > TAIL_FLAG:
         reasons.append(f"{tail:.1f}s of silence at the end")
     if t_start <= 0.0 and t_end >= dur:
-        return None
+        return {**whole, "speech_start": round(onset, 2), "speech_end": round(offset, 2)}
     return {
-        "issues": sorted(set(reasons)), "duration": round(dur, 2),
+        "issues": sorted(set(reasons)), "ok": False, "duration": round(dur, 2),
         "trim_start": round(t_start, 2), "trim_end": round(t_end, 2),
         "speech_start": round(onset, 2), "speech_end": round(offset, 2),
     }
@@ -282,8 +289,8 @@ def analyze_transcript(path: Path, transcript: str, transcribe: Callable[[np.nda
     elif wer >= WER_FLAG or abs(len(ref_w) - len(hyp_w)) >= 3:
         issues = [f"{wer:.0%} of the words differ from what Whisper hears"]
     else:
-        return None
-    return {"issues": issues, "wer": round(wer, 2), "suggested": hyp}
+        return {"issues": [], "ok": True, "wer": round(wer, 2), "suggested": hyp}
+    return {"issues": issues, "ok": False, "wer": round(wer, 2), "suggested": hyp}
 
 
 _HALLUCINATIONS = {"", "you", "thank you", "thanks", "thank you for watching", "bye", "so"}

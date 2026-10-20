@@ -19,12 +19,14 @@ from faily.modules import cleanup as K
 from faily.modules import padding_audit as PA
 from faily.modules.importer import commit_stage, discard_stage
 from faily.ui.components import bind_play, play_url, show_error
+from faily.ui.waveform import region_picker
 
 _PASSES = ("volume", "trim", "transcript")
 _TITLES = {"volume": "VOLUME", "trim": "TRIM", "transcript": "TRANSCRIPT", "artifacts": "NOISES"}
 _PREVIEW_DIR = Path("outputs/_cleanup_preview")
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
-_SECTION = "w-full gap-1 rounded border border-[#222] bg-[#101010] p-3"
+_SECTION = "w-full gap-1 rounded border border-[#3a3217] bg-[#14110a] p-3"      # has an issue
+_SECTION_OK = "w-full gap-1 rounded border border-[#1d3a26] bg-[#0d1a12] p-3"   # nothing wrong
 
 
 def _url(path: Path) -> str:
@@ -32,17 +34,18 @@ def _url(path: Path) -> str:
 
 
 def _headline(suggestions: dict[str, dict], clip: K.Clip, staging: bool) -> str:
-    """'6.6 dB too loud · 1.4 s of silence at the end · 2 transcript differences'"""
+    """'6.6 dB too loud · 1.4 s of silence at the end · 2 transcript differences' — only the
+    characteristics that have a problem; 'no issues found' if none do."""
     parts = []
     v = suggestions.get("volume")
-    if v:
+    if v and v["issues"]:
         if any(i.startswith("clipping") for i in v["issues"]):
             parts.append(f"clipping ({abs(v['gain_db']):.1f} dB of gain reduction suggested)")
         else:
             off = v.get("off_db", -v["gain_db"])
             parts.append(f"{abs(off):.1f} dB too {'loud' if off > 0 else 'quiet'}")
     t = suggestions.get("trim")
-    if t:
+    if t and t["issues"]:
         lead, tail = t["speech_start"], t["duration"] - t["speech_end"]
         bits = []
         if t["trim_start"] > 0:
@@ -57,13 +60,24 @@ def _headline(suggestions: dict[str, dict], clip: K.Clip, staging: bool) -> str:
     if pa:
         parts.extend(pa["issues"])
     tr = suggestions.get("transcript")
-    if tr:
+    if tr and tr["issues"]:
         if staging or not clip.transcript.strip():
             parts.append("transcript to confirm")
         else:
             n = K.count_differences(clip.transcript, tr.get("suggested", ""))
             parts.append(f"{n} transcript difference{'s' if n != 1 else ''}")
-    return "  ·  ".join(p for p in parts if p)
+    return "  ·  ".join(p for p in parts if p) or "no issues found"
+
+
+def _needs_attention(sug: dict[str, dict]) -> bool:
+    for p, r in sug.items():
+        if p == "artifacts":
+            if (r.get("issues") or r.get("mute") or r.get("recommend_delete")
+                    or (r.get("words") and r["words"]["kind"] == "mismatch")):
+                return True
+        elif r.get("issues"):
+            return True
+    return False
 
 
 def _fold_audit_into_trim(sug: dict[str, dict]) -> None:
@@ -85,14 +99,12 @@ def _fold_audit_into_trim(sug: dict[str, dict]) -> None:
         merged["issues"] = list(dict.fromkeys(base["issues"] + edge))
         if audit.get("words") and audit["words"].get("verified"):
             merged["note"] = "Checked by re-transcribing the trimmed audio: it now says exactly its script."
+        merged["ok"] = False
         sug["trim"] = merged
         audit["trim"] = None
     elif gt and edge:
         gt["issues"] = list(dict.fromkeys(gt["issues"] + edge))
-    keep = (audit["issues"] or audit["mute"] or audit["recommend_delete"]
-            or (audit.get("words") and audit["words"]["kind"] == "mismatch"))
-    if not keep:
-        del sug["artifacts"]
+        gt["ok"] = False
 
 
 def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | None = None) -> None:
@@ -123,6 +135,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
     prog = {"text": "", "frac": 0.0}
     cancel = [False]
     _PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+
+    include_clean = None
+    scope = None
 
     # ── layout ───────────────────────────────────────────────────────────
     with ui.dialog().props("persistent").classes("w-full") as dlg, ui.card().classes(
@@ -174,6 +189,12 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                          "generated clips.").classes("text-[#555] font-mono text-[10px]")
             else:
                 scope = None
+            include_clean = None if staging else ui.checkbox(
+                "Also step through clips with no issues", value=False,
+            ).props("dense color=amber").classes("font-mono text-[11px] text-[#888] mt-1").tooltip(
+                "Normally only clips with a problem come up. Tick this to see every checked clip — "
+                "sections with nothing wrong are shown in green."
+            )
             with ui.row().classes("gap-2 mt-2 items-center"):
                 ui.button(
                     "CHECK EVERYTHING", icon="spellcheck", on_click=lambda: _start(all_checks),
@@ -277,131 +298,170 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             return
         play_url(_url(out))
 
-    # ── one clip, all of its fixes ───────────────────────────────────────
+    # ── one clip, every characteristic ───────────────────────────────────
     def _show_clip(key: str):
         sug = by_clip[key]
         clip = clips[key]
-        use = {}                      # pass -> checkbox
-        ctl = {}                      # control widgets by name
+        use: dict = {}                # section -> its tick box
+        ctl: dict = {}                # control widgets by name
+        audit = sug.get("artifacts")
+        generated = clip.source == "buffer"
+        mute_boxes: list[tuple] = []  # (checkbox, (start, end)) per noise between words
+        GOOD = "text-[#6fbf8b]"
+
+        def header(title: str, ok: bool, status: str, tickable: bool = True, ticked: bool | None = None):
+            """Section header: tick box (the fix is applied if ticked) + 'no issue' or the problem."""
+            with ui.row().classes("w-full items-center gap-2"):
+                if tickable:
+                    cb = ui.checkbox(title, value=(not ok) if ticked is None else ticked).props(
+                        "dense color=green" if ok else "dense color=amber"
+                    ).classes("font-mono text-[11px] text-[#bbb]")
+                else:
+                    cb = None
+                    ui.label(title).classes("font-mono text-[11px] text-[#bbb]")
+                ui.label("✓ no issue" if ok else status).classes(
+                    f"{GOOD if ok else 'text-[#c9a227]'} font-mono text-[10px] flex-grow"
+                )
+            return cb
+
+        def tick_on_edit(widget, name: str):
+            widget.on_value_change(lambda e: use[name].set_value(True))
 
         with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
             btn = ui.button(icon="play_arrow").props("round flat color=amber")
             bind_play(btn, url=_url(clip.audio))
             with ui.column().classes("gap-0 min-w-0 flex-grow"):
-                ui.label(clip.audio.stem + ("   · padding clip" if clip.source == "buffer" else "")).classes(
+                ui.label(clip.audio.stem + ("   · padding clip" if generated else "")).classes(
                     "text-white font-mono text-sm [overflow-wrap:anywhere]"
                 )
-                ui.label(_headline(sug, clip, bool(staging))).classes("text-[#e0b13a] font-mono text-[12px]")
-
-        audit = sug.get("artifacts")
-        mute_boxes: list[tuple] = []          # (checkbox, (start, end)) per noise between words
+                head_text = _headline(sug, clip, bool(staging))
+                ui.label(head_text).classes(
+                    ("text-[#6fbf8b]" if head_text == "no issues found" else "text-[#e0b13a]") + " font-mono text-[12px]"
+                )
         if audit and audit["recommend_delete"]:
-            ui.label(f"Recommended: delete this clip — {audit['reason']}.").classes(
-                "text-red-400 font-mono text-[11px]"
-            )
+            ui.label(f"Recommended: delete this clip — {audit['reason']}.").classes("text-red-400 font-mono text-[11px]")
 
+        # VOLUME ------------------------------------------------------------
         if "volume" in sug:
             r = sug["volume"]
-            with ui.column().classes(_SECTION):
-                with ui.row().classes("w-full items-center gap-2"):
-                    use["volume"] = ui.checkbox("VOLUME", value=True).props("dense color=amber").classes(
-                        "font-mono text-[11px] text-[#bbb]"
-                    )
-                    ui.label("; ".join(r["issues"])).classes("text-[#c9a227] font-mono text-[10px] flex-grow")
-                ui.label(f"Speech level {r['level_db']:.0f} dBFS · peak {r['peak']:.2f}"
-                         + (f"  —  {r['note']}" if r.get("note") else "")).classes("text-[#666] font-mono text-[10px]")
-                with ui.row().classes("items-center gap-2"):
-                    ctl["gain"] = ui.number(value=r["gain_db"], format="%.1f", step=0.5, min=-24, max=24, label="change").props(
-                        "dense outlined dark suffix=dB"
-                    ).classes("w-32 font-mono")
+            ok = not r["issues"]
+            with ui.column().classes(_SECTION_OK if ok else _SECTION):
+                use["volume"] = header("VOLUME", ok, "; ".join(r["issues"]))
+                ui.label(f"Speech level {r['level_db']:.0f} dBFS (typical for this set {r['target_db']:.0f}) · "
+                         f"peak {r['peak']:.2f}" + (f"  —  {r['note']}" if r.get("note") else "")).classes(
+                    "text-[#666] font-mono text-[10px]")
+                ctl["gain"] = ui.number(value=r["gain_db"], format="%.1f", step=0.5, min=-24, max=24, label="change").props(
+                    "dense outlined dark suffix=dB").classes("w-32 font-mono")
+                tick_on_edit(ctl["gain"], "volume")
 
-        if audit and audit["mute"]:
-            with ui.column().classes(_SECTION):
-                ui.label("NOISES BETWEEN WORDS — ticked ones are muted (the timing doesn't change)"
-                         + ("; natural breaths in a recording start unticked" if clip.source != "buffer" else "")).classes(_LBL)
-                for e in (e for e in audit["events"] if e.where == "inside"):
-                    natural = clip.source != "buffer" and e.kind == "breath"      # a person breathing is normal
-                    cb = ui.checkbox(f"{e.kind}  {e.start:.2f} – {e.end:.2f} s  ({e.level_db:+.0f} dB vs speech)",
-                                     value=not natural)
-                    cb.props("dense color=amber").classes("font-mono text-[11px] text-[#bbb]")
-                    mute_boxes.append((cb, (e.start, e.end)))
-
-        if audit and audit["words"] and audit["words"]["kind"] == "mismatch":
-            w = audit["words"]
-            with ui.column().classes(_SECTION):
-                with ui.row().classes("w-full items-center gap-2"):
-                    use["transcript"] = ui.checkbox("USE WHAT WAS SAID", value=False).props("dense color=amber").classes(
-                        "font-mono text-[11px] text-[#bbb]"
-                    )
-                    ui.label("the audio doesn't match its script").classes("text-[#c9a227] font-mono text-[10px] flex-grow")
-                ui.label("SCRIPT").classes(_LBL)
-                ui.label(clip.transcript).classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
-                ui.label("HEARD").classes(_LBL)
-                ui.html("&nbsp;".join(
-                    f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(wd)}</span>'
-                    for wd, kind in K.diff_words(clip.transcript, w["heard"])
-                ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
-                ctl["text"] = ui.textarea(value=w["heard"]).props("outlined dense dark autogrow").classes(
-                    "w-full font-mono text-[12px]"
-                )
-                ui.label("Tick to keep the clip with a transcript that matches what is really said; "
-                         "otherwise delete it.").classes("text-[#666] font-mono text-[10px]")
-
+        # TRIM: waveform + region ---------------------------------------------
         if "trim" in sug:
             r = sug["trim"]
-            with ui.column().classes(_SECTION):
-                with ui.row().classes("w-full items-center gap-2"):
-                    use["trim"] = ui.checkbox("TRIM", value=True).props("dense color=amber").classes(
-                        "font-mono text-[11px] text-[#bbb]"
-                    )
-                    ui.label("; ".join(r["issues"])).classes("text-[#c9a227] font-mono text-[10px] flex-grow")
-                ui.label(f"{r['duration']:.1f} s long · speech runs {r['speech_start']:.1f} – {r['speech_end']:.1f} s").classes(
-                    "text-[#666] font-mono text-[10px]"
-                )
+            ok = not r["issues"]
+            with ui.column().classes(_SECTION_OK if ok else _SECTION):
+                use["trim"] = header("TRIM", ok, "; ".join(r["issues"]))
+                lead, tail = r["speech_start"], r["duration"] - r["speech_end"]
+                ui.label(f"{r['duration']:.1f} s long · {lead:.1f} s before the speech, {tail:.1f} s after").classes(
+                    "text-[#666] font-mono text-[10px]")
                 if r.get("caution"):
                     ui.label("⚠ " + r["caution"]).classes("text-amber-500 font-mono text-[10px]")
                 if r.get("note"):
                     ui.label(r["note"]).classes("text-[#7a9a7a] font-mono text-[10px]")
-                with ui.row().classes("items-center gap-2"):
-                    ctl["t0"] = ui.number(value=r["trim_start"], format="%.2f", step=0.05, min=0, label="keep from").props(
-                        "dense outlined dark suffix=s"
-                    ).classes("w-32 font-mono")
-                    ctl["t1"] = ui.number(value=r["trim_end"], format="%.2f", step=0.05, min=0, label="keep to").props(
-                        "dense outlined dark suffix=s"
-                    ).classes("w-32 font-mono")
+                marks = [(e.start, e.end) for e in (audit["events"] if audit else [])]
+                ctl["region"] = region_picker(
+                    clip.audio, r["trim_start"], r["trim_end"], marks=marks,
+                    on_change=lambda a, b: use["trim"].set_value(True),
+                )
+                if marks:
+                    ui.label("red = a noise that was found").classes("text-[#a55] font-mono text-[9px]")
 
+        # NOISES ------------------------------------------------------------
+        if audit is not None:
+            if audit["mute"]:
+                with ui.column().classes(_SECTION):
+                    header("NOISES BETWEEN WORDS", False, "ticked ones are muted — the timing doesn't change", tickable=False)
+                    if clip.source != "buffer":
+                        ui.label("Natural breaths in a recording start unticked.").classes("text-[#666] font-mono text-[10px]")
+                    for e in (e for e in audit["events"] if e.where == "inside"):
+                        natural = not generated and e.kind == "breath"        # a person breathing is normal
+                        cb = ui.checkbox(f"{e.kind}  {e.start:.2f} – {e.end:.2f} s  ({e.level_db:+.0f} dB vs speech)",
+                                         value=not natural)
+                        cb.props("dense color=amber").classes("font-mono text-[11px] text-[#bbb]")
+                        mute_boxes.append((cb, (e.start, e.end)))
+            else:
+                with ui.column().classes(_SECTION_OK):
+                    header("NOISES", True, "", tickable=False)
+                    ui.label("No breaths, hiss or stray noises between the words."
+                             + (f"  ({audit['skipped']} possible one{'s' if audit['skipped'] != 1 else ''} left alone: "
+                                "removing it would change the words.)" if audit.get("skipped") else "")).classes(
+                        "text-[#666] font-mono text-[10px]")
+
+            # generated clips: the script, and duplicates / background
+            if generated and audit.get("words"):
+                w = audit["words"]
+                if w["kind"] == "mismatch":
+                    with ui.column().classes(_SECTION):
+                        use["transcript"] = header("USE WHAT WAS SAID", False, "the audio doesn't match its script", ticked=False)
+                        ui.label("SCRIPT").classes(_LBL)
+                        ui.label(clip.transcript).classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
+                        ui.label("HEARD").classes(_LBL)
+                        ui.html("&nbsp;".join(
+                            f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(wd)}</span>'
+                            for wd, kind in K.diff_words(clip.transcript, w["heard"])
+                        ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
+                        ctl["text"] = ui.textarea(value=w["heard"]).props("outlined dense dark autogrow").classes(
+                            "w-full font-mono text-[12px]")
+                        ui.label("Tick to keep the clip with a transcript that matches what is really said; "
+                                 "otherwise delete it.").classes("text-[#666] font-mono text-[10px]")
+                elif w["kind"] == "ok":
+                    with ui.column().classes(_SECTION_OK):
+                        header("SCRIPT", True, "", tickable=False)
+                        ui.label("Says exactly its script.").classes("text-[#666] font-mono text-[10px]")
+            if generated:
+                other = [i for i in audit["issues"] if i.startswith(("duplicate", "noisy"))]
+                with ui.column().classes(_SECTION if other else _SECTION_OK):
+                    header("DUPLICATES & BACKGROUND", not other, "; ".join(other), tickable=False)
+                    if not other:
+                        ui.label(f"Not a repeat of another script · speech is {audit['snr_db']:.0f} dB above the background.").classes(
+                            "text-[#666] font-mono text-[10px]")
+
+        # TRANSCRIPT (recordings and imports; a generated clip's text is its script) ---------
         if "transcript" in sug:
             r = sug["transcript"]
+            ok = not r["issues"]
             suggestion = r.get("suggested", "")
-            with ui.column().classes(_SECTION):
-                with ui.row().classes("w-full items-center gap-2"):
-                    use["transcript"] = ui.checkbox("TRANSCRIPT", value=True).props("dense color=amber").classes(
-                        "font-mono text-[11px] text-[#bbb]"
-                    )
-                    ui.label("; ".join(r["issues"])).classes("text-[#c9a227] font-mono text-[10px] flex-grow")
-                if staging or not clip.transcript.strip():
-                    ui.label("Suggested by Whisper — adjust anything it got wrong").classes(_LBL)
+            with ui.column().classes(_SECTION_OK if ok else _SECTION):
+                use["transcript"] = header("TRANSCRIPT", ok, "; ".join(r["issues"]))
+                if ok:
+                    ui.label(f"Matches what Whisper hears ({r['wer']:.0%} of words differ).").classes(
+                        "text-[#666] font-mono text-[10px]")
+                    ctl["text"] = ui.textarea(value=clip.transcript).props("outlined dense dark autogrow").classes(
+                        "w-full font-mono text-[12px]")
+                    tick_on_edit(ctl["text"], "transcript")
                 else:
-                    ui.label("YOURS").classes(_LBL)
-                    ui.label(clip.transcript).classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
-                    ui.label("WHISPER HEARS — edit before accepting").classes(_LBL)
-                    ui.html("&nbsp;".join(
-                        f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(w)}</span>'
-                        for w, kind in K.diff_words(clip.transcript, suggestion)
-                    ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
-                ctl["text"] = ui.textarea(value=suggestion).props("outlined dense dark autogrow").classes(
-                    "w-full font-mono text-[12px]"
-                )
+                    if staging or not clip.transcript.strip():
+                        ui.label("Suggested by Whisper — adjust anything it got wrong").classes(_LBL)
+                    else:
+                        ui.label("YOURS").classes(_LBL)
+                        ui.label(clip.transcript).classes("text-[#999] font-mono text-[11px] [overflow-wrap:anywhere]")
+                        ui.label("WHISPER HEARS — edit before accepting").classes(_LBL)
+                        ui.html("&nbsp;".join(
+                            f'<span style="color:{"#aaa" if kind == "same" else "#f59e0b"}">{html.escape(w)}</span>'
+                            for w, kind in K.diff_words(clip.transcript, suggestion)
+                        ), sanitize=False).classes("font-mono text-[11px] [overflow-wrap:anywhere]")
+                    ctl["text"] = ui.textarea(value=suggestion).props("outlined dense dark autogrow").classes(
+                        "w-full font-mono text-[12px]")
                 if K.has_filler(clip.transcript):
                     ui.label("Your text has “um”/“uh” that Whisper leaves out — keep them if they're real.").classes(
-                        "text-[#666] font-mono text-[10px]"
-                    )
+                        "text-[#666] font-mono text-[10px]")
 
         def audio_args() -> tuple[float, float, float | None, tuple]:
             gain = (ctl["gain"].value or 0.0) if "volume" in use and use["volume"].value else 0.0
             mute = tuple(rng for cb, rng in mute_boxes if cb.value)
             if "trim" in use and use["trim"].value:
-                return gain, ctl["t0"].value or 0.0, ctl["t1"].value, mute
+                reg = ctl["region"]
+                if reg.start > 0.005 or reg.end < reg.duration - 0.005:      # the whole clip is not a trim
+                    return gain, reg.start, reg.end, mute
             return gain, 0.0, None, mute
 
         def accept():
@@ -419,7 +479,7 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                         clips[new.key] = clips.pop(key)
                     clips[new.key] = cur = new
                     did = True
-                if text is not None:
+                if text is not None and text != cur.transcript:
                     K.set_transcript(char_name, cur, text)
                     clips[cur.key] = K.Clip(cur.key, cur.audio, text, cur.source)
                     did = True
@@ -435,12 +495,12 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             ui.button("IGNORE", icon="skip_next", on_click=lambda: _advance("ignored")).props(
                 "outline color=grey"
             ).classes("font-mono tracking-widest")
-            if "volume" in sug or "trim" in sug or "artifacts" in sug:
+            if "volume" in sug or "trim" in sug or audit is not None:
                 ui.button(
                     "PREVIEW", icon="volume_up",
                     on_click=lambda: _preview(key, *audio_args()),
                 ).props("flat dense color=grey").classes("font-mono text-[10px]").tooltip(
-                    "Hear the clip with the ticked volume and trim fixes applied"
+                    "Hear the clip with the ticked volume, trim and noise fixes applied"
                 )
             ui.space()
             if key != K.PRIMARY:
@@ -546,7 +606,8 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                     by_clip.setdefault(k, {})[p] = sug
         for sug in by_clip.values():
             _fold_audit_into_trim(sug)
-        queue[:] = [k for k in clips if k in by_clip]          # file order
+        queue[:] = [k for k in clips if k in by_clip
+                    and (include_clean is not None and include_clean.value or _needs_attention(by_clip[k]))]   # file order
         pos[0] = 0
         progress_box.set_visibility(False)
         review_box.set_visibility(True)
