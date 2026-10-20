@@ -592,6 +592,13 @@ def build_characters_tab(on_speak, on_change):
                                             "text-[#333] font-mono text-[9px] bg-[#1a1a1a] px-1.5 rounded"
                                         )
                                         ui.button(
+                                            "AUDIT", icon="graphic_eq",
+                                            on_click=lambda n=name: open_cleanup_dialog(n, _rebuild_detail, mode="padding"),
+                                        ).props("flat dense color=amber").classes("font-mono text-[9px]").tooltip(
+                                            "Find breaths, background noise, wrong or extra words and duplicates "
+                                            "in the generated clips — fix or delete them one at a time"
+                                        )
+                                        ui.button(
                                             "DELETE ALL", icon="delete_sweep", on_click=_confirm_delete_padding,
                                         ).props("flat dense color=negative").classes("font-mono text-[9px]").tooltip(
                                             "Remove every generated padding clip (kept in refs_trash/)"
@@ -718,6 +725,10 @@ def build_characters_tab(on_speak, on_change):
                             ui.label(f"{n_padding} padding clips on this character").classes(
                                 "text-[#555] font-mono text-[10px]"
                             )
+                            ui.button(
+                                "AUDIT…", icon="graphic_eq",
+                                on_click=lambda n=name: open_cleanup_dialog(n, _rebuild_detail, mode="padding"),
+                            ).props("flat dense color=amber").classes("font-mono text-[10px]")
                             ui.button(
                                 "DELETE ALL…", icon="delete_sweep", on_click=_confirm_delete_padding,
                             ).props("flat dense color=negative").classes("font-mono text-[10px]")

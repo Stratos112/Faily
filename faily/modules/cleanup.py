@@ -312,10 +312,11 @@ def analyze_all(
     target_db: float | None = None,
     progress: Callable[[str, int, int, str], None] | None = None,
     cancel: list[bool] | None = None,
+    keys: set[str] | None = None,
 ) -> dict[str, dict[str, dict]]:
     """{pass_name: {clip_key: suggestion}} for the clips that need attention.
     progress(pass, i, n, clip_name) is called per clip. Blocking."""
-    clips = own_clips(name)
+    clips = [c for c in own_clips(name) if keys is None or c.key in keys]
     out: dict[str, dict[str, dict]] = {p: {} for p in passes}
     if "volume" in passes and target_db is None:
         levels = []
@@ -365,8 +366,28 @@ def _backup(name: str, audio: Path) -> None:
         shutil.copy2(audio, dest)
 
 
+MUTE_DB = -40.0                  # how far a muted noise is pushed down (timing is unchanged)
+
+
 def process_audio(x: np.ndarray, sr: int, gain_db: float = 0.0,
-                  trim_start: float = 0.0, trim_end: float | None = None) -> np.ndarray:
+                  trim_start: float = 0.0, trim_end: float | None = None,
+                  mute: tuple = ()) -> np.ndarray:
+    """mute: [(start_s, end_s)] ranges (in the ORIGINAL clip's time) to push down by
+    40 dB with short fades — removes a breath between words without shifting anything."""
+    if mute:
+        x = x.copy()
+        env = np.ones(len(x), dtype="float32")
+        ramp = max(int(0.01 * sr), 1)
+        low = 10 ** (MUTE_DB / 20)
+        for a_s, b_s in mute:
+            a, b = int(max(a_s, 0) * sr), int(min(b_s * sr, len(x)))
+            if b <= a:
+                continue
+            env[a:b] = np.minimum(env[a:b], low)
+            fa, fb = max(a - ramp, 0), min(b + ramp, len(x))
+            env[fa:a] = np.minimum(env[fa:a], np.linspace(1, low, a - fa, dtype="float32"))
+            env[b:fb] = np.minimum(env[b:fb], np.linspace(low, 1, fb - b, dtype="float32"))
+        x = x * env
     a = int(max(trim_start, 0.0) * sr)
     b = len(x) if trim_end is None else int(min(trim_end * sr, len(x)))
     y = x[a:b] * (10 ** (gain_db / 20))
@@ -374,25 +395,25 @@ def process_audio(x: np.ndarray, sr: int, gain_db: float = 0.0,
 
 
 def render_preview(path: Path, out: Path, gain_db: float = 0.0,
-                   trim_start: float = 0.0, trim_end: float | None = None) -> Path:
+                   trim_start: float = 0.0, trim_end: float | None = None, mute: tuple = ()) -> Path:
     x, sr = sf.read(str(path), dtype="float32", always_2d=False)
     if x.ndim > 1:
         x = x.mean(axis=1)
     out.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(out), process_audio(x, sr, gain_db, trim_start, trim_end), sr)
+    sf.write(str(out), process_audio(x, sr, gain_db, trim_start, trim_end, mute), sr)
     return out
 
 
 def apply_audio_fix(name: str, clip: Clip, gain_db: float = 0.0,
-                    trim_start: float = 0.0, trim_end: float | None = None) -> Clip:
+                    trim_start: float = 0.0, trim_end: float | None = None, mute: tuple = ()) -> Clip:
     """Rewrite the clip with gain / trim applied. Non-WAV clips (e.g. mp3) are
     written as WAV and the character config is repointed at the new file.
     Returns the updated Clip."""
-    if abs(gain_db) < 0.05 and trim_start <= 0 and trim_end is None:
+    if abs(gain_db) < 0.05 and trim_start <= 0 and trim_end is None and not mute:
         return clip
     x, sr = sf.read(str(clip.audio), dtype="float32", always_2d=False)
     mono = x.mean(axis=1) if x.ndim > 1 else x
-    y = process_audio(mono, sr, gain_db, trim_start, trim_end)
+    y = process_audio(mono, sr, gain_db, trim_start, trim_end, mute)
     _backup(name, clip.audio)
     if clip.audio.suffix.lower() == ".wav":
         sf.write(str(clip.audio), y, sr, subtype="PCM_16")
