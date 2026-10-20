@@ -375,6 +375,7 @@ def audit_clip(
 
 def audit_character(
     name: str, progress: Callable[[int, int, str], None] | None = None, cancel: list[bool] | None = None,
+    keys: set[str] | None = None,
 ) -> dict[str, dict]:
     """Audit every one of a character's own clips: noise events for all of them, plus the
     script comparison, duplicates and background check for generated (padding) clips.
@@ -382,7 +383,7 @@ def audit_character(
     from faily.modules import cleanup as K
     from faily.modules.asr import transcribe
 
-    clips = K.own_clips(name)
+    clips = [c for c in K.own_clips(name) if keys is None or c.key in keys]
     result: dict[str, dict] = {}
     seen: dict[str, str] = {}
     for i, c in enumerate(clips):

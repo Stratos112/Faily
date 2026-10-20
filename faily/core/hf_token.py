@@ -22,7 +22,10 @@ def get_hf_token() -> str | None:
 
 def save_hf_token(token: str) -> None:
     _TOKEN_FILE.write_text(token.strip())
+    if token.strip():
+        os.environ["HF_TOKEN"] = token.strip()        # take effect without a restart
 
 
 def clear_hf_token() -> None:
     _TOKEN_FILE.unlink(missing_ok=True)
+    os.environ.pop("HF_TOKEN", None)

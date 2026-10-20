@@ -161,6 +161,19 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                 with ui.row().classes("gap-2 items-baseline flex-nowrap"):
                     ui.label(t).classes("text-amber-500 font-mono text-[10px] tracking-widest w-24 shrink-0")
                     ui.label(d).classes("text-[#666] font-mono text-[10px] leading-snug")
+            n_padding = sum(1 for c in clips.values() if c.source == "buffer")
+            if has_padding and n_padding < len(clips) and not staging:
+                ui.label("CHECK").classes("text-[#444] font-mono text-[10px] tracking-widest mt-2")
+                scope = ui.toggle(
+                    {"both": f"Both  ({len(clips)})",
+                     "original": f"Original clips  ({len(clips) - n_padding})",
+                     "padding": f"Padding clips  ({n_padding})"},
+                    value="both",
+                ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
+                ui.label("Original = your recordings, imports and the primary reference. Padding = the "
+                         "generated clips.").classes("text-[#555] font-mono text-[10px]")
+            else:
+                scope = None
             with ui.row().classes("gap-2 mt-2 items-center"):
                 ui.button(
                     "CHECK EVERYTHING", icon="spellcheck", on_click=lambda: _start(all_checks),
@@ -487,6 +500,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             )
 
         timer = ui.timer(0.3, lambda: (progress_lbl.set_text(prog["text"]), progress_bar.set_value(prog["frac"])))
+        want = scope.value if scope is not None else "both"
+        keys = {k for k, c in clips.items()
+                if want == "both" or (c.source == "buffer") == (want == "padding")}
         generic = tuple(p for p in passes if p != "artifacts")
         do_audit = "artifacts" in passes
         share = 0.5 if (generic and do_audit) else 1.0           # progress share of the generic checks
@@ -497,9 +513,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                 "  (loads Whisper — can take ~30 s)" if i == 0 and "transcript" not in generic else "")
 
         def run_checks():
-            out = K.analyze_all(char_name, generic, None, on_progress, cancel) if generic else {}
+            out = K.analyze_all(char_name, generic, None, on_progress, cancel, keys=keys) if generic else {}
             if do_audit and not cancel[0]:
-                out["artifacts"] = PA.audit_character(char_name, on_audit, cancel)
+                out["artifacts"] = PA.audit_character(char_name, on_audit, cancel, keys=keys)
             return out
 
 

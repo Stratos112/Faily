@@ -17,9 +17,18 @@ def _load():
     import torch
     from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
-    proc = WhisperProcessor.from_pretrained(MODEL_ID)
     dtype = torch.float16 if manager.device == "cuda" else torch.float32
-    model = WhisperForConditionalGeneration.from_pretrained(MODEL_ID, torch_dtype=dtype)
+
+    def load(local_only: bool):
+        proc = WhisperProcessor.from_pretrained(MODEL_ID, local_files_only=local_only)
+        model = WhisperForConditionalGeneration.from_pretrained(
+            MODEL_ID, torch_dtype=dtype, local_files_only=local_only)
+        return proc, model
+
+    try:
+        proc, model = load(True)          # cached: no network at all (and no Hub warning)
+    except OSError:
+        proc, model = load(False)         # first run: download it
     return proc, model.to(manager.device).eval()
 
 
