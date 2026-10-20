@@ -337,6 +337,8 @@ def analyze_all(
                 return out
             if progress:
                 progress(p, i, len(clips), clip.audio.stem)
+            if p == "transcript" and clip.source == "buffer":
+                continue           # a generated clip's text is its script: modules/padding_audit.py checks the audio against it
             try:
                 if p == "volume":
                     r = analyze_volume(clip.audio, target_db)
@@ -366,7 +368,7 @@ def _backup(name: str, audio: Path) -> None:
         shutil.copy2(audio, dest)
 
 
-MUTE_DB = -40.0                  # how far a muted noise is pushed down (timing is unchanged)
+MUTE_DB = -60.0                  # how far a muted noise is pushed down (timing is unchanged)
 
 
 def process_audio(x: np.ndarray, sr: int, gain_db: float = 0.0,

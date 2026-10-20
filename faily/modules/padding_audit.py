@@ -151,6 +151,7 @@ def find_noise_events(x: np.ndarray, sr: int) -> tuple[list[Event], dict]:
 WER_OK = 0.10                    # a clip "says its script" at or below this word error rate
 WER_DELETE = 0.25                # at/above this, don't try to rescue it
 LOW_SNR_DB = 22.0                # speech less than this far above the background: too noisy
+EFFECT_WER = 0.05                # a noise fix may change at most this share of the words
 
 
 def _word_ops(script: str, heard: str):
@@ -183,50 +184,111 @@ def _verified_edge_trim(
     x: np.ndarray, sr: int, script: str, transcribe: Callable[[np.ndarray, int], str],
     trim_lead: bool, trim_trail: bool,
 ) -> tuple[float, float] | None:
-    """Find (start, end) seconds that drop the extra words at the edges, checking each
-    candidate by re-transcribing the trimmed audio. None if no candidate says the script."""
+    """Find (start, end) seconds that drop the extra words at the edges. Candidate cuts are
+    the quiet gaps; each is checked by transcribing what it would keep, and the answer
+    steers a bisection (more words than the script → cut too late/early, fewer → the
+    other way), so a long stray passage with many pauses still takes ~5 attempts.
+    None if no gap leaves exactly the script."""
     from faily.modules.cleanup import normalize_words
     ref = normalize_words(script)
     dur = len(x) / sr
-    cuts = _gap_cuts(x, sr)
-    start, end = 0.0, dur
-    ok = lambda seg: _wer(ref, normalize_words(transcribe(seg, sr))) <= WER_OK
+    cuts = sorted(c for c in _gap_cuts(x, sr) if 0.3 < c < dur - 0.3)
+
+    def words(seg):
+        return normalize_words(transcribe(seg, sr))
+
+    end = dur
     if trim_trail:
-        for c in sorted((c for c in cuts if c > dur * 0.3), reverse=True)[:6]:
-            if ok(x[: int(c * sr)]):
-                end = c
+        lo, hi, found = 0, len(cuts) - 1, None
+        for _ in range(10):
+            if lo > hi:
                 break
-        else:
+            mid = (lo + hi) // 2
+            hyp = words(x[: int(cuts[mid] * sr)])
+            if _wer(ref, hyp) <= WER_OK:
+                found = cuts[mid]
+                break
+            if len(hyp) > len(ref):
+                hi = mid - 1                 # still includes extra words: cut earlier
+            else:
+                lo = mid + 1                 # lost part of the script: cut later
+        if found is None:
             return None
+        end = found
+    start = 0.0
     if trim_lead:
-        base = x[: int(end * sr)]
-        for c in [c for c in cuts if c < end * 0.7][:6]:
-            if ok(base[int(c * sr):]):
-                start = c
+        head = x[: int(end * sr)]
+        lcuts = [c for c in cuts if c < end - 0.3]
+        lo, hi, found = 0, len(lcuts) - 1, None
+        for _ in range(10):
+            if lo > hi:
                 break
-        else:
+            mid = (lo + hi) // 2
+            hyp = words(head[int(lcuts[mid] * sr):])
+            if _wer(ref, hyp) <= WER_OK:
+                found = lcuts[mid]
+                break
+            if len(hyp) > len(ref):
+                lo = mid + 1                 # still includes extra words: cut later
+            else:
+                hi = mid - 1                 # cut into the script: cut earlier
+        if found is None:
             return None
+        start = found
     return start, end
 
 
-def audit_clip(path: Path, script: str, transcribe: Callable[[np.ndarray, int], str]) -> dict | None:
-    """Everything wrong with one generated clip, or None if it is clean.
+_NOT_SPEECH = {"", "you", "thank you", "thanks", "thank you for watching", "bye", "so"}
 
-    Returns {"issues", "events", "mute": [(a, b)], "trim": {"trim_start","trim_end",...} | None,
-    "words": {...}, "recommend_delete": bool, "reason": str, "snr_db", "duration"}."""
+
+def _verified(x: np.ndarray, sr: int, events: list[Event], transcribe) -> list[Event]:
+    """Keep only events Whisper hears no words in. Breathy, creaky or whispered speech has
+    no pitch either, so the signal rule alone mistakes real words for noise — about half
+    of what it flags in human recordings. On near-silence Whisper makes up "Thank you."
+    or "you"; anything more is treated as speech and left alone. Clicks are too short
+    to be words and need no check."""
+    import re
+    keep = []
+    for e in events:
+        if e.kind != "click":
+            a, b = int(max(e.start - 0.05, 0) * sr), int(min(e.end + 0.05, len(x) / sr) * sr)
+            heard = re.sub(r"[^a-z' ]", "", transcribe(x[a:b], sr).lower()).strip()
+            if heard not in _NOT_SPEECH:
+                continue
+        keep.append(e)
+    return keep
+
+
+def audit_clip(
+    path: Path, script: str, transcribe: Callable[[np.ndarray, int], str], generated: bool = True,
+) -> dict | None:
+    """Everything wrong with one clip's audio, or None if it is clean.
+
+    generated=True (a padding clip, whose text is the script it was made from): also
+    compares the words with the script, and flags a too-noisy background.
+    generated=False (a human recording): noise events only — its transcript is checked
+    by the normal transcript check, and a noisy room is normal.
+
+    Returns {"issues", "edge_issues", "events", "mute": [(a, b)], "trim": {...} | None,
+    "words": {...} | None, "recommend_delete": bool, "reason": str, "snr_db", "duration"}."""
     x, sr = _read(path)
     dur = len(x) / sr
     events, info = find_noise_events(x, sr)
-    heard = transcribe(x, sr).strip()
-    a, b, lead, trail, inner, missing = _word_ops(script, heard)
-    wer = _wer(a, b)
-    issues: list[str] = []
+    events = _verified(x, sr, events, transcribe)
+    if generated:
+        heard = transcribe(x, sr).strip()
+        a, b, lead, trail, inner, missing = _word_ops(script, heard)
+        wer = _wer(a, b)
+    else:
+        heard, a, b, lead, trail, inner, missing, wer = "", [], [], 0, 0, 0, 0, 0.0
+    issues: list[str] = []            # shown as their own findings
+    edge_issues: list[str] = []       # folded into the TRIM section (extra words / noise at the edges)
     out: dict = {"events": events, "duration": round(dur, 2), "snr_db": round(info["snr_db"], 1),
                  "mute": [], "trim": None, "words": None, "recommend_delete": False, "reason": ""}
 
     # ── words vs script ──
     t_start, t_end = 0.0, dur
-    if wer > WER_OK:
+    if generated and wer > WER_OK:
         edge_only = (lead or trail) and not inner and not missing
         fixed = None
         if edge_only:
@@ -235,7 +297,7 @@ def audit_clip(path: Path, script: str, transcribe: Callable[[np.ndarray, int], 
             t_start, t_end = fixed
             extra = f"{lead + trail} extra word{'s' if lead + trail != 1 else ''} at the " + (
                 "start and end" if lead and trail else "start" if lead else "end")
-            issues.append(extra)
+            edge_issues.append(extra)
             out["words"] = {"heard": heard, "kind": "edge", "verified": True, "extra": lead + trail}
         else:
             n_diff = max(inner + lead + trail, missing, 1)
@@ -247,47 +309,80 @@ def audit_clip(path: Path, script: str, transcribe: Callable[[np.ndarray, int], 
                 out["reason"] = "it doesn't say what its script says"
 
     # ── noise events ──
-    inside = [e for e in events if e.where == "inside"]
+    # A fix is only offered if the clip still says exactly the same thing afterwards: the
+    # repaired audio is re-transcribed and compared with the untouched audio. (A stretch
+    # that merely sounds like noise can be breathy speech; checking just that stretch is
+    # too weak, and muting it would cut a word.)
+    from faily.modules.cleanup import normalize_words, process_audio
     start_ev = [e for e in events if e.where == "start"]
     end_ev = [e for e in events if e.where == "end"]
     vs, ve = info["voiced_start"], info["voiced_end"]
+    ws, we = t_start, t_end                              # window left after the extra-words trim
+    cs, ce = ws, we
     if start_ev:
         gap = max(vs - start_ev[-1].end, 0.0)
-        t_start = max(t_start, start_ev[-1].end + min(0.1, gap / 2))
+        cs = max(ws, start_ev[-1].end + min(0.1, gap / 2))
     if end_ev:
         gap = max(end_ev[0].start - ve, 0.0)
-        t_end = min(t_end, end_ev[0].start - min(0.1, gap / 2))
+        ce = min(we, end_ev[0].start - min(0.1, gap / 2))
+    cand = [e for e in events if e.where == "inside" and e.start >= ws and e.end <= we]
+    wants_cut = cs > ws + 0.005 or ce < we - 0.005
+    skipped = 0
+    if cand or wants_cut:
+        base = normalize_words(transcribe(x[int(ws * sr):int(we * sr)], sr))
+
+        def same(muted, a, b_) -> bool:
+            y = process_audio(x, sr, 0.0, a, b_, tuple((e.start, e.end) for e in muted))
+            return _wer(base, normalize_words(transcribe(y, sr))) <= EFFECT_WER
+
+        if same(cand, cs, ce):
+            kept, cut = cand, (cs, ce)
+        else:
+            kept = [e for e in cand if same([e], ws, we)]
+            cut = (cs, ce) if (wants_cut and same([], cs, ce)) else (ws, we)
+            if kept and not same(kept, *cut):
+                kept = []
+            skipped = (len(cand) - len(kept)) + (len(start_ev) + len(end_ev) if wants_cut and cut == (ws, we) else 0)
+        t_start, t_end = cut
+    else:
+        kept = []
     if t_start > 0.005 or t_end < dur - 0.005:
         out["trim"] = {"trim_start": round(t_start, 2), "trim_end": round(t_end, 2), "duration": round(dur, 2),
                        "speech_start": round(vs, 2), "speech_end": round(ve, 2)}
-    if start_ev or end_ev:
-        issues.append(f"{len(start_ev) + len(end_ev)} noise{'s' if len(start_ev) + len(end_ev) != 1 else ''} at the edges")
-    if inside:
-        out["mute"] = [(round(e.start, 2), round(e.end, 2)) for e in inside]
-        issues.append(f"{len(inside)} noise{'s' if len(inside) != 1 else ''} between words ("
-                      + ", ".join(sorted({e.kind for e in inside})) + ")")
+    cut_by_noise = (t_start > ws + 0.005 or t_end < we - 0.005)
+    if cut_by_noise:
+        n_edge = len(start_ev) + len(end_ev)
+        edge_issues.append(f"{n_edge} noise{'s' if n_edge != 1 else ''} at the edges")
+    if kept:
+        out["mute"] = [(round(e.start, 2), round(e.end, 2)) for e in kept]
+        issues.append(f"{len(kept)} noise{'s' if len(kept) != 1 else ''} between words ("
+                      + ", ".join(sorted({e.kind for e in kept})) + ")")
+    out["events"] = [e for e in events if e.where != "inside" or e in kept]
+    out["skipped"] = skipped            # candidates dropped because removing them would change the words
 
     # ── background ──
-    if info["snr_db"] < LOW_SNR_DB:
+    if generated and info["snr_db"] < LOW_SNR_DB:
         issues.append(f"noisy background (speech only {info['snr_db']:.0f} dB above it)")
         out["recommend_delete"] = True
         out["reason"] = out["reason"] or "its background noise can't be removed"
 
-    if not issues:
+    if not issues and not edge_issues:
         return None
     out["issues"] = issues
+    out["edge_issues"] = edge_issues
     return out
 
 
 def audit_character(
     name: str, progress: Callable[[int, int, str], None] | None = None, cancel: list[bool] | None = None,
 ) -> dict[str, dict]:
-    """Audit every padding clip of a character. {clip_key: audit} for clips that need
-    attention (including duplicates of an earlier clip's script). Blocking."""
+    """Audit every one of a character's own clips: noise events for all of them, plus the
+    script comparison, duplicates and background check for generated (padding) clips.
+    {clip_key: audit} for clips that need attention. Blocking."""
     from faily.modules import cleanup as K
     from faily.modules.asr import transcribe
 
-    clips = [c for c in K.own_clips(name) if c.source == "buffer"]
+    clips = K.own_clips(name)
     result: dict[str, dict] = {}
     seen: dict[str, str] = {}
     for i, c in enumerate(clips):
@@ -295,17 +390,20 @@ def audit_character(
             break
         if progress:
             progress(i, len(clips), c.audio.stem)
-        key = " ".join(K.normalize_words(c.transcript))
-        dup_of = seen.get(key)
-        seen.setdefault(key, c.audio.stem)
+        generated = c.source == "buffer"
+        dup_of = None
+        if generated:                              # repeated scripts matter for generated clips only
+            key = " ".join(K.normalize_words(c.transcript))
+            dup_of = seen.get(key)
+            seen.setdefault(key, c.audio.stem)
         try:
-            r = audit_clip(c.audio, c.transcript, transcribe)
+            r = audit_clip(c.audio, c.transcript, transcribe, generated)
         except Exception as exc:
-            r = {"issues": [f"couldn't audit: {exc}"], "events": [], "mute": [], "trim": None, "words": None,
-                 "recommend_delete": False, "reason": "", "duration": 0, "snr_db": 0, "error": True}
+            r = {"issues": [f"couldn't audit: {exc}"], "edge_issues": [], "events": [], "mute": [], "trim": None,
+                 "words": None, "recommend_delete": False, "reason": "", "duration": 0, "snr_db": 0, "error": True}
         if dup_of:
             r = r or {"events": [], "mute": [], "trim": None, "words": None, "recommend_delete": False,
-                      "reason": "", "duration": 0, "snr_db": 0, "issues": []}
+                      "reason": "", "duration": 0, "snr_db": 0, "issues": [], "edge_issues": []}
             r["issues"] = [f"duplicate of {dup_of}"] + r["issues"]
             r["recommend_delete"], r["reason"] = True, f"same script as {dup_of}"
         if r:

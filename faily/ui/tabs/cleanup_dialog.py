@@ -21,7 +21,7 @@ from faily.modules.importer import commit_stage, discard_stage
 from faily.ui.components import bind_play, play_url, show_error
 
 _PASSES = ("volume", "trim", "transcript")
-_TITLES = {"volume": "VOLUME", "trim": "TRIM", "transcript": "TRANSCRIPT"}
+_TITLES = {"volume": "VOLUME", "trim": "TRIM", "transcript": "TRANSCRIPT", "artifacts": "NOISES"}
 _PREVIEW_DIR = Path("outputs/_cleanup_preview")
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 _SECTION = "w-full gap-1 rounded border border-[#222] bg-[#101010] p-3"
@@ -51,8 +51,9 @@ def _headline(suggestions: dict[str, dict], clip: K.Clip, staging: bool) -> str:
             bits.append(f"{tail:.1f} s at the end" if bits else f"{tail:.1f} s of space at the end")
         if any("noise" in i for i in t["issues"]):
             bits.append("stray noise at the edge")
+        bits.extend(i for i in t["issues"] if "extra word" in i)
         parts.append(" and ".join(bits))
-    pa = suggestions.get("padding")
+    pa = suggestions.get("artifacts")
     if pa:
         parts.extend(pa["issues"])
     tr = suggestions.get("transcript")
@@ -65,9 +66,36 @@ def _headline(suggestions: dict[str, dict], clip: K.Clip, staging: bool) -> str:
     return "  ·  ".join(p for p in parts if p)
 
 
-def open_cleanup_dialog(
-    char_name: str, on_done=lambda: None, staging: dict | None = None, mode: str = "all",
-) -> None:
+def _fold_audit_into_trim(sug: dict[str, dict]) -> None:
+    """A generated clip is checked twice for things at its edges (the normal trim check
+    and the audit's noise/extra-word check). Show one TRIM section: the tighter of the
+    two cut windows, with both findings. What's left of the audit (noises between words,
+    wrong words, duplicate, background) stays under "artifacts"."""
+    audit = sug.get("artifacts")
+    if not audit:
+        return
+    at, gt = audit.get("trim"), sug.get("trim")
+    edge = list(audit.get("edge_issues", []))
+    if at:
+        base = gt or {"issues": [], "duration": at["duration"], "speech_start": at["speech_start"],
+                      "speech_end": at["speech_end"], "trim_start": 0.0, "trim_end": at["duration"]}
+        merged = dict(base)
+        merged["trim_start"] = max(base["trim_start"], at["trim_start"])
+        merged["trim_end"] = min(base["trim_end"], at["trim_end"])
+        merged["issues"] = list(dict.fromkeys(base["issues"] + edge))
+        if audit.get("words") and audit["words"].get("verified"):
+            merged["note"] = "Checked by re-transcribing the trimmed audio: it now says exactly its script."
+        sug["trim"] = merged
+        audit["trim"] = None
+    elif gt and edge:
+        gt["issues"] = list(dict.fromkeys(gt["issues"] + edge))
+    keep = (audit["issues"] or audit["mute"] or audit["recommend_delete"]
+            or (audit.get("words") and audit["words"]["kind"] == "mismatch"))
+    if not keep:
+        del sug["artifacts"]
+
+
+def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | None = None) -> None:
     """Spell-check review of a character's own reference clips.
 
     staging: set when reviewing freshly imported slices held in a hidden staging
@@ -76,16 +104,17 @@ def open_cleanup_dialog(
     transcript is pre-filled from Whisper, and the end of the review offers ADD /
     DISCARD instead of just closing.
 
-    mode="padding": audit only the character's generated padding clips — volume, plus
-    noises/breaths, words that aren't in the script, duplicates (modules/padding_audit.py)."""
-    padding = mode == "padding"
-    clips: dict[str, K.Clip] = {
-        c.key: c for c in K.own_clips(char_name) if (c.source == "buffer" or not padding)
-    }                                                                         # key -> current Clip
+    Every clip is also checked for noises and breaths (modules/padding_audit.py), each fix
+    verified not to change the words. Generated padding clips (source "buffer") get
+    more on the same screen — words that aren't in their script, duplicates, background
+    noise — and are checked against their script instead of having it "corrected" by
+    Whisper."""
+    clips: dict[str, K.Clip] = {c.key: c for c in K.own_clips(char_name)}    # key -> current Clip
     if not clips:
-        ui.notify("No padding clips to audit" if padding else "No reference clips of its own to clean up",
-                  type="warning")
+        ui.notify("No reference clips of its own to clean up", type="warning")
         return
+    has_padding = any(c.source == "buffer" for c in clips.values())
+    all_checks = _PASSES + ("artifacts",)
     by_clip: dict[str, dict[str, dict]] = {}       # clip key -> {pass: suggestion}
     queue: list[str] = []                          # clip keys in review order
     pos = [0]
@@ -101,8 +130,7 @@ def open_cleanup_dialog(
     ):
         with ui.row().classes("w-full items-center justify-between"):
             ui.label(
-                f"IMPORT  ·  {len(clips)} slices for {staging['target']}" if staging
-                else f"PADDING AUDIT  ·  {char_name}" if padding else f"CLEAN UP DATA  ·  {char_name}"
+                f"IMPORT  ·  {len(clips)} slices for {staging['target']}" if staging else f"CLEAN UP DATA  ·  {char_name}"
             ).classes("text-white font-mono text-xs tracking-widest")
             ui.label(f"{len(clips)} clips").classes("text-[#555] font-mono text-[10px]")
 
@@ -114,31 +142,32 @@ def open_cleanup_dialog(
                 "until you accept. Original audio is kept in refs_original/ and deleted clips in "
                 "refs_trash/."
             ).classes("text-[#888] font-mono text-[11px] leading-snug")
-            for t, d in ((
-                ("VOLUME", "Too loud, too quiet or clipping → suggested gain."),
-                ("NOISES", "Breaths, hiss and clicks, found from the signal (they have no pitch, every real word does). "
-                           "At the edges → trimmed off; between words → muted, so the timing doesn't change."),
-                ("WORDS", "Generated clips have a known script, so any difference is a defect: extra words at the "
-                          "start/end are trimmed (and checked by re-transcribing); missing or wrong words → delete."),
-                ("OTHER", "Duplicates of an earlier clip's script, and clips with too much background noise."),
-            ) if padding else (
+            for t, d in (
                 ("VOLUME", "Clipping, too quiet, or far louder/quieter than the rest → suggested gain."),
                 ("TRIM", "Silence at the start/end and stray noise (breaths, clicks) → suggested cut points. "
                          "Whisper double-checks what's in each cut."),
                 ("TRANSCRIPT", "Clips whose text disagrees with what Whisper hears → suggested correction. "
                                "Whisper leaves out “um”/“uh”, so those aren't counted as errors."),
-            )):
+            ) + ((
+                ("NOISES", "Breaths, hiss and stray noises (found from the signal, then confirmed by Whisper "
+                           "hearing no words in them). At the edges → trimmed off; between words → muted, so the "
+                           "timing doesn't change. Every fix is re-checked: it's dropped if the clip wouldn't say "
+                           "exactly the same thing afterwards. Natural breaths in your own recordings start "
+                           "unticked."),
+            ) + ((
+                ("PADDING", "Generated padding clips are also checked against their script: extra or wrong "
+                            "words, duplicates, and background noise that's too high."),
+            ) if has_padding else ())):
                 with ui.row().classes("gap-2 items-baseline flex-nowrap"):
                     ui.label(t).classes("text-amber-500 font-mono text-[10px] tracking-widest w-24 shrink-0")
                     ui.label(d).classes("text-[#666] font-mono text-[10px] leading-snug")
             with ui.row().classes("gap-2 mt-2 items-center"):
                 ui.button(
-                    "AUDIT PADDING" if padding else "CHECK EVERYTHING", icon="spellcheck",
-                    on_click=lambda: _start(_PASSES),
+                    "CHECK EVERYTHING", icon="spellcheck", on_click=lambda: _start(all_checks),
                 ).props("color=amber unelevated").classes("font-mono tracking-widest").tooltip(
                     "Run every check, then review each clip that needs attention"
                 )
-                for p in () if padding else _PASSES:
+                for p in all_checks:
                     ui.button(f"{_TITLES[p]} ONLY", on_click=lambda p=p: _start((p,))).props(
                         "flat dense color=grey"
                     ).classes("font-mono text-[10px]")
@@ -251,7 +280,7 @@ def open_cleanup_dialog(
                 )
                 ui.label(_headline(sug, clip, bool(staging))).classes("text-[#e0b13a] font-mono text-[12px]")
 
-        audit = sug.get("padding")
+        audit = sug.get("artifacts")
         mute_boxes: list[tuple] = []          # (checkbox, (start, end)) per noise between words
         if audit and audit["recommend_delete"]:
             ui.label(f"Recommended: delete this clip — {audit['reason']}.").classes(
@@ -273,30 +302,14 @@ def open_cleanup_dialog(
                         "dense outlined dark suffix=dB"
                     ).classes("w-32 font-mono")
 
-        if audit and audit["trim"]:
-            r = audit["trim"]
-            with ui.column().classes(_SECTION):
-                with ui.row().classes("w-full items-center gap-2"):
-                    use["trim"] = ui.checkbox("TRIM", value=True).props("dense color=amber").classes(
-                        "font-mono text-[11px] text-[#bbb]"
-                    )
-                    ui.label("extra words or noise at the edge").classes("text-[#c9a227] font-mono text-[10px] flex-grow")
-                ui.label(f"{r['duration']:.1f} s long · voiced speech runs {r['speech_start']:.1f} – {r['speech_end']:.1f} s"
-                         + ("  ·  trim verified by re-transcribing" if audit["words"] and audit["words"].get("verified") else "")
-                         ).classes("text-[#666] font-mono text-[10px]")
-                with ui.row().classes("items-center gap-2"):
-                    ctl["t0"] = ui.number(value=r["trim_start"], format="%.2f", step=0.05, min=0, label="keep from").props(
-                        "dense outlined dark suffix=s"
-                    ).classes("w-32 font-mono")
-                    ctl["t1"] = ui.number(value=r["trim_end"], format="%.2f", step=0.05, min=0, label="keep to").props(
-                        "dense outlined dark suffix=s"
-                    ).classes("w-32 font-mono")
-
         if audit and audit["mute"]:
             with ui.column().classes(_SECTION):
-                ui.label("NOISES BETWEEN WORDS — ticked ones are muted (the timing doesn't change)").classes(_LBL)
+                ui.label("NOISES BETWEEN WORDS — ticked ones are muted (the timing doesn't change)"
+                         + ("; natural breaths in a recording start unticked" if clip.source != "buffer" else "")).classes(_LBL)
                 for e in (e for e in audit["events"] if e.where == "inside"):
-                    cb = ui.checkbox(f"{e.kind}  {e.start:.2f} – {e.end:.2f} s  ({e.level_db:+.0f} dB vs speech)", value=True)
+                    natural = clip.source != "buffer" and e.kind == "breath"      # a person breathing is normal
+                    cb = ui.checkbox(f"{e.kind}  {e.start:.2f} – {e.end:.2f} s  ({e.level_db:+.0f} dB vs speech)",
+                                     value=not natural)
                     cb.props("dense color=amber").classes("font-mono text-[11px] text-[#bbb]")
                     mute_boxes.append((cb, (e.start, e.end)))
 
@@ -334,6 +347,8 @@ def open_cleanup_dialog(
                 )
                 if r.get("caution"):
                     ui.label("⚠ " + r["caution"]).classes("text-amber-500 font-mono text-[10px]")
+                if r.get("note"):
+                    ui.label(r["note"]).classes("text-[#7a9a7a] font-mono text-[10px]")
                 with ui.row().classes("items-center gap-2"):
                     ctl["t0"] = ui.number(value=r["trim_start"], format="%.2f", step=0.05, min=0, label="keep from").props(
                         "dense outlined dark suffix=s"
@@ -407,7 +422,7 @@ def open_cleanup_dialog(
             ui.button("IGNORE", icon="skip_next", on_click=lambda: _advance("ignored")).props(
                 "outline color=grey"
             ).classes("font-mono tracking-widest")
-            if "volume" in sug or "trim" in sug or "padding" in sug:
+            if "volume" in sug or "trim" in sug or "artifacts" in sug:
                 ui.button(
                     "PREVIEW", icon="volume_up",
                     on_click=lambda: _preview(key, *audio_args()),
@@ -465,28 +480,31 @@ def open_cleanup_dialog(
         prog.update(text="Starting…", frac=0.0)
 
         def on_progress(p, i, n, name):
-            idx = passes.index(p)
-            prog["frac"] = (idx + i / max(n, 1)) / len(passes)
+            idx = generic.index(p)
+            prog["frac"] = share * (idx + i / max(n, 1)) / len(generic)
             prog["text"] = f"{_TITLES[p].lower()} check · {i + 1}/{n} · {name}" + (
                 "  (first transcript check loads Whisper — can take ~30 s)" if p == "transcript" and i == 0 else ""
             )
 
         timer = ui.timer(0.3, lambda: (progress_lbl.set_text(prog["text"]), progress_bar.set_value(prog["frac"])))
+        generic = tuple(p for p in passes if p != "artifacts")
+        do_audit = "artifacts" in passes
+        share = 0.5 if (generic and do_audit) else 1.0           # progress share of the generic checks
 
-        def run_padding():
-            keys = set(clips)
-            vol = K.analyze_all(char_name, ("volume",), None, None, cancel, keys=keys)["volume"]
-            prog.update(text="checking noises and words…", frac=0.1)
+        def on_audit(i, n, name):
+            prog["frac"] = (1 - share) + share * i / max(n, 1) if generic else i / max(n, 1)
+            prog["text"] = f"padding clips: noises and script · {i + 1}/{n} · {name}" + (
+                "  (loads Whisper — can take ~30 s)" if i == 0 and "transcript" not in generic else "")
 
-            def on_audit(i, n, name):
-                prog["frac"] = 0.1 + 0.9 * i / max(n, 1)
-                prog["text"] = f"noises and words · {i + 1}/{n} · {name}" + (
-                    "  (the first one loads Whisper — can take ~30 s)" if i == 0 else "")
-            return {"volume": vol, "padding": PA.audit_character(char_name, on_audit, cancel)}
+        def run_checks():
+            out = K.analyze_all(char_name, generic, None, on_progress, cancel) if generic else {}
+            if do_audit and not cancel[0]:
+                out["artifacts"] = PA.audit_character(char_name, on_audit, cancel)
+            return out
+
 
         try:
-            found = (await ni_run.io_bound(run_padding) if padding
-                     else await ni_run.io_bound(K.analyze_all, char_name, passes, None, on_progress, cancel))
+            found = await ni_run.io_bound(run_checks)
         except Exception as exc:
             show_error(exc)
             found = None
@@ -506,10 +524,12 @@ def open_cleanup_dialog(
             intro_box.set_visibility(True)
             return
         by_clip.clear()
-        for p in (("volume", "padding") if padding else passes):
+        for p in passes:
             for k, sug in found.get(p, {}).items():
                 if k in clips:
                     by_clip.setdefault(k, {})[p] = sug
+        for sug in by_clip.values():
+            _fold_audit_into_trim(sug)
         queue[:] = [k for k in clips if k in by_clip]          # file order
         pos[0] = 0
         progress_box.set_visibility(False)
