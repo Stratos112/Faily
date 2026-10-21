@@ -303,6 +303,7 @@ phase_piper() {
         "$py" "$SCRIPT_DIR/patch_piper_train_learning_rate.py"
         "$py" "$SCRIPT_DIR/patch_piper_train_progress.py"
         "$py" "$SCRIPT_DIR/patch_piper_train_freeze.py"
+        "$py" "$SCRIPT_DIR/patch_piper_train_unique_validation.py"
     fi
 
     # piper-train pulls torch 1.13.1+cu117 — no Blackwell kernels at all.

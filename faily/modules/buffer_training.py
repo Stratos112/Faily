@@ -72,7 +72,8 @@ class BufferCandidate:
 
 
 def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
-    """Parse the buffer-scripts text file into {category_key: [line, ...]}.
+    """Parse the buffer-scripts text file (plus any buffer_scripts_*.txt beside
+    it) into {category_key: [line, ...]}.
 
     "## CATEGORY_KEY" header lines start a category; blank lines are ignored;
     lines starting with "#" outside a header are comments. Raises
@@ -81,21 +82,25 @@ def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
     """
     if not path.exists():
         raise FileNotFoundError(f"Script bank not found: {path}")
+    # Extra banks sit beside the main one as buffer_scripts_<name>.txt (same
+    # format) and are merged in; sample_lines() drops cross-file duplicates.
+    paths = [path, *sorted(path.parent.glob(f"{path.stem}_*{path.suffix}"))]
     bank: dict[str, list[str]] = {}
-    current: str | None = None
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("##"):
-            current = line[2:].strip()
-            bank.setdefault(current, [])
-            continue
-        if line.startswith("#"):
-            continue
-        if current is None:
-            continue
-        bank[current].append(line)
+    for file in paths:
+        current: str | None = None
+        for raw_line in file.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("##"):
+                current = line[2:].strip()
+                bank.setdefault(current, [])
+                continue
+            if line.startswith("#"):
+                continue
+            if current is None:
+                continue
+            bank[current].append(line)
     return bank
 
 

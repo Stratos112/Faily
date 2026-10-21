@@ -1,0 +1,1821 @@
+# Extra Buffer Training script lines (200 per category) — merged into the bank by
+# load_script_bank() alongside buffer_scripts.txt. Same format. Keep every line
+# unique across ALL buffer_scripts*.txt files (scripts/check_script_bank.py).
+
+## plosives
+Put the paper cup back on the top shelf.
+Betty bought a bushel of bright purple beets.
+The tailor tucked a tiny tag into the pocket.
+Pete's puppy peeked past the picket fence.
+Keep the key in a pocket, not the basket.
+The potter turned out a tidy pot at the kiln.
+Don't tap the glass; the tank could crack.
+A bold baker bakes bagels before dawn.
+Pat dropped the pan, and the pie tumbled out.
+The cop parked the car by the curb.
+Gary gave the guide a gold badge.
+Pull the plug before you touch the cord.
+The truck bed was packed with tools and tarps.
+Tim took two tickets to the town's best concert.
+Bill's big brother builds boats by the bay.
+Dig a deep ditch and drop the pipe inside.
+The kite caught a gust and kept climbing.
+Patty picked up the pencil and put it back.
+Both bakers brought bread to the picnic.
+The doctor patted the toddler's back.
+A sudden thump came from the basement door.
+Quit kicking the cabinet, Kyle.
+Pack a towel, a cap, and a bottle of water.
+The brave pilot took the plane up despite the cold.
+Paul pushed the buggy past the bus stop.
+Dig it up, pat it down, and top it with bark.
+The cadet kept a tight grip on the cable.
+Tapping on the tin roof kept me awake.
+Betsy built a pretty birdbath by the back porch.
+The deputy dropped by the depot at dusk.
+Cut the tape, tuck the flap, and tag the box.
+George grabbed the garden gate and guided it shut.
+The puppet's top hat popped off with a bounce.
+A pepper pot, a plate, and a pitcher sat on the table.
+Tad tapped out a quick beat on the dashboard.
+The bold bandit bolted for the border.
+Dan put down the paddle and tied the boat.
+A dark cloud dipped behind the peak.
+Take the bike path past the cabin and the pond.
+The baby's blanket got caught in the buckle.
+Carl cooked a big pot of carrot soup.
+Pete's tiny kite tugged hard at the tight string.
+Dropping the cup caused a bang that scared the cat.
+Both boys picked the biggest pumpkin in the patch.
+The teacher tapped the board to get the class's attention.
+Cap the bottle, pack the cooler, and take the path.
+Gabby kept the keys to the garage in a basket.
+The big truck pulled up beside the tall building.
+Please pick a book, but be quick about it.
+Dennis tipped the waiter and tucked the receipt away.
+The cobbler cut the leather and punched the holes.
+A pack of puppies tumbled out of the box.
+Bud's pickup truck broke down at the top of the bridge.
+Kate tossed the keys to Bobby, who caught them.
+The pitcher threw a perfect curveball past the batter.
+Back up the truck, then park by the curb.
+Buckle the belt, grab the bag, and dash out the door.
+A tiny beetle dropped from the branch onto my cap.
+Take the cake out before it gets too dark on top.
+Poppy picked a pocketful of bright petals.
+The detective questioned the tenant about the broken lock.
+Cooper dipped the paintbrush in the can and began to paint.
+Timmy tripped on the curb and dropped the groceries.
+Tom's top-notch pizza pie is perfect with pepper.
+Dodge the puddle, duck the branch, and keep going.
+The tour guide told the group to stay together.
+Carefully tap the cork out of the bottle.
+Bart parked behind the bakery and carried boxes inside.
+The kid kept kicking the can down the path.
+A big gap opened between the planks.
+Take a breath, then tackle the problem step by step.
+Pass the butter, please, and the pepper too.
+The captain's cabin was tidy and kept quite dark.
+Dave drove to Dublin to deliver the packages.
+The topic of the debate was public transport.
+Betty's bike had a bent pedal and a popped tire.
+Grab the crate by the edge and drag it back.
+Peter plucked a ripe pear from the top branch.
+The tiger crept toward the tall grass, silent and quick.
+Draw the curtain, kill the lights, and take a seat.
+Both couples took part in the cooking contest.
+The puppy chewed up a pair of boots and a book.
+Dig, plant, pat, and water, and then wait.
+A thick packet of tickets was tucked in my backpack.
+The kettle clicked off, and the tea was ready.
+Pablo built a tiny cabin out of twigs and bark.
+Kick off your boots and put your feet up.
+The big bad wolf tapped at the door.
+Paula picked a path through the thick brush.
+Take the quickest route to the depot.
+He tipped the bucket, and the pebbles poured out.
+Crack the eggs, beat them, and pour them in the pan.
+The pastor paused before the final prayer.
+A wooden crate, a bucket, and a broken cart sat in the barn.
+Dad's truck bounced down the dirt road to the pond.
+The popcorn popped, and Pete grabbed a bowl.
+Check the tape, test the cable, and then plug it in.
+Cody decided to trade the bat for a bigger one.
+Doug discovered a tiny gap beneath the deck.
+Tuck the baby in tight, and turn the light off.
+The pop group played a tight, punchy set.
+Big Ben chimed, and the crowd began to cheer.
+Take the tray to table ten, please.
+Katie typed a quick note and tapped send.
+The bridge builders poured concrete until dusk.
+The pigeon pecked at the bread crumbs and bobbed its head.
+Brad took a bite of the burger and put it back down.
+Gus kept the dog's bowl by the back door.
+Despite the doubt, Dana debuted the design.
+Tap the barrel, and it gives a deep, hollow thud.
+The cab pulled up, and Pat paid the driver.
+Dig out the old bed and bring the pieces to the dump.
+The bride's bouquet was tied with a purple ribbon.
+Both teams battled until the final bell.
+Pull the cart back a bit; it's blocking the path.
+Keep a cool head, take a deep breath, and begin.
+The tub is packed with ice, pop, and bottled tea.
+Doug ducked as the bat spun past his head.
+Don't touch the pot; the handle's too hot.
+Polly's pet parrot perched on the pipe.
+The truck tires crunched across the gravel.
+A cheap tent can be a great pick for a trip.
+Dig the post deeper before you put the beam in.
+The bakery's best pastry was a plum tart.
+Beth bought two big bunches of broccoli.
+Both toddlers tumbled onto the cushions, giggling.
+Grab a pen, jot a quick note, and tape it to the door.
+Take the tall ladder up to the top of the barn.
+The cat pounced on the toy and dragged it under the bed.
+Tuck the pages back in the book before you pack it.
+Gordon picked a good spot beside the creek to camp.
+A heap of dry kindling kept the campfire going.
+Betty's baby brother babbled all the way to the park.
+Tell the crew to be at the dock by ten.
+Pat the dough flat, then cut it into pieces.
+The pirate's parrot squawked, and the deck erupted.
+Pete kept a patch of tulips behind the cottage.
+A coat of paint can transform a drab room.
+Dig through the debris and find the broken pipe.
+Katy took a quick peek at the packed courtroom.
+The bus pulled out, and the kids waved goodbye.
+Both candidates debated for two tough hours.
+Dad packed pickles and potato chips in the picnic basket.
+Bob tapped the keg and poured a pint.
+The captain tipped his cap to the crowd.
+Cut a path through the thick brush by the creek.
+A cold breeze blew the papers off the desk.
+The kitten curled up in a basket by the stove.
+Todd's truck towed the trailer up the track.
+The baker's boy brought a basket of buns.
+Grab the paddle and push off from the dock.
+Pat's puppet show packed the theater every night.
+Kevin booked a trip to Beijing on a budget.
+The clock ticked, and the tension kept building.
+Hand me the tape, the tacks, and the tiny hammer.
+Don't be too quick to pick a side.
+The golden retriever dropped the stick and barked.
+Break the bar in two and pass out the pieces.
+Both brothers cooked dinner for the crowd.
+The pump kept thumping while the tank filled up.
+Pedal, pedal, pedal, and then coast down the path.
+Buy the better pair of boots; they'll last.
+Dig a pit, drop in the pot, and pack the dirt down.
+A tough, bumpy ride took us over the top.
+The public park is open past dusk.
+Tommy took a big gulp, and the cup was empty.
+Put the kettle on, and bring out the cups.
+Kayla's cat knocked the pot off the porch.
+A quick tap on the back got his attention.
+The pebble skipped three times across the pond.
+Peggy put the keys back in the top drawer.
+Beat the batter until it's thick and smooth.
+Bring a bucket, a brush, and a bar of soap.
+The deputy checked the docket and called the case.
+A paper boat bobbed along the curb after the rain.
+The tackle was tough, but Tyler kept possession.
+Bake the cake at four hundred degrees, but check it early.
+Drop by the bakery, and pick up a baguette.
+The carpenter planed the board until it was flat.
+Gabe packed the car trunk with bags, boxes, and a tent.
+Bad weather caused the trip to be postponed.
+Don't poke the bear, and don't tempt fate.
+Cupcakes, pies, and candy are on the dessert table.
+The tutor tapped the page and asked a pointed question.
+Kip typed the code, tested it, and pushed the update.
+Pick up the pace; we're behind the pack.
+The tide pulled the boat back toward the pier.
+Dwight's dog dug up the tulip bed.
+Take a bite, then put your fork down.
+The cab driver took a back road to beat the traffic.
+Beyond the barn, the path bent toward the creek.
+Pat patted the pup, and the pup panted happily.
+Tuck a pillow behind your back to keep it propped up.
+A piece of bark popped off and tumbled down the bank.
+The truck's brakes squealed as it pulled up at the depot.
+Both kids begged to keep the puppy.
+Cook the bacon till it's crisp and crumbly.
+Don't tip the table, or the cups will tumble.
+Bob's boat bumped the dock, and everybody jumped.
+Take the top bunk if you don't mind the climb.
+
+## sibilance
+She sells seashells by the seashore every summer.
+Sam saw six sleepy seals sunning on the sand.
+The sun set slowly over the silver sea.
+Shh, the baby is sound asleep.
+Fresh fish is served on Fridays at the shop.
+Vivian visited five villages on her voyage.
+The thief sneaked past the sleeping guard.
+Seven sailors sang a sweet, soulful song.
+The thick fog hid the rough, rocky shoreline.
+Sally's sister sells sweet strawberries at the market.
+Wash the dishes, then switch off the lights.
+Three thin sheets of ice covered the shallow pond.
+The hissing steam escaped from the old pipes.
+Zoe zipped the zebra-striped suitcase shut.
+A soft breeze whispered through the sage bushes.
+The sheriff said the suspect fled south.
+Fifty fresh figs fell from the fig tree.
+Sophie's smile spread across her face as she heard the news.
+Rush hour was a mess, so we left after lunch.
+The vase was filled with fresh, fragrant flowers.
+Cheryl shuffled her cards and dealt a fresh hand.
+Please fetch the fish, the fries, and the fruit.
+The seashore was strewn with shells and seaweed.
+Sunshine slipped through the shutters and warmed the floor.
+He sipped his soup slowly, savoring each spoonful.
+The visitors found the village very friendly.
+Seth thought the thesis was thoroughly thorough.
+Fiona found a few fine feathers on the forest floor.
+A swift swallow swooped over the sunlit meadow.
+Dishes, silverware, and glasses were stacked on the shelf.
+The professor's speech was serious yet sincere.
+We saw the sights of the city from a sightseeing bus.
+The stiff, scratchy fabric irritated his skin.
+Vicky valued her very first violin.
+Sixty-six sailors sailed past the sandbar.
+Sunlight shimmered on the surface of the sea.
+Rose chose the soft sofa and sat.
+This is the fifth of the thirty-five forms.
+The shy fisherman fished off the south shore.
+Seasons shift, and sunsets shorten as autumn arrives.
+Wishing for sunshine, Sue stayed outside all afternoon.
+Zack's zipper snagged on the sleeve.
+The selfish sheep refused to share the shade.
+Fresh snow settled softly on the silent street.
+She shifted the fish onto a serving dish.
+Few things feel as safe as a warm sweater.
+Please stop shouting; the staff are sleeping.
+Seven shiny sports cars sped south on the freeway.
+The thief vanished into the shadows of the forest.
+Savannah's silver necklace sparkled in the sunshine.
+A stiff, salty wind stirred up the sea.
+Sheila's fancy shoes fit surprisingly snugly.
+The sixth sick sheikh's sheep is sick.
+Vast fields of fresh, soft snow stretched ahead.
+She fixed the fuse, and the house lights flashed back on.
+The sleepy village is just five miles south of here.
+He faces serious fines for speeding on the freeway.
+Thirsty visitors sipped sweet tea on the shaded porch.
+Wash your face, brush your teeth, and say goodnight.
+Is that sauce too spicy, or just right?
+Shelly shook the shaker, and salt fell on the fries.
+This phase of the process is the most fascinating.
+We should visit the fish market first.
+Seagulls shrieked and swooped over the harbor.
+The faucet fizzed, sputtered, and finally flowed.
+Joyce chose a sleek, sassy dress for the show.
+The sun's rays pierced through the thick, heavy mist.
+A fresh slice of fish was served with sauce.
+The soft hiss of the sea calmed his nerves.
+Those fuzzy, soft slippers are very comfortable.
+Seven surfers vanished beyond the surf.
+Susan's visit to the savanna was a success.
+Sift the flour, add a pinch of salt, and stir.
+The sheep slept soundly in the shade of the shed.
+She faces the same issues as the rest of us.
+Steve's fifth shift finished at six.
+A soothing song filled the house from the stereo.
+The shuttle left the station and sped south.
+Sixty seconds is all you have, so use them wisely.
+The shiny shoes sat on a shelf by the fireplace.
+Seth's thoughts wandered from the sermon to the sea.
+Fix the seat, then sweep the floor.
+Seeing the vast sea, she felt small and serene.
+The fearsome storm shook the house for hours.
+Wash the fresh fruit, then slice it.
+Thin slices of salmon sat on a bed of rice.
+The vet said his leg was safe to use.
+Silk scarves swayed softly from the shop's shelves.
+Three fishermen shared a thermos of hot soup.
+He swiftly shuffled the sheets across the desk.
+Satisfied, the chef sprinkled a pinch of fresh herbs.
+The shape of the vase suits the shelf.
+She whispered a sweet secret to the sleepy child.
+Some fish swim south in the first frost.
+Vera's voice softened as she read the verse.
+Sleeves up, shoulders back, and sweep the shop.
+Fresh basil, sage, and sweet thyme grew by the stairs.
+The sauce simmered slowly, and the kitchen smelled sweet.
+Seas surged and swelled as the storm approached.
+The sheriff's staff searched the swamp for hours.
+The vase shattered on the stone floor.
+Success, in his view, was simply surviving.
+Sharon's sharp, sassy sense of humor shone through.
+Whiff the fresh scent of the pine forest.
+A shift in the wind shook the leaves from the trees.
+Sixteen fish and five frogs swam in the shallow stream.
+The swiss cheese slices stuck to the slice of ham.
+Vivid sunsets splash orange across the sky.
+Tish stashed the sheets in the closet.
+Sip your coffee slowly, and savor its flavor.
+Seven sheep shuffled across the fence.
+Is this seat saved for someone else?
+The shower stopped, and the house fell silent.
+The thick smoke stung his eyes and scratched his throat.
+Voices floated through the vents from the floor below.
+Something smells fishy in this situation.
+Jessica fixed the vase with a strip of tape.
+The thrush sang its shrill, silvery song at sunrise.
+Shall we start with soup or a salad?
+Fresh, warm biscuits and jam are served with breakfast.
+The sun, the sea, and the sand are all we need.
+She stuffed her scarf into her sleeve.
+The shallow stream sparkled in the sun.
+His speech was short, sharp, and sincere.
+Fifty-five sheep slept soundly on the slope.
+We're serving fish, vegetables, and a fresh salad.
+Sixteen visitors signed the sheet.
+The fussy cat refused to eat the fish.
+Soft music filled the space as the guests arrived.
+Fences surround the vast farm on all sides.
+A shiny, silver sedan sped through the sleepy suburb.
+Thanks, Jess, for fixing the faulty switch.
+She sighed softly and sank into the sofa.
+Vast, shifting dunes stretched south to the sea.
+The thin, shaky voice on the phone sounded scared.
+Christmas shoppers filled the streets and shops.
+The sheets are fresh, and the bed is ready.
+The lazy fox snoozed in the sun's warm rays.
+Finish the sauce, and serve it with the fish.
+The vast shelf of vases was stacked from floor to ceiling.
+Sweeping the porch is his favorite chore.
+This seashell sounds like the sea.
+Fresh, fizzy soda was served in tall glasses.
+Wishes, whispers, and sighs filled the halls of the school.
+Seth saw something strange in the shadows.
+Shannon sat beside her sister, sharing a sweet snack.
+The fish fry starts at five this Friday.
+Which fish is fresher, this one or that one?
+It was hard to see through the thick, swirling smoke.
+The sound of sizzling sausages filled the kitchen.
+Sunny Sunday afternoons are best spent on the shore.
+The first phase of the festival starts on the fifth.
+His voice was soft, soothing, and slightly husky.
+Is there a spare fuse in the shed?
+Sophia's thesis showed a strong, surprising result.
+The shopkeeper served us fresh, sweet figs.
+Steady, soft snowflakes fell on the sleeping town.
+Savor the flavor of fresh, homemade sauce.
+This vast, silent forest feels sacred.
+The thief slid the safe's door shut and slipped away.
+Visiting your family is always the sweetest surprise.
+Please share the shovels with the other crews.
+The shuttle's engines hissed and shook.
+Juliet's voice softened as she said farewell.
+A fish fin flashed through the shallow surf.
+Seven sisters shared six slices of pie.
+The sage said, "Seize this chance while it lasts."
+She lost her glasses, so she squinted at the sign.
+The view from the summit was vast and serene.
+Fran found a fossil on the fifth shelf.
+Those whose shoes are soaked should sit by the fire.
+Sandy sipped her fizzy drink on the sunny deck.
+Phil's shoe slipped, and he fell on the stairs.
+Wash the sheets, sweep the floors, and shut the shutters.
+A thin sliver of sunshine sneaked through the curtains.
+Sylvia's sister serves soup on Sundays.
+The vase, the vines, and the fish tank were all fake.
+Seals splashed and snorted in the surf.
+The soft sizzle of bacon filled the house.
+Stop fussing; it's just a small fuss.
+Jeff finished his fifth sheet of homework.
+The shy girl whispered a few shaky words.
+A thousand shiny stars sprinkled the sky.
+The vast, hissing surf swallowed the shore.
+Safely inside, we sipped tea and watched the storm.
+She chose a fresh, fragrant soap for the guest bath.
+Silas has a faulty valve in his van.
+The shy fox slipped through the fence at sunrise.
+Is this the shortest route to the south side?
+The sea breeze was salty, sharp, and fresh.
+Phoebe's fishing show finishes in five minutes.
+Sherry's small shop sells scarves, soaps, and sweets.
+Visitors from the south found the city fast and fierce.
+The sheriff sighed, shrugged, and shut the file.
+Savvy shoppers search for sales on Sundays.
+He sneezed, and his glasses slipped off.
+Fish soup is my favorite dish this season.
+The shiny, smooth stone sat in the sun.
+Three swans swam silently across the shimmering lake.
+Seth's fever eased, and he felt much safer.
+
+## nasals
+Many men mended the mill near the narrow lane.
+Lena rolled the little red wagon along the lane.
+Norman wandered along the winding river in the evening.
+The morning mist rolled in from the marsh.
+Marie remembered a melody from long ago.
+Linda lingered in the lobby, looking lost.
+Nine new neighbors moved in on Monday morning.
+Ronald rarely runs, but he really loved that marathon.
+The lonely lamp lit the long, narrow hallway.
+Millie made a lemon meringue pie for Mom.
+Nancy knew the name of every flower in the meadow.
+Wendy yawned and wandered into the living room.
+The young man leaned on the railing and looked out.
+A mellow tune hummed from the old radio.
+Lauren learned a lovely lullaby from her grandmother.
+Running along the lakeshore, Raymond lost his way.
+Loyal friends are rare and well worth keeping.
+The wind rolled over the rolling hills.
+Many winters melted into memories.
+Maria will marry Leo in the morning.
+Lynn warmed milk on the stove and mixed in honey.
+Neither of the lanterns would light in the rain.
+Annie ran an online learning program from her home.
+The moon moved slowly over the mountain.
+Wally yelled hello from the window.
+We're running low on lemons and limes.
+Norma's mother knew every melody by name.
+The narrow railway ran along the long, low wall.
+Naomi was never one to wander alone.
+Mellow moonlight lined the lonely lane.
+Lemon, lime, and melon were mixed in the cooler.
+A warm, friendly welcome awaited the lost travelers.
+Raymond remained calm while the engine roared.
+Larry rang the bell, then waited anxiously.
+Melanie wanted a new rug in the living room.
+My mom made lunch and left it in the oven.
+Nobody knew where the lawnmower had gone.
+Learn the names, then recall them in order.
+The yellow lanterns glowed along the riverbank.
+Linen curtains billowed in the morning wind.
+Roll the dough into a long, narrow loaf.
+Laura's lilting voice rang across the room.
+Reading in the evening calms my mind.
+The young woman wore a long, yellow raincoat.
+Mark's morning run along the marina ended in a miracle.
+Marilyn mumbled a name and rolled over.
+We watched the waves roll in, one by one.
+Luna wandered in, yawned, and curled up on the rug.
+A million raindrops rang on the window.
+The ringing in my ears lasted until morning.
+Neal needed a new lens for his camera.
+The clinic is on Main Street, near the library.
+Willow trees lined the walk to the mill.
+Rainy mornings make me want to remain in bed.
+Warren yearned for a calm, quiet evening.
+Lonnie found a rare marble in the lawn.
+Mellow music and low lights set the mood.
+Kim hummed while mowing the lawn.
+Many moons ago, a young miner found the gold.
+Norm, Lenny, and Wanda are in the living room.
+The moon looms low over the lonely moor.
+Ryan will remain in London until Monday.
+Lorna rinsed the mugs and left them on the rack.
+The mailman rang the bell, then walked away.
+Ellen's yellow umbrella was lying in the lobby.
+Lemonade, warm rolls, and jam were on the menu.
+The rain eased, and a warm wind rolled in.
+Neil owns a small inn on the island.
+Marvin yelled, "Never mind, I've found it!"
+Why won't the engine turn over in the morning?
+Naomi and Lynn learned the new routine in no time.
+Melted snow ran along the alley and into the drain.
+Mornings in the mountains are mild and misty.
+Lauren's laughter rang down the long hall.
+The kind young man helped me carry my luggage.
+Many learners need a nudge, not a lecture.
+My uncle named his llama Winston.
+Ringing bells announced the morning mass.
+Milo yawned, and Mina mimicked him.
+We rented a room in a warm, inviting inn.
+Lenore roamed the moonlit lane, humming.
+The lion's roar rolled across the valley.
+Mom knew the answer, and Meg nodded.
+Laney warmed up, then ran along the main road.
+I will never forget the long ride along the Rhine.
+The mild morning warmed up into a calm afternoon.
+Amanda wore a mauve wool wrap in the rain.
+A loud, rolling rumble came from the northern hills.
+Millions of lilies bloomed along the lonely lane.
+Randall loaned me his new ruler.
+A woman in a yellow raincoat ran by.
+Lawn mowers, hammers, and engines hummed all morning.
+Lena may marry Norman in November.
+Mowing the lawn made Mel's nose run.
+Winnie yelled, and the animals ran away.
+A new moon rose over the warm, calm lagoon.
+Ronnie's mother runs a mill on the river.
+Learn your lines, then rehearse them in the mirror.
+Mellow yellow melons ripen in the warm morning sun.
+The mayor mumbled a long, rambling answer.
+Marcy wondered whether anyone remembered.
+Several nurses ran into the lobby.
+The lonely man in the yellow raincoat read a newspaper.
+Lilly's lunch menu includes noodles and lemon rolls.
+The mule moaned and refused to move.
+Maggie murmured a name in her sleep.
+Rolling waves lulled the weary sailor to sleep.
+A long, narrow line of ants marched along the wall.
+Nine men and nine women are now on the roll.
+Many million lines of memory were lost.
+Lena, Mona, and Nora lined up in the lobby.
+Hannah's morning routine includes yoga and lemon water.
+The mountain air is cool, clean, and calming.
+Melvin loved wandering in the moonlit meadow.
+We rowed along the river until noon.
+Winter was long and lonely in the little town.
+Rowan's well-made, warm coat kept him mild all winter.
+My neighbor mends antique clocks in his living room.
+Naomi named her new puppy Willow.
+Yearning for home, the young soldier wrote a letter.
+The mellow hum of the engine lulled me to sleep.
+I never wanted to leave the warm, lovely lagoon.
+Lenny learned the lines of the long role in a week.
+Many neighbors lent a hand with the move.
+The ring in her nose matched her manner.
+The woman in the lime-green gown walked in.
+Mary's lamb wandered along the lane.
+Millions of moths gathered around the lamp.
+Marlon lounged in the sun on the lawn.
+Loud, long rain rattled on the metal roof.
+Ruin and sorrow lay along the road.
+Alan will learn the new rule in a minute.
+Nothing in the world matched Rowena's warm laugh.
+Liam wrote an email, then rewrote it.
+Willie went along when Mom ran in.
+The lawn, the lane, and the lonely mill lay in morning light.
+Anna ran in, normally calm, and yelled.
+Linen, wool, and nylon were lined along the wall.
+My mother knows many unknown melodies.
+Warm, mellow sunlight lit up the living room.
+Laura's name rang in the room like a bell.
+Numerous young men ran along the narrow lane.
+Welcome home; you look worn and weary.
+Norma left the lemon rind in the menu.
+Melinda wore a long, flowing gown in lime green.
+The raindrops ran down the window in long lines.
+He mumbled an answer and walked away in a mood.
+The old man's memory remained clear and strong.
+Larry loaned Marilyn a lamp, a rug, and a mirror.
+Nobody noticed the lone woman in the corner.
+Millie yawned, rolled over, and ruined the plan.
+Ryan Lane lives near the old mill.
+Mild winters and warm summers are normal in Naples.
+Laurel rolled the lemon along the counter.
+Yellow leaves lined the road in a long, winding row.
+The ringleader named the new routine "Lemon Mayhem."
+Learning a new language requires many months of work.
+Marian's music made everyone in the room calm.
+We wandered in the woods until the moon rose.
+Wonderful memories lingered long after the trip.
+Even in the rain, the lilies remained bright.
+A woman named Lenore knows the whole song.
+Maurice marched in with a mop and a bucket.
+Evelyn wore a long, red wool coat on Monday.
+Uncle Neil's lawn mower won't run.
+Wally rolled up the rug in the living room.
+Margaret rarely wanted to leave her room.
+Luna's loud meow woke Norman.
+No one knows when the wind will return.
+Mandy's mom owns a lemon farm in Florida.
+Now, learn to make your own noodles.
+The ruling remained unchanged in the morning.
+Lullabies, lanterns, and lilies filled the room.
+The young miller never married.
+Rain ran down my neck and into my coat.
+Loren's new ring hung loosely on her finger.
+Marnie rang her mom on Monday morning.
+Memories of home linger in the morning.
+The mild, warm morning was ideal for a long run.
+Rolling hills, winding lanes, and old mills filled the view.
+Nell announced a new rule: no yelling.
+The lone wolf howled along the lake.
+Weary, we moaned and slowly rolled into our bunks.
+Lenny's lemon-lime mix really needs more honey.
+Mom and Mary mended the linen on Monday.
+Many lonely nights were spent learning.
+Anne woke in the morning and yawned long.
+Loyal Linda worked alone in the mill.
+Yvonne wore a lime-green raincoat on the lawn.
+Millions of tiny lanterns lit the night.
+In November, the nights are long and the days mild.
+Hanna remembered Mel's name and rang him.
+Many women, men, and children marched in line.
+The norm is to wait in line, one by one.
+The warm wool melted into the moon-lit room.
+Morgan will meet Lynn on the lawn.
+Winding lanes led them to the little inn.
+My name is not Norm, nor Neil, nor Newman.
+The yellow moon slowly rolled over the mountain.
+The wind in the willows hummed an eerie melody.
+
+## vowels
+The old oak boat floated over the open ocean.
+Eating eels in Ireland is not unusual.
+Out of the blue, a cloud of owls flew overhead.
+Ice and iron are used in many ancient arts.
+Alice ate an apple at the edge of the island.
+The tiny ants ate all of the avocado.
+Ava awoke early in the afternoon.
+A deep sleep followed the easy evening.
+Joy enjoyed the royal oysters.
+The loud crowd found the sound astounding.
+Anyone can enjoy a good, warm cup of tea.
+The moon rose soon over the room.
+My mind arrived at a surprising idea.
+Beau owes Joe a loan for the boat.
+The wide, white tide rose with the night.
+Eight eager ladies waited for the train.
+He took a good look at the wood and the book.
+Heed the speed limit on the street.
+Oh no, the snow is going to blow in tomorrow.
+Our hour in the tower was far from sour.
+Few new students knew the true value.
+The queen seemed pleased with the green tea.
+A cool blue moon rose above the room.
+Ray paid the bay boat captain on the way.
+The house mouse found a lousy spot.
+Paul called on the small hall in the fall.
+Between the trees, bees hummed in the breeze.
+It is easy to see why he is so keen.
+The boys enjoyed the toy boat noise.
+Rain and hail came late to the lake.
+All of our old oak doors are open.
+I like to hike by the lake on a bright night.
+She decided to buy a pie at the shop.
+Do you know how to go slow?
+Scoop the soup into the cool blue bowl.
+Fred said the bed in the red shed is ready.
+A pig in a wig did a jig.
+The cat sat flat on the black mat.
+Hot pots are stocked on the top shelf.
+My uncle must trust the bus company.
+The foot of the bush stood by the wood.
+Ben went to the west for the best rest.
+The brown cow found its way around the town.
+Owen glowed with pride as the boats rolled along the coast.
+Awake at dawn, I saw a fawn on the lawn.
+The air in the chair area is rare and fair.
+It's clear that the deer hear the sheer cheer.
+A pure cure is sure, I'm sure.
+Clean beans are green and mean nothing to me.
+Mice and ice and lice are all nice, in a way.
+The tall wall at the mall fell in the fall.
+A bold old coat is not so cold.
+Wait for the day, when the grey rain stays away.
+A few cute youths used the huge new tune.
+Tom took the long road, but it wasn't wrong.
+Paula bought a gauze scarf in August.
+The chief believed the thief had received the keys.
+Hear the tears of the deer near here.
+Four doors swung wide on the shore.
+Hurt by the first word, the girl turned.
+The early bird heard the third word.
+Aunt Ida was amazed by the idea.
+Please ease the heavy leaves off the eaves.
+We eat meat in the heat on Tuesday.
+A loud shout rose from the doubtful crowd.
+Olive spoke of a low, slow, old-time tune.
+Joan phoned Rome from her home on the throne.
+The boy's toy broke, and he cried a lot.
+Maybe Amy made a mistake today.
+Smile while I take a snapshot of the child.
+The whole world seems to hold its breath.
+Flight 8 was late due to the wide, white storm.
+Oh, the bold note of the old cello is so low.
+Opal Owens often goes home alone.
+Everyone ate a piece of the apple pie.
+Ouch, my mouth is sore from shouting out loud.
+Eva reached the beach by seven.
+Idle eyes are rarely wise.
+Ella's umbrella is under the elm.
+Oliver is always open to a new idea.
+The odd doctor opposed our option.
+Easy does it; keep the speed even and steady.
+Ice cream is a treat for me and for you.
+Aaron and Ian argued about an ounce of onions.
+Under the oak, a gentle breeze awoke the fawn.
+A thousand owls appeared out of the clouds.
+You knew the blue shoe was too new.
+The loose goose looks too cute to shoot.
+Rude fools used to choose the booze.
+The strong young lion ruled the dry lands.
+Both of us know the road is slow and cold.
+Hey, it's May, but it's still gray.
+I am sure I'll be fine by nine.
+Take the lane to the lake and wait.
+The size of the prize surprised the wise guys.
+Moist soil spoiled the boiled oil.
+A joyful voice rang out from the royal court.
+The pool is cool, and the room is full of fools.
+You should put the wool in the wood hood.
+The hot hat is too bad for that man.
+Ten men let the red hens eat the wet bread.
+It is a bit big, but this fit is quick.
+My bus won't budge; the sun is up, but it's cold.
+Awe and applause rose from the audience.
+The audio was awful, and the author talked on.
+He saw a small flaw in the law.
+Auto parts and awnings lined the road.
+The father calmly called the spa.
+Park the car in the dark by the bar.
+Harsh arguments are hard on the heart.
+The army marched far across the farm.
+The vast park was calm and still.
+The surf's current turned the girl's pearl.
+Her purple shirt was dirty and worn.
+Learn the world's early words.
+Tiny pie, big sky, high flying kite.
+Join me at noon for a boy's joyful toy show.
+Lou knew the moon would soon bloom with blue.
+Gloomy ruins loomed in the room.
+He chose to close the stone door.
+Ray's face was pale in the late day.
+Cake, rain, and shade make a great day.
+Eddie said Fred read the edge of the ledge.
+Tim's thin, swift ship sank in the ink.
+Dutch cups of tub-brewed mud come from the bus.
+Look, the good cook took the book.
+A frog hopped on the log in the fog.
+She sells shoes and chews moose juice.
+Peas and cheese ease me into the breeze.
+The eerie sea creaked, and the team screamed.
+Aim for the main gate in the rain.
+Joey's toys are coy and loud.
+Rose chose a nose for the clothes.
+The boat is afloat on the oat-colored coast.
+Ada's idea made Ian giggle.
+Over the ocean, an eagle owl soared.
+Italy's ancient ice caves are awe-inspiring.
+The auditor adored Aunt Ora's art.
+Annie ate eight eggs at an Aussie airport.
+Ice-cold air entered the open arena.
+Unless you ask, I am not about to admit it.
+Eve wore ivory earrings to Easter.
+Adam's idea inspired every audience.
+It's all about an ongoing outcome.
+The island is quiet, and the ocean is calm and clear.
+The outdoor art show opened early on October eighth.
+I owe Eli an iced tea and an omelet.
+Isaac and Abe ought to eat after exercise.
+Every evening, the owl is awake in the elm.
+Ernie asked Anne and Ed over for iced tea.
+Out of ink, I asked Ian for a pen.
+Eleven elves and eight owls ate in an oven.
+After a while, I'll adore the arrangement.
+Inside the oak, an acorn was asleep.
+Ounces of oil are in a cup of oats.
+All is well on the isle, I hope.
+Uncle Abe and Amy inspect an ornate urn.
+A hawk soared over the oats and the oak.
+The beam of light grew greater as the night wore on.
+Please keep the key and meet me by the creek.
+Though I know that crow, I bow to no foe.
+Allow the cow to sow the plow.
+The doe saw a hoe in the snow.
+That boy's coin is a joyous toy.
+Why try to deny what is nigh?
+Brave Dave gave the cave a wave.
+She felt a thrill as the real deal fell.
+Words like "bird" and "heard" are not odd.
+Spare the chair and share the care.
+The tourist's tour was pure and sure.
+Fear not, dear friend; the year is near.
+Stoop to the loop, and scoop the group.
+She would, could, and should have stood.
+Pull the full wool pudding from the oven.
+The aunt can't dance in the grand plan.
+Laugh at the staff in the half bath.
+Don't pause; the cause is lost in the claws.
+A walk and a talk by the dock at noon.
+Fall's call is small, and all is tall.
+Bee, see, free, three: what a spree!
+Our new crew flew through the dew.
+He grew too tired to chew the stew.
+Taste the haze on a bright, late day.
+Mind the time while I write the line.
+He found the sound and turned around.
+Joy's boy enjoys the noise of toys.
+The Yule log was cool and smooth.
+It's best to rest, but I jest.
+The hen sent ten men back again.
+Sip a drink at the brink of the pink dip.
+Hum a tune on a sunny June afternoon.
+Dad had a bad hat, and Pat sat flat.
+The shop stop has hot stock.
+Beyond the fog, the lazy dog was calm.
+The goat in the boat wrote a note.
+Each teacher teaches reading and speech.
+A quiet riot broke out in the diet kitchen.
+Poor Moore swore he saw a boar on the moor.
+Dawn drew a lawn with a fawn in the yawn.
+Kate and Jake ate eight steaks on the lake.
+
+## clusters
+The strict strategist explained the structure of the plan.
+Strengthen the string with three strong strands.
+The splendid sprinter sprang across the spring street.
+Sixths and twelfths are difficult to pronounce.
+The sphinx's glimpse stretched across the screen.
+Scripts from the screenwriters were scrutinized.
+Thursday's thunderstorm struck the strip mall.
+Crisp, crunchy cranberries crashed from the crate.
+The blacksmith's brisk strokes shaped the bright steel.
+Schedule the first strategy session for Thursday.
+Splash, splatter, and sprinkle the paint across the canvas.
+The explorer's expedition crossed the frozen plains.
+Prompt, practical, and professional service pleased the clients.
+Strawberry shortcake and fresh cream were sprinkled with spice.
+Glistening gravel crunched under the grumbling truck.
+The three-year-old screamed, then splashed through the stream.
+The grandchildren climbed the crooked staircase.
+Sculptors shape stone, clay, and plaster into structures.
+Her breathtaking triumph strengthened the whole team.
+Frightened children flinched from the flashing lights.
+The thrifty shrimp farmer planned a prosperous year.
+Extraordinary circumstances called for extraordinary measures.
+Plumbers repaired the cracked, clogged pipes beneath the sprinklers.
+Strangers streamed through the crowded train station.
+The eighth-grade students studied the world's tallest skyscrapers.
+Increasingly complex transactions strained the old accounting system.
+He grasped the splintered railing and trudged upward.
+Bright blue blossoms bloomed beside the broken bridge.
+The sixth sheikh's sixty-sixth sheep is still sick.
+A frantic flock of flamingos flapped over the flooded plains.
+The clumsy clerk clutched the crumpled cloak.
+Prefixes, suffixes, and prepositions fill the grammar textbook.
+The constitutional amendment was discussed extensively.
+The architect's blueprint had structural flaws.
+Crowds clapped and cried as the grand procession approached.
+The thrill of triumph followed months of struggle.
+Excellent sprinklers sprayed the freshly planted shrubs.
+Squirrels scrambled across the screen porch, scratching and squeaking.
+Skeptical scientists scrutinized the strange specimens.
+Spreading a thick blanket, the explorers rested on the cliff.
+Clear skies and cool breezes characterized the late spring.
+Gradually, the glacier crept across the frozen plateau.
+Planning a surprise party requires strict secrecy.
+The knight's strong shield stopped the sharp strike.
+Spotless crystal glasses sparkled on the sprawling shelf.
+The prime minister's press conference lasted twelve minutes.
+Strolling through the market, she examined freshly picked produce.
+He experienced a strange, sprawling sense of dread.
+Grilled prawns and crisp greens were splendid.
+Employees gathered in the plaza to plan the project.
+Please stretch your legs, and prepare for the second stretch.
+Strong winds scraped branches across the shingled roof.
+The sprained wrist swelled up and turned black and blue.
+She whispered, "Thrills and chills are what I crave."
+A twisted, gnarled branch scraped against the glass.
+Frozen drops of rain clattered on the windshield.
+Progress in the program requires practice, patience, and persistence.
+Comprehensive instructions accompanied the complicated machinery.
+The street's streetlights flickered, then blinked out.
+Florists arranged flawless bouquets of bright, fragrant flowers.
+Grim prospects loomed for the struggling grocers.
+The cryptic crossword clue confused the club's best players.
+She texted that she'd been stuck in traffic since six.
+Skilled sculptors sketched strange, slender shapes.
+Crumbling stone steps climbed the steep slope.
+Fragile glass figurines stood on the crowded shelf.
+The monstrous storm swept the strip of coast.
+A black-and-blue sky threatened a thundering downpour.
+Splintered boards sprawled across the cracked sidewalk.
+The champion's strength and stamina were unmatched.
+Brilliant, bright sprinkles spread across the frosting.
+Knitting, crocheting, and stitching take great concentration.
+The pretzel vendor's price list was posted on the glass.
+Dragons, griffins, and trolls crept through the story.
+The prickly, spreading shrubs thrived in the drought.
+Scholars studied the ancient scrolls for months.
+The street-smart strategist crafted a flawless scheme.
+Strange screeches echoed from the crooked chimney.
+Brisk winds blew the clouds across the bright, crisp sky.
+The thrilling climax of the film left viewers breathless.
+Trembling, the child gripped the cracked, creaking railing.
+A splendid, sprawling mansion crowned the hill.
+His twelfth attempt ended in a stunning triumph.
+Dwindling funds and growing debts stressed the small firm.
+The crew's trust in the plan grew stronger.
+The professor's lectures explored the philosophy of science.
+Spring brings sprouting plants and blooming trees.
+Frank's friends flew from France to Florida in a plane.
+The strongest threads are woven from three strands.
+A scratchy, crackling transmission interrupted the broadcast.
+Transportation across the strait stopped during the storm.
+The sculptor stretched the clay across the frame.
+Gloomy clouds clustered above the green plains.
+Please present your passport and proof of residence.
+The pharmacist prescribed strong antibiotics for the infection.
+Crafting a flawless speech takes drafts, practice, and trust.
+The shrill screech of the brakes startled the crowd.
+Splinters stuck to the strips of freshly planed pine.
+The explorers' provisions were scarce, and spirits sank.
+Stripes, plaids, and checks clashed on the crowded racks.
+Clinging to the cliff, the climbers waited for sunrise.
+Brussels sprouts and grilled prawns were the specials.
+Several sprinklers sprayed the sprawling lawns in the spring.
+Thirty thrushes thrived in the thick thorn bushes.
+Excited crowds crammed into the crowded stadium.
+It took grit and strength to climb the steep, snowy trail.
+Plastic bags clogged the drains after the flood.
+Strict rules were established to prevent plagiarism.
+The skeleton's skull grinned from the glass case.
+Draft the proposal, then proofread each paragraph twice.
+The brass band blared a bright, brash fanfare.
+Springtime flooding stranded travelers in three states.
+The grandmother's gleaming glasses sat on the sprawled newspapers.
+Crashing waves pounded the craggy cliffs.
+The struggling student studied until dawn.
+A prompt reply will help avoid problems.
+Trembling branches scraped against the frosted window.
+Sprinkle the grated cheese across the crisp, brown crust.
+Please explain why the exam grades dropped last month.
+Stray cats scratched at the trash cans behind the market.
+Skillful strikes from the batsman scored sixty runs.
+The explorer's trusty compass pointed straight north.
+Extreme drought stressed the crops and starved the cattle.
+Please practice the speech until it flows smoothly.
+Black clouds drifted past the cliffs and crept toward the coast.
+The slippery slope sloped steeply toward the stream.
+The bridge's structural strength was tested by engineers.
+Bursting with pride, the grandfather praised the graduates.
+Flawless blue skies stretched from coast to coast.
+Hundreds of sparrows scattered from the crumbling roof.
+Stubborn children scrubbed the sticky counters.
+The quartz crystal splintered with a crackling sound.
+Frosty winds froze the ground and cracked the pipes.
+Terrific strategic planning produced a prosperous quarter.
+Tree stumps, rocks, and sprawling roots blocked the trail.
+Struggling to speak, he swallowed and cleared his throat.
+The prisoner's plea for clemency was swiftly rejected.
+Please place the printed program on the front table.
+Splendid sprays of lilacs scented the spring air.
+Two thousand and twelve was the sixth straight winning year.
+Twelve trained troops tramped through the thick, tropical trees.
+Strong, steady strokes propelled the swimmer through the strait.
+Crying, the small, scrawny kitten crept from the crate.
+A skilled glassblower shaped the flask in the flame.
+Streams, ponds, and marshes dried up in the drought.
+The exhausted students stretched out on the plush carpet.
+Scarcely a sound was heard in the sprawling, silent forest.
+A blistering sun scorched the barren, brown plains.
+Bright, flashing strobe lights blinded the screaming crowd.
+Sprinting through the crowd, he clutched the stolen briefcase.
+Planting strawberries requires proper spacing and consistent watering.
+The experts explained the complex concepts in simple terms.
+Frightening shrieks filled the black, frozen night.
+Crystal-clear streams trickled through the green glen.
+The broken clock chimed twelve strokes at midnight.
+Pressure and stress build up in tropical storms.
+An ancient, crumbling temple stood in the thick jungle.
+The athlete's strained knee swelled after practice.
+Prickly thistles sprouted from the cracked pavement.
+Please transfer the funds from the checking account.
+Spreadsheets and statistical reports crowded his desk.
+Stuck in a snowstorm, they struggled to start the truck.
+The strange, spidery scrawl was hard to understand.
+Grudgingly, the grumpy grocer greeted the crowd.
+The trampled grass sprang back after the storm.
+Splintering ice cracked across the frozen creek.
+Her sprightly step and bright smile brightened the room.
+It's the strongest, sturdiest chair in the whole store.
+The slick, slippery sled skidded across the snow.
+Bleak, blustery weather blighted the whole trip.
+The wrestler grunted, gripped, and slammed his rival.
+A crisp, clear crescent moon crowned the cliffs.
+The treasurer's statement explained the dwindling funds.
+Spiders spun silky webs across the sprawling shrubs.
+He clenched his fists and glared at the screen.
+Playful dolphins flipped and splashed beside the ship.
+Praise from friends brought sprightly pride.
+Frost clung to the glass and the grass and the steps.
+A drizzle dripped from the dreary, drooping trees.
+Three fresh grapefruits slid from the bright green crate.
+Strict instructions restricted the structure's use.
+Blizzards blasted the broad plains for three straight days.
+The Christmas shrubs were trimmed, trained, and treated.
+Plenty of fresh sprouts, grilled prawns, and spiced broth were served.
+Troubled thoughts flickered across the prisoner's frowning face.
+Frederick's best friend wrote a brilliant script.
+Engrossed in her book, the girl scarcely spoke.
+The cramped, crooked cabin creaked in the crosswinds.
+The extraordinary scientist presented her groundbreaking discoveries.
+Gnarled, crooked trees clung to the craggy slopes.
+Stretching, yawning, and scratching, the cat strolled in.
+The brisk, brilliant morning broke over the bridge.
+Fresh strawberries, blueberries, and grapes sat in the glass bowl.
+Strikingly bright flashes lit the glass skyscrapers.
+Scrubbing the grimy floors stressed the strained cleaners.
+The frightened prisoner trembled and prayed.
+Crescent, quarter, and gibbous moons crossed the sky.
+Slender, drooping branches brushed the glistening stream.
+A thrifty shopper compared prices before buying the product.
+An abrupt, crackling shriek startled the sleepy crowd.
+
+## pacing
+Not yet.
+Listen.
+Sit down.
+Be careful.
+Let it go.
+Never mind.
+Take this.
+Right now.
+Hurry up.
+Be quiet.
+Open the door.
+I'm coming.
+Who knows?
+Maybe later.
+Slow down.
+That's all.
+Just breathe.
+Over here.
+Keep going.
+One more time.
+Don't move.
+It worked.
+Very well.
+Say that again.
+Not a chance.
+Wake up.
+I see it.
+Easy now.
+Pass me that.
+Follow me.
+Here we go.
+Please stay.
+Nothing happened.
+Turn left.
+I'm listening.
+We're done.
+That was close.
+Hands up.
+Look out.
+Quiet down.
+Stay with me.
+Ready or not.
+She nodded, and the room fell silent.
+He paused at the door, then walked slowly back inside.
+Nobody spoke for a long moment, and the clock ticked on.
+The rain stopped, the clouds parted, and the street shone.
+I waited, I watched, and finally, I understood.
+We packed our bags, locked the door, and drove away.
+The train arrived, the doors opened, and the crowd poured out.
+She smiled, shrugged, and picked up her coffee.
+It was late, it was cold, and nobody wanted to leave.
+The music faded, the lights dimmed, and the curtain fell.
+Apples, oranges, bananas, grapes, pears, plums, and cherries filled the bowl.
+Red, orange, yellow, green, blue, indigo, and violet.
+Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday.
+Salt, pepper, sugar, flour, butter, eggs, milk, and vanilla.
+North, south, east, west; up, down, left, right.
+He slowly, deliberately, and with great care placed the final stone.
+Take your time, think it through, and tell me what you decide.
+Every morning, she woke early, made tea, and wrote for an hour.
+They came, they saw, they argued, and they left.
+Run, jump, climb, crawl, swim, and never stop.
+The old house stood alone at the end of the road, its windows dark and its garden overgrown, as though no one had lived there for years.
+When the final bell rang and the students rushed out into the bright afternoon, the teacher stayed behind a moment, gathering her papers and her thoughts.
+Though the journey was long and the road was rough, we pressed on through the night, because stopping meant giving up on everything we had worked for.
+She had always believed that the best stories were the ones people told quietly, late at night, when the fire had burned down and nobody wanted to go home.
+After the storm passed and the water finally drained from the streets, the neighbors came out one by one, surveying the damage and offering whatever help they could.
+He had spent most of his life searching for something he could not name, and only when he stopped looking did he find it, sitting quietly on a bench in the park.
+The town, which had been quiet for as long as anyone could remember, suddenly came alive when the circus arrived, bringing with it music, color, and the smell of fresh popcorn.
+If you take the first road on the left, follow it past the old mill, and turn right where the creek bends, you will eventually reach the farm.
+The engineer, who had worked on the project for nearly a decade, explained patiently that the delay was caused not by negligence but by a series of unforeseeable events.
+While the others slept, she sat by the window and watched the snow fall on the empty street, thinking about everything that had changed since the autumn.
+A good cup of coffee, a quiet morning, and a book you actually want to read can make the whole week feel easier.
+Everything in the room was exactly where she had left it, which was somehow worse than if it had all been moved.
+The orchestra tuned slowly, one instrument at a time, until the hall was filled with a shimmering hum that seemed to wait for the conductor.
+It is not that I dislike the city, but after a week of noise and crowds, I long for the silence of the countryside.
+My grandmother used to say that patience was the one skill worth learning early, because life would insist on teaching it either way.
+The lighthouse keeper climbed the spiral stairs every evening, lit the great lamp, and stood watching the dark water until dawn.
+Once the paperwork has been filed, the committee reviews each application carefully, and applicants are notified by mail within six weeks.
+There was a time when letters took weeks to arrive, and each one was read and reread until the paper wore thin.
+Even in the middle of winter, when the days are short and the nights seem endless, there is a stillness in the woods that feels like a promise.
+The chef tasted the sauce, paused, added a pinch of salt, and then smiled, as though he had been waiting all day for that single flavor.
+Please remember that the library closes early on holidays, so if you need to return your books, do so before the end of the week.
+Out on the water, the fog was so thick that the sailors could hear the other boats but could not see them, and so they moved ahead slowly and rang their bells.
+Unlike his brother, who rushed into every decision, he preferred to wait, listen, and think, sometimes for days, before saying a single word.
+We argued about it for hours, and in the end, neither of us could remember what had started the whole thing.
+The path wound up the hillside through tall grass and wildflowers, and at the top, the whole valley lay spread out like a map.
+The children, tired from a long day of swimming, climbed into the back of the car and were asleep before it reached the end of the street.
+Sometimes the smallest kindness, offered at just the right moment, matters more than any grand gesture.
+Years later, she would remember that afternoon, the smell of rain on warm pavement and the sound of her father laughing in the next room.
+The committee agreed unanimously to postpone the decision until more information could be gathered and the budget could be properly assessed.
+It's a quiet street, with old trees and small houses, and in the evenings you can hear people talking softly on their porches.
+We stood there for a long time, saying nothing, listening to the river and waiting for the light to change.
+He crossed the bridge, turned onto the narrow lane, and followed it until the town was far behind him and the fields opened wide on either side.
+The telephone rang twice, then stopped.
+Somewhere in the distance, a dog barked.
+Nobody answered.
+The kettle began to whistle.
+Winter came early that year.
+The lights went out all at once.
+She closed the book and sighed.
+The ferry leaves at nine.
+He wrote one line and crossed it out.
+Breakfast is on the table.
+There's a storm coming in from the west.
+It was a small town, and everybody knew everybody else.
+The shop on the corner sells newspapers, candy, and cheap umbrellas.
+Behind the house, a narrow trail leads down to the river.
+A slow wind moved through the dry grass, and the afternoon grew quiet.
+Eight o'clock came, then nine, then ten, and still nobody arrived.
+Left, right, left, right, left; keep the rhythm steady.
+If it rains, we stay; if it clears, we go.
+First, preheat the oven; second, grease the pan; third, mix the batter.
+You can ask, you can beg, you can plead, but the answer is still no.
+The carpenter measured twice, cut once, sanded the edges smooth, and set the shelf in place.
+On Saturdays, we go to the market, buy whatever looks good, and cook all afternoon.
+The clerk looked up, looked down, and went back to his papers.
+Chapter one begins, as many stories do, with a stranger arriving in town.
+Calm down, count to ten, and start again from the beginning.
+The result was clear: the plan had failed, and everyone knew it.
+Rain on the roof, wind in the trees, and a fire in the stove: it was a perfect night.
+I came early; he came late; she didn't come at all.
+She worked, saved, planned, and finally bought the little house by the sea.
+The bell rang, the doors flew open, and the hallway filled with noise.
+Wait for the green light, check both ways, and cross quickly.
+Deep in the forest, far from any road, a small cabin stood by a frozen stream.
+Reports that the bridge would reopen by Friday proved, as usual, to be overly optimistic.
+Whatever you decide, I'll support you, but I want you to be sure.
+At the edge of the village, where the paved road gave way to gravel and then to dirt, stood a lone general store that had not changed in fifty years.
+The scientist leaned over the microscope, adjusted the focus, and frowned at what she saw.
+Before the sun came up, before the roosters woke, before anyone else was stirring, the baker was already hard at work.
+Honestly, I would rather walk ten miles in the rain than sit through another meeting like that.
+By the time the first guests arrived, the table was set, the candles were lit, and the house smelled of rosemary and fresh bread.
+The old man leaned on his cane, looked out over the harbor, and said that he had never seen the water so calm.
+Taking a deep breath, she stepped onto the stage, looked out at the sea of faces, and began to speak.
+No one remembers who started the tradition, but every year, on the first night of snow, the whole street gathers to share hot cider.
+Slowly, patiently, the gardener coaxed the rosebush back to life, and by spring it was covered in blossoms.
+Though it was raining and the roads were slick, the driver kept a steady speed and never once lost her focus.
+The more she thought about the offer, the less certain she became, and by evening she had decided to say no.
+Then, without warning, the music stopped, and everyone turned to look at the door.
+One by one, the stars came out over the desert, until the whole sky glittered.
+We have plenty of time. There is no need to rush.
+Close your eyes. Take a slow breath. Now, begin.
+He didn't say goodbye. He just left. And that was that.
+The room was cold. The window was open. Nobody knew why.
+There was a pause. Then laughter. Then applause.
+It started small. A rumor, a whisper, a look. Within a week, the entire town was talking.
+Stay calm. Stay low. Stay quiet. Help is on the way.
+You can't see it from here. You have to climb higher.
+First came the thunder. Then the rain. Then the long, long silence.
+The recipe is simple: mix, bake, wait, and enjoy.
+I read the letter once, then again, and a third time, hoping the words would change.
+Her voice, soft at first, grew steadily louder as she realized no one was going to stop her.
+The meeting has been moved to Thursday, and attendance is now optional for those outside the department.
+There are two kinds of people in the world: those who plan and those who improvise.
+Water the plants twice a week, keep them out of direct sun, and they should thrive through the winter.
+Beyond the hills lay a land that few had visited, and fewer still had returned from.
+The announcer cleared her throat, glanced at her notes, and began the evening's program.
+Nothing, not the cold, not the hunger, not the endless dark, could shake his resolve.
+The night shift nurse made her rounds quietly, checking each room in turn, adjusting a blanket here, a monitor there.
+Take it slowly.
+Not so fast.
+Who goes there?
+Back to work.
+Fine, then.
+Look at that.
+Please, sit.
+After you.
+Get some rest.
+No, wait.
+Let me think.
+What time is it?
+This way, please.
+Yes, of course.
+Can you hear me?
+Can't complain.
+I suppose so.
+Say cheese.
+Here it comes.
+Watch your step.
+That's the one.
+I'll be right back.
+Absolutely not.
+Good night, everyone.
+Nothing moved.
+Good morning.
+Come in.
+Excuse me.
+Stand back.
+I forgot.
+Open wide.
+Count to three.
+Leave it there.
+Think again.
+Sounds good.
+Don't worry.
+I'll try.
+Once upon a time, a small village sat beside a silver river, and every night the villagers heard the water singing.
+The cold wind scattered the leaves, rattled the shutters, and pushed the clouds toward the sea.
+As the evening deepened and the streetlamps flickered on one by one, the city seemed to settle into a softer, slower rhythm.
+
+## intonation
+What on earth are you doing?
+Did you really say that?
+Is this seat taken?
+Who left the door open?
+How much does it cost?
+Isn't it a beautiful day?
+Can you hear that noise?
+Why would anyone do that?
+When does the train leave?
+Have you ever seen anything like it?
+Do you want tea or coffee?
+Is that really what happened?
+Which way is the station?
+Would you mind closing the window?
+You did what?
+Really?
+Seriously?
+Is it over already?
+Are you sure about this?
+What time is the meeting?
+Could you repeat that, please?
+Who are you, and what do you want?
+How could you do this to me?
+Did anyone see where he went?
+Aren't you tired of waiting?
+Whose coat is this?
+Will it be ready by Friday?
+Do you think it will rain?
+What a wonderful surprise!
+Watch out for that car!
+I can't believe we won!
+Get out of here right now!
+That is absolutely incredible!
+Don't you dare touch that!
+Happy birthday to you!
+Look at all that snow!
+Run! They're coming!
+Finally, it's over!
+Stop that this instant!
+Wow, that was amazing!
+Help! Somebody help me!
+I told you so!
+What a mess!
+It's a boy!
+Hooray, we made it!
+No way! You're kidding!
+Not again!
+Please close the door behind you.
+Put your hands where I can see them.
+Turn off the lights when you leave.
+Bring me the report by noon.
+Stand up straight and look at me.
+Take a left at the next corner.
+Be sure to lock the gate.
+Come here and see for yourself.
+Write your name at the top of the page.
+Drink plenty of water.
+Hand over the keys.
+Tell me everything, from the beginning.
+Never speak to me like that again.
+Let me know when you arrive.
+Start the engine and wait.
+Please remain seated until the plane stops.
+Don't forget your umbrella.
+Wait for my signal.
+Do not enter.
+Add two eggs and stir.
+The package will arrive on Tuesday.
+I left my phone on the kitchen counter.
+She works at the hospital downtown.
+He was born in a small town in Ohio.
+The museum opens at ten.
+We had dinner at the new Italian place.
+It rained all afternoon.
+Nothing could be further from the truth.
+The report is due next week.
+They moved to Canada last spring.
+I have never been to Japan.
+The soup needs more salt.
+There's no milk left.
+My brother plays the cello.
+That's the third time this week.
+I prefer the blue one.
+We'll talk about it tomorrow.
+This is the best coffee in town.
+She isn't home yet.
+The garden looks lovely this year.
+It's not what you think.
+You're late again, aren't you?
+It's a long way, isn't it?
+He's already gone, right?
+You will call me, won't you?
+That was a joke, wasn't it?
+You've met before, haven't you?
+We can still make it, can't we?
+She said yes, didn't she?
+You're not leaving, are you?
+It's cold in here, isn't it?
+Well, that's one way to do it.
+Oh, I see what you mean.
+Hmm, let me think about that.
+Ah, there you are!
+Oh no, I forgot the tickets.
+Oh, how lovely!
+Well, well, well, look who's here.
+Ugh, this is so heavy.
+Oh dear, not another one.
+Hey, wait for me!
+Alas, the day was lost.
+Oops, I dropped it.
+Yikes, that's a long way down.
+Good grief, what happened here?
+My goodness, you've grown!
+Ha! I knew it!
+Phew, that was close.
+Well, I never!
+Oh, come on, you can't be serious.
+Aha, so that's the secret.
+Gosh, is it that late already?
+Do you want the red one, the blue one, or the green one?
+Is it tea, coffee, or juice for you?
+Should we go left, right, or straight ahead?
+Will you come by train, by car, or on foot?
+Was it Monday, Tuesday, or Wednesday?
+Are you hungry, thirsty, or just bored?
+What's the plan, and who's in charge?
+Is he a doctor, or is he a lawyer?
+Did you pack the tent, the stove, and the lantern?
+Do you prefer summer or winter?
+She asked, "Are you ready?" and he answered, "Always."
+"Come on!" she shouted. "We'll miss the bus!"
+He whispered, "Can you keep a secret?"
+"Where am I?" he asked. "Who are you?"
+"Stop!" cried the guard. "Who goes there?"
+"Never!" she said firmly. "I'll never agree."
+"Is it true?" asked the king. "Is he really gone?"
+"Wonderful!" cried the host. "Please, come in!"
+"No," he said quietly. "Not this time."
+"Why me?" she wondered. "Why now?"
+Yes, I'm absolutely sure.
+No, thank you, I'm fine.
+Maybe, but I doubt it.
+Of course I remember you.
+Not exactly, no.
+Perhaps tomorrow.
+Definitely, without a doubt.
+Sorry, I didn't catch your name.
+Excuse me, is this the way to the park?
+Pardon me, do you have the time?
+I'm sorry, but that's impossible.
+Thank you so much for everything.
+Well done, everyone.
+You're welcome.
+Pleased to meet you.
+Take care of yourself.
+See you next week.
+Welcome back.
+I beg your pardon?
+How lucky we are!
+How dare you speak to me that way!
+What a strange coincidence!
+How delightful to see you again!
+Such a waste!
+What a lovely evening!
+How beautiful it is up here!
+Isn't that something!
+You don't say!
+What a ridiculous idea!
+Is there anything else I can do for you?
+Could you possibly tell me where the pharmacy is?
+Can I borrow your pen for a moment?
+May I come in?
+Would you like some more?
+Shall we begin?
+Do you have a reservation?
+Might I suggest the fish?
+How may I help you today?
+Could I have the check, please?
+You won't believe what happened!
+It can't be true!
+I'm not afraid of you!
+That's the last time I trust you!
+Leave me alone!
+I've had enough of this!
+I'm never going back there!
+Quiet, everyone, please!
+Give me back my book!
+That's not fair!
+Yes! We did it!
+You cannot be serious!
+Stop it right now, or I'll tell Mom!
+Beware of the dog!
+Unbelievable! Just unbelievable!
+Is that you, Tom?
+What happened to your hand?
+Who's there?
+Which one is yours?
+Isn't this fun?
+Lend me a hand!
+Think before you speak.
+
+## numbers
+The meeting starts at 10:15 a.m. on October 8th.
+Your total comes to $63.47, including tax.
+The train departs from platform 9 at 6:40 p.m.
+She turned 34 on the 22nd of February.
+Call us at 555-0142 between 9 a.m. and 5 p.m.
+The package is 12 inches wide and weighs 4.2 pounds.
+Chapter 7 begins on page 156.
+He ran 10 kilometers in 48 minutes and 30 seconds.
+The population grew by 3.5% between 2010 and 2020.
+Seat 14C is by the window.
+The invoice, number 20457, is due on the 30th.
+Add 2 tablespoons of sugar and 1/2 cup of milk.
+The temperature dropped to -5 degrees Celsius overnight.
+Our flight lands at 11:55 p.m., local time.
+The house at 742 Maple Street sold for $385,000.
+Take 2 tablets every 6 hours with food.
+The deadline is June 1st, 2027.
+Mr. Johnson lives at 18 Oak Avenue, Apt. 4B.
+She scored 95 percent on the midterm.
+The tower is 324 meters tall.
+Mix 3 parts water with 1 part vinegar.
+Dr. Patel's office is on the 5th floor.
+The speed limit is 65 miles per hour.
+The new phone costs $899.99.
+It happened on December 31st, 1999.
+We need 24 chairs and 6 tables.
+Dial 911 in case of an emergency.
+The ticket is valid from 8:00 a.m. to 8:00 p.m.
+The recipe serves 8 and takes about 45 minutes.
+He's 6 feet 2 inches tall.
+The bridge was completed in 1937.
+Our flight is delayed by 25 minutes.
+Mount Everest is 8,849 meters high.
+The cost has gone up by 18% since last year.
+Room 306 is booked for the 14th to the 17th.
+The company has 1,200 employees in 15 countries.
+Page 3 of 20.
+The marathon is 26.2 miles long.
+She paid $4.50 for a coffee and $3.25 for a muffin.
+Set the oven to 350 degrees Fahrenheit.
+The U.S. Constitution was signed in 1787.
+The score was 3 to 2 in overtime.
+The line closes at 5:30 p.m. on Fridays.
+Please arrive 15 minutes early.
+The loan is for $12,500 at 4.75% interest.
+Bus number 42 stops here every 20 minutes.
+The room measures 12 by 15 feet.
+We walked about 3 miles to the lake.
+Item 8 on the agenda is the annual budget.
+In 1969, humans first walked on the moon.
+The shipment contains 144 units.
+The code is 4-7-1-9.
+The movie runs 2 hours and 18 minutes.
+Her flight leaves from Gate 22 at 7:05 a.m.
+Mix 250 grams of flour with 100 milliliters of water.
+He was born on April 9th, 1985.
+The lake is 40 feet deep at its center.
+The contract is worth $2.4 million.
+Tickets are $15 for adults and $8 for children.
+The first of May is a holiday.
+Turn left at mile marker 112.
+Version 3.2 will be released on the 5th.
+We drove 400 miles in 7 hours.
+Group 5 will present at 2:10.
+The car gets 32 miles per gallon.
+The total weighs 1.5 tons.
+The 3rd Street bridge is closed until Monday.
+Lot 27 sold for $9,800.
+Her office is in Suite 1100.
+The ratio is 3 to 1.
+Boil the pasta for 9 to 11 minutes.
+He was 17 years old when he left home.
+The store has 50 percent off all shoes.
+Section 12, row F, seat 9.
+The ship carried 2,300 passengers.
+Over 5,000 people attended the rally.
+The deposit of $750 is due by the 3rd.
+The speed of light is about 300,000 kilometers per second.
+Her new address is 90 Elm Court, Unit 12.
+The year 2000 was a leap year.
+We sold 18 tickets on the first day.
+The winning number was 8,342.
+Set the timer for 25 minutes.
+You are caller number 7 in the queue.
+It's 9 a.m. in New York and 2 p.m. in London.
+The Wi-Fi password is on page 2.
+Add 1 teaspoon of salt and 3 cloves of garlic.
+The river is 1,100 miles long.
+Highway 61 runs from Minnesota to New Orleans.
+She won by 0.3 seconds.
+A dozen eggs cost $3.89 this week.
+The 5th of November is Guy Fawkes Night.
+Exit 18 is closed for repairs.
+The camera has a 24-megapixel sensor.
+The garden is 30 by 40 feet.
+His salary rose to $72,000 per year.
+The clinic opens at 7:30 a.m., Monday through Friday.
+The 1st of January is New Year's Day.
+Allow 4 to 6 weeks for delivery.
+The vote was 7 to 2 in favor.
+Zip code 90210 is in Beverly Hills.
+At 6 p.m. sharp, the doors will open.
+The balance is $1,046.23 as of the 15th.
+Terminal 2 is a 10-minute walk.
+There are 52 weeks in a year and 365 days.
+The Eiffel Tower was finished in 1889.
+They've been married for 25 years.
+The tank holds 15 gallons.
+Plan on spending about $200 per night.
+Chapter 12 starts on page 301.
+The speed was clocked at 88 miles per hour.
+Dr. Kim will be back on the 19th.
+Pay the 2nd installment of $450 by the end of the month.
+The hike is 6.8 miles round trip.
+Our team came in 3rd out of 40.
+There are 12 inches in a foot.
+She won the gold medal in 2016.
+He rated the movie 4 out of 5 stars.
+The dentist is booked until the 28th.
+Save 20% with the code SPRING.
+There are 7 days in a week and 24 hours in a day.
+The class meets Tuesdays and Thursdays at 1:30.
+Form 1040 is due on April 15th.
+The oldest tree there is about 800 years old.
+The balance of $19.99 will be charged monthly.
+It's 5 degrees below zero outside.
+The tallest player is 7 feet tall.
+The two-bedroom flat rents for $1,850 a month.
+Mile 3 of the trail is steep.
+The first day of spring is March 20th.
+Her phone number ends in 0198.
+Mr. and Mrs. Davis arrived at 8:45.
+The file is 3.4 megabytes.
+A 10 percent tip is customary here.
+We reached the summit at 4:20 in the afternoon.
+He was 3 minutes late.
+He owes me $27.
+There are 8 planets in our solar system.
+The wall is 9 feet high and 2 feet thick.
+The 2nd floor has 6 offices.
+The dress size is 8, and the shoe size is 10.
+Rent is due on the 1st of each month.
+The electric bill came to $112.60.
+We have 3 cats, 2 dogs, and 1 parrot.
+Order 66 was never fulfilled.
+The conference runs from the 9th through the 12th.
+She ran the 400 meters in 52 seconds.
+Table 5 is ready for 4 guests.
+Flight 1280 to Denver is now boarding.
+The building has 40 floors and 3 elevators.
+Tonight's low will be 28 degrees.
+They traveled 3,000 miles in 10 days.
+The hotel is $129 a night plus a $15 fee.
+The jar holds 500 grams of honey.
+Seven plus eight is fifteen.
+One hundred and twenty people replied.
+He turned fifty last Tuesday.
+Two thousand twenty-seven will be a big year.
+The answer is forty-two.
+Nineteen eighty-four was a good year for music.
+It costs ninety-nine cents.
+A million dollars isn't what it used to be.
+She is the third of five children.
+That's one in a thousand.
+We have thirty-one days in this month.
+Two-thirds of the class passed.
+It happened at a quarter past three.
+The average is a little over seventy percent.
+Half a dozen volunteers showed up.
+Nine out of ten dentists agree.
+The warehouse is located at 2200 Industrial Way.
+Her account number is 4471-2208.
+He bought 3 books for $11.97.
+Part 2 of the series premieres on the 14th.
+The Wi-Fi speed is 250 Mbps.
+The sample was heated to 120 degrees for 30 minutes.
+The gym is open 24 hours, 7 days a week.
+We walked 5 blocks to the corner of 4th and Main.
+Her best time was 1 minute, 52 seconds.
+The report is 48 pages, including 6 appendices.
+There were 16 candidates for 3 positions.
+Arrive at 7:45 for the 8:00 briefing.
+Chapter 9 covers the years from 1945 to 1960.
+They received 1,500 applications in 2 weeks.
+The pool is 25 meters long and 2 meters deep.
+For $29.95 a month, you get 100 channels.
+It's 98.6 degrees Fahrenheit, or 37 degrees Celsius.
+The patient is 62, with a heart rate of 78.
+The elevation at the base camp is 5,300 feet.
+The 14th Amendment was ratified in 1868.
+Pay $100 now, and the remaining $400 later.
+Mr. Ortiz arrived at 5:50 p.m. on the dot.
+The tube is 18 centimeters long.
+Her ticket is for Row 9, Seat 21.
+The cabinet holds 36 bottles.
+Check out at 11 a.m.
+Their train is the 4:15 to Boston.
+The population of the town is 8,420.
+Press 1 for English or 2 for Spanish.
+Add 16 ounces of broth and simmer for 20 minutes.
+
+## neutral
+I'll pick up some groceries on the way home.
+The bus was a few minutes late this morning.
+She left her umbrella at the office.
+We ordered pizza and watched a movie.
+The kids are playing in the backyard.
+He forgot to charge his phone again.
+The coffee shop on the corner is open early.
+I need to answer a few emails before lunch.
+There's a package waiting for you at the front desk.
+My neighbor is repainting his fence.
+The dog needs a walk after dinner.
+Let's meet at the library after class.
+The weather has been mild all week.
+She hung the laundry out to dry.
+The car needs an oil change soon.
+I finished the book last night.
+We took the long way home through the park.
+He fixed the leaky faucet over the weekend.
+The restaurant was quieter than we expected.
+A few people were waiting at the bus stop.
+I made a pot of soup for dinner.
+They're thinking about adopting a cat.
+The shop was already closed when we got there.
+He folded the newspaper and set it on the table.
+She spent the afternoon reading in the garden.
+The movie started a little late.
+My sister called to say she'd arrived safely.
+The kitchen smells like fresh bread.
+We should probably leave soon.
+The grocery store is out of tomatoes.
+I borrowed a ladder from the neighbors.
+The school year starts again next week.
+She wore her favorite blue sweater today.
+I think I left my keys in the car.
+They painted the front door green.
+The mail usually comes around noon.
+He's learning to play the guitar.
+We walked along the river after lunch.
+The printer is out of paper again.
+It's been a quiet week at work.
+I usually take the stairs instead of the elevator.
+The garden is full of tomatoes this year.
+She keeps a small notebook in her bag.
+The floor was still wet from mopping.
+We had leftovers for lunch.
+He tied his shoes and headed out the door.
+The train was crowded this morning.
+I'll call you when I get there.
+A cold glass of water sounds great right now.
+The kids built a snowman in the front yard.
+My phone battery died on the way home.
+The old clock in the hall still keeps good time.
+We watched the sun go down from the porch.
+The hallway light has been flickering all day.
+She brought cookies to the meeting.
+I can't find my other sock.
+The library has a new section for graphic novels.
+They're repairing the road near our house.
+He ordered a sandwich and a cup of tea.
+The sky turned gray in the afternoon.
+We spent the weekend cleaning out the garage.
+The baby fell asleep in the car.
+There's a farmers market in the square on Saturdays.
+She put the flowers in a glass jar.
+I'm going to bed early tonight.
+The neighbors have a new puppy.
+Please leave your shoes by the door.
+The movie theater is just around the corner.
+He read the instructions twice before starting.
+Our new couch arrives on Wednesday.
+We stopped for gas and snacks on the way.
+The radio was playing softly in the kitchen.
+I'll be home around six.
+The bakery sells out of croissants by nine.
+They moved the meeting to the small conference room.
+My brother is coming over for dinner.
+The dishwasher finished running a while ago.
+We saw a few deer by the road.
+She tucked the note into her pocket.
+The bookstore has a nice reading corner.
+I need to renew my library card.
+It looks like the rain is letting up.
+He took the dog out before bed.
+Somebody left a bike against the fence.
+The tea is still too hot to drink.
+The stairs creak a little at night.
+She set the table for four.
+The line at the bank wasn't too long.
+I haven't heard from them in a while.
+We're out of coffee filters.
+The lamp on the desk needs a new bulb.
+The soup could use a little more pepper.
+Our flight was uneventful.
+He parked the car in the shade.
+I'm planning to bake something this weekend.
+The room felt warm and quiet.
+They sat on the porch and talked for hours.
+The window faces the garden.
+She reorganized the shelves in the pantry.
+There's a nice breeze coming off the lake.
+The class was shorter than usual today.
+He wrapped the gift in plain brown paper.
+We could walk if you'd rather not drive.
+The meeting went well, I think.
+Dinner will be ready in about twenty minutes.
+I've been meaning to repot that plant.
+She keeps spare keys in a drawer by the door.
+The movers arrive at nine tomorrow.
+That café has the best oatmeal in town.
+He stirred his tea and looked out the window.
+The pharmacy is open until eight.
+We got home just before the rain started.
+There's still some pie left in the fridge.
+I'll water the plants while you're away.
+The cat has claimed the sunny spot on the rug.
+The football game starts at seven.
+The parking lot was nearly empty.
+She waved to her neighbor across the street.
+I put the extra blankets in the closet.
+Our table was by the window.
+He's been working from home all week.
+The tomatoes need a few more days to ripen.
+The car ride took about an hour.
+I'm almost done with the dishes.
+The mailbox is at the end of the driveway.
+We could use a bigger table.
+The towels are in the hall closet.
+She found a quiet corner and opened her book.
+The apples are on sale this week.
+A friend of mine runs the shop on Elm Street.
+Everyone's gathered in the living room.
+He cleared the snow from the driveway.
+The new bakery opened last month.
+I took a short nap after lunch.
+The workshop is on the other side of town.
+She set her bag down by the door.
+The kettle is on the stove.
+We played cards until midnight.
+The soup was warm and filling.
+It's a short walk to the station.
+He's reading the paper on the balcony.
+I wasn't sure which road to take.
+The bench by the pond is a nice place to sit.
+We went for a drive along the coast.
+She hummed while she washed the dishes.
+The film was better than I expected.
+My shoes are still wet from this morning.
+The elevator is out of order today.
+There's a spare blanket on the chair.
+The tickets are in the top drawer.
+He took notes during the whole lecture.
+Let's have lunch outside today.
+A neighbor dropped off some fresh eggs.
+I'll swing by your place after work.
+The lawn needs mowing again.
+The cat watched the birds through the window.
+She checked her watch and picked up the pace.
+They set up their tent beside the lake.
+We ran out of milk this morning.
+The bridge is closed for repairs until spring.
+I got a haircut on Saturday.
+The washing machine is making a funny noise.
+The sun is out, so let's open the windows.
+He spent the evening fixing his bicycle.
+The two of us made breakfast together.
+She's taking a pottery class on Thursdays.
+I wore the wrong shoes for this hike.
+There's a nice little diner near the exit.
+The leaves are starting to change color.
+He reheated the leftover pasta.
+We should send them a thank-you note.
+My cousin lives just a few blocks away.
+The garage door sticks a little in the cold.
+We split the bill and said goodnight.
+The school bus stops at the corner.
+He left a message on the answering machine.
+She tidied her desk before going home.
+The grass is still wet with dew.
+I can meet you for coffee tomorrow.
+We got a postcard from the beach.
+There's a small bakery next to the post office.
+The lights were off, so we assumed they were out.
+It was a calm and uneventful afternoon.
+The path through the woods was well marked.
+We'll order dessert after the main course.
+Please don't forget to lock the back door.
+He carried the groceries up the stairs.
+The old sofa is surprisingly comfortable.
+I was just about to call you.
+Our neighbors invited us over for dinner.
+The street is quiet on Sunday mornings.
+They watched the rain from the window seat.
+She poured two cups of tea.
+I think I'll have the vegetable soup.
+The museum has a free day on Wednesdays.
+The new neighbors seem friendly.
+He rinsed the dishes and left them to dry.
+We bought a few plants for the porch.
+A light snow began to fall in the evening.
+The house was quiet after everyone left.
