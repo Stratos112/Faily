@@ -112,7 +112,8 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
 
     staging: set when reviewing freshly imported slices held in a hidden staging
     character (modules/importer.py) — {"target": character they will join,
-    "is_new": bool, "on_commit": fn(result)}. The checks start immediately, the
+    "is_new": bool, "on_commit": fn(result), optional "noun": "slices"/"clips"}. The checks
+    (all of them, noises included) start immediately, the
     transcript is pre-filled from Whisper, and the end of the review offers ADD /
     DISCARD instead of just closing.
 
@@ -126,6 +127,7 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
         ui.notify("No reference clips of its own to clean up", type="warning")
         return
     has_padding = any(c.source == "buffer" for c in clips.values())
+    noun = (staging or {}).get("noun", "slices")
     all_checks = _PASSES + ("artifacts",)
     by_clip: dict[str, dict[str, dict]] = {}       # clip key -> {pass: suggestion}
     queue: list[str] = []                          # clip keys in review order
@@ -145,7 +147,8 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
     ):
         with ui.row().classes("w-full items-center justify-between"):
             ui.label(
-                f"IMPORT  ·  {len(clips)} slices for {staging['target']}" if staging else f"CLEAN UP DATA  ·  {char_name}"
+                f"{'NEW PADDING' if noun == 'clips' else 'IMPORT'}  ·  {len(clips)} {noun} for {staging['target']}"
+                if staging else f"CLEAN UP DATA  ·  {char_name}"
             ).classes("text-white font-mono text-xs tracking-widest")
             ui.label(f"{len(clips)} clips").classes("text-[#555] font-mono text-[10px]")
 
@@ -264,9 +267,9 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
         with ui.dialog() as d, ui.card().classes("bg-[#1a1a1a] border border-[#333] gap-3"):
             ui.label("LEAVE THE IMPORT?").classes("text-white font-mono text-xs tracking-widest")
             ui.label(
-                f"{len(clips)} slices are staged"
+                f"{len(clips)} {noun} are staged"
                 + (f", {missing} without a transcript (they can't be used for training until given one)" if missing else "")
-                + ". Slices you haven't reviewed are added as they are."
+                + ". Ones you haven't reviewed are added as they are."
             ).classes("text-[#888] font-mono text-[11px] max-w-md")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("KEEP REVIEWING", on_click=d.close).props("flat dense color=grey")
@@ -616,4 +619,4 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
     dlg.open()
     if staging:
         intro_box.set_visibility(False)
-        ui.timer(0.2, lambda: _start(_PASSES), once=True)
+        ui.timer(0.2, lambda: _start(all_checks), once=True)

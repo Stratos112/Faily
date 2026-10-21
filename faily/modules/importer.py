@@ -54,6 +54,28 @@ def stage_slices(slices: list[tuple[Path, Slice]], source: Path) -> str:
     return name
 
 
+def stage_padding(candidates: list, name_hint: str = "") -> str:
+    """Stage freshly generated padding clips (BufferCandidates) so they can go through the
+    same spell-check as an import before joining the pool. Their script is the transcript;
+    source/category are kept so they are still padding after commit_stage()."""
+    purge_old_stages()
+    name = f"{STAGE_PREFIX}{uuid.uuid4().hex[:8]}"
+    d = C.CHARACTERS_DIR / name
+    (d / "refs").mkdir(parents=True)
+    clips = []
+    for i, cand in enumerate(candidates, 1):
+        dest = d / "refs" / f"ref_{i:03d}{cand.path.suffix}"
+        shutil.copy2(cand.path, dest)
+        clips.append({
+            "file": f"refs/{dest.name}", "transcript": " ".join(cand.text.split()),
+            "source": "buffer", "category": cand.category,
+        })
+    (d / "config.json").write_text(json.dumps({
+        "name": name, "created": datetime.now().isoformat(), "ref_clips": clips,
+    }, indent=2))
+    return name
+
+
 def discard_stage(stage: str) -> None:
     if stage.startswith(STAGE_PREFIX):
         shutil.rmtree(C.CHARACTERS_DIR / stage, ignore_errors=True)
@@ -66,6 +88,9 @@ def commit_stage(stage: str, target: str, is_new: bool) -> dict:
     from faily.modules.cleanup import own_clips
 
     clips = own_clips(stage)
+    # padding staged by stage_padding() stays padding (source/category); imports are "import"
+    tags = {e["audio"]: (e.get("source") or "import", e.get("category", ""))
+            for e in C.get_ref_chain(stage) if e["owner"] == stage}
     if not clips:
         discard_stage(stage)
         return {"added": 0, "no_transcript": 0}
@@ -79,7 +104,8 @@ def commit_stage(stage: str, target: str, is_new: bool) -> dict:
             raise FileNotFoundError(f"Character '{target}' not found")
         rest = clips
     for c in rest:
-        C.add_ref_clip(target, c.audio, c.transcript, source="import")
+        source, category = tags.get(c.audio, ("import", ""))
+        C.add_ref_clip(target, c.audio, c.transcript, source=source, category=category)
     result = {"added": len(clips), "no_transcript": sum(1 for c in clips if not c.transcript.strip())}
     discard_stage(stage)
     return result

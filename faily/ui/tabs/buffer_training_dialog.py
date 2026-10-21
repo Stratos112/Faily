@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
-from nicegui import ui
+from nicegui import run as ni_run, ui
 
 from faily.core.characters import get_ref_chain, add_ref_clip
 from faily.core.model_manager import manager
@@ -15,7 +15,9 @@ from faily.modules.buffer_training import (
     CATEGORIES, ScriptLine, BufferCandidate,
     load_script_bank, sample_lines, generate_batch, used_buffer_lines,
 )
+from faily.modules.importer import stage_padding
 from faily.ui.components import section_label, show_error, model_picker, bind_play
+from faily.ui.tabs.cleanup_dialog import open_cleanup_dialog
 
 _STAGING_ROOT = Path("outputs/vc/_buffer_staging")
 
@@ -43,6 +45,9 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
     except FileNotFoundError as exc:
         show_error(exc)
         return
+
+    # the spell-check dialog is created here, not inside the wizard dialog (which closes first)
+    host = ui.context.slot.parent
 
     staging_dir = _STAGING_ROOT / char_name
     if staging_dir.exists():
@@ -366,10 +371,43 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                         ui.notify("Nothing selected to commit" if not failed else f"All {failed} commits failed", type="warning")
                     dlg.close()
 
+                async def _spellcheck():
+                    """Stage the selected clips and run the full spell-check on them (volume,
+                    trim, noises, script words, duplicates); ADD at the end puts the survivors
+                    in the pool as padding."""
+                    picked = [c for c in _candidates if c.accepted]
+                    if not picked:
+                        ui.notify("Nothing selected to check", type="warning")
+                        return
+                    spell_btn.disable(); commit_btn.disable()
+                    try:
+                        stage = await ni_run.io_bound(stage_padding, picked)
+                    except Exception as exc:
+                        show_error(exc)
+                        spell_btn.enable(); commit_btn.enable()
+                        return
+
+                    def _committed(result: dict):
+                        ui.notify(
+                            f"{result['added']} padding clip{'s' if result['added'] != 1 else ''} "
+                            f"added to the reference pool",
+                            type="positive", timeout=4000,
+                        )
+                        on_committed()
+
+                    dlg.close()
+                    with host:
+                        open_cleanup_dialog(stage, staging={
+                            "target": char_name, "is_new": False, "on_commit": _committed, "noun": "clips",
+                        })
+
                 with ui.stepper_navigation():
-                    commit_btn = ui.button("COMMIT SELECTED", on_click=_commit).props(
+                    spell_btn = ui.button("SPELLCHECK & ADD", icon="spellcheck", on_click=_spellcheck).props(
                         "color=amber unelevated"
+                    ).classes("font-mono tracking-widest").tooltip(
+                        "Run the full spell-check on the selected clips before they join the pool"
                     )
+                    commit_btn = ui.button("ADD WITHOUT CHECKING", on_click=_commit).props("flat color=grey")
                     ui.button("DISCARD & CLOSE", on_click=dlg.close).props("flat color=grey")
 
         def _on_hide():
