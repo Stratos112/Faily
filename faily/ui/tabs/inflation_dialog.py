@@ -104,7 +104,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     def _on_count(e):
                         _count[0] = int(e.value)
                         count_lbl.set_text(str(int(e.value)))
-                    ui.slider(min=20, max=500, step=10, value=200, on_change=_on_count).classes(
+                    ui.slider(min=20, max=1000, step=10, value=200, on_change=_on_count).classes(
                         "flex-grow"
                     ).props("color=amber")
 

@@ -46,9 +46,21 @@ MIN_EVENT = 0.10                 # seconds of leftover sound before it counts
 EVENT_GUARD = 0.03               # leftover sound this close to a word is the word's own onset/tail
 MUTE_MAX = 0.35                  # a sound between words up to this long is muted; longer -> reject
 LOUD_EVENT_DB = 18.0             # a gap sound within this many dB of the speech is too loud to mute
-START_WALK = 0.08                # how far the start may be pulled back to catch a word's onset
-END_WALK = 0.12                  # how far the last word's end may be pushed out to catch its decay
+START_WALK = 0.15                # how far the first word's start may be pulled back to catch its onset
+INNER_START_WALK = 0.08          # ...and a later word's onset
+END_WALK = 0.40                  # how far the last word's end may be pushed out to let its sound finish
+DECAY_ABOVE_FLOOR_DB = 6.0       # a tail counts as finished once it is this close to the clip's noise floor
+DECAY_BELOW_SPEECH_DB = 38.0     # ...or this far under the speech level, whichever is louder
+TAIL_BELOW_SPEECH_DB = 20.0      # under this (relative to speech) the sound is in its tail: rises/flats can end it
+RELEASE_WITHIN = 0.15            # an unvoiced burst this soon after the word's end is its release (t, k, p)
+RELEASE_RISE_DB = 10.0           # a burst must stand this far over the dip before it
+RELEASE_MAX = 0.20               # ...and is followed for at most this long
+NEW_SOUND_RISE_DB = 6.0          # ...unless it rises this much after dipping: that is a new sound, not the tail
 INNER_END_WALK = 0.25            # a word followed by another can end in a longer "s"/"sh"
+FADE_IN = 0.015                  # seconds: smooth start (inside the cushion before the first word)
+FADE_OUT = 0.06                  # seconds: smooth end (inside the cushion after the last word)
+EXTRA_START = 0.03              # always keep this much more before the first word's measured start
+EXTRA_END = 0.12                 # ...and this much more after the last word's measured end
 LEAD = 0.05                      # silence kept before the first word
 TAIL = {".": 0.20, "!": 0.20, "?": 0.20, "…": 0.20, ";": 0.15, ":": 0.15, ",": 0.15}
 TAIL_DEFAULT = 0.10
@@ -305,6 +317,70 @@ def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
     return out
 
 
+def _find_release(db: np.ndarray, voiced: np.ndarray, j: int, start: int) -> int | None:
+    """A word can end with a closure and then a release (the t in "cat", a final k or p): the
+    level dips, then an unvoiced burst follows. If one begins within RELEASE_WITHIN of the
+    word's end (`start`), return its first frame."""
+    last = min(start + int(RELEASE_WITHIN / HOP), len(db) - 1)
+    low = float(db[j]) if j < len(db) else 0.0
+    for k in range(j, last + 1):
+        low = min(low, float(db[k]))
+        if db[k] > low + RELEASE_RISE_DB and k + 4 <= len(voiced) and float(np.mean(voiced[k:k + 4])) < 0.5:
+            return k
+    return None
+
+
+def _walk(db: np.ndarray, start: int, step: int, cap: int, soft: float, limit: int, speech_db: float,
+          voiced: np.ndarray | None = None) -> int:
+    """Move `start` outward (step -1 = earlier, +1 = later) until the sound that touches it is
+    over. While the level is still near the speech level (a held vowel, an "s"/"sh") it keeps
+    going whatever the wiggle in level; once it has fallen into the tail it stops when it
+    reaches `soft` (the noise floor), flattens out (steady room tone), rises again by
+    NEW_SOUND_RISE_DB over the quietest point (a new sound: a breath, a moan), or runs out of
+    `cap` frames / hits `limit`. The exception: an unvoiced burst soon after the word's end is
+    the word's own release (see _find_release) and is followed for RELEASE_MAX seconds."""
+    i = start
+    release_until, release_done = -1, voiced is None or step < 0
+    tail_low = None                         # quietest level seen since the tail began
+    recent: list[float] = []
+
+    def stop_or_release(j: int) -> bool:
+        """True = really stop here. Otherwise jumps into a release burst."""
+        nonlocal i, release_until, release_done, tail_low, recent
+        if not release_done:
+            k = _find_release(db, voiced, j, start)
+            if k is not None:
+                release_done = True
+                release_until = k + int(RELEASE_MAX / HOP)
+                i, tail_low, recent = k, None, []
+                return False
+        return True
+
+    for _ in range(cap):
+        j = i if step > 0 else i - 1
+        if j < 0 or j >= len(db) or (step > 0 and j >= limit) or (step < 0 and j < limit):
+            break
+        v = float(db[j])
+        if j < release_until:                # inside an allowed release burst: just follow it
+            i = i + 1 if step > 0 else i - 1
+            continue
+        if v <= soft:
+            if stop_or_release(j):
+                break
+            continue
+        if v < speech_db - TAIL_BELOW_SPEECH_DB:
+            if tail_low is not None and v > tail_low + NEW_SOUND_RISE_DB:
+                if stop_or_release(j):
+                    break
+                continue
+            tail_low = v if tail_low is None else min(tail_low, v)
+            recent.append(v)
+            if len(recent) >= 6 and max(recent[-6:]) - min(recent[-6:]) < 2.0:
+                break                        # flat: that's the room, not the word
+        i = i + 1 if step > 0 else i - 1
+    return i
+
+
 def _tail_for(script: str) -> float:
     t = script.rstrip().rstrip("\"'”’)]»")
     return TAIL.get(t[-1:], TAIL_DEFAULT)
@@ -373,16 +449,28 @@ def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: 
     # Each word's span is a spike per letter, so it misses a trailing "s"/"sh" or a soft onset.
     # Grow every span over the audible frames touching it (stopping at a fresh rise in energy,
     # which is a new sound — enforced only on the clip's outer edges), a little at the outer edges and more between words.
+    from faily.modules.inflation_audit import frame_features
+    harm = frame_features(mono, sr)["harm"]
+    voiced = np.zeros(n, dtype=bool)
+    voiced[:min(len(harm), n)] = harm[:n] > 0.5
+    soft = max(floor_db + DECAY_ABOVE_FLOOR_DB, speech_db - DECAY_BELOW_SPEECH_DB)   # a word's tail is over once it is this quiet
+    last_k = len(spans) - 1
     for k in range(len(spans)):
         s0, e0 = spans[k]
         lo = spans[k - 1][1] if k else 0
-        hi = spans[k + 1][0] if k + 1 < len(spans) else n
-        back = int(START_WALK / HOP)
-        while back > 0 and s0 > lo and audible[s0 - 1] and (k > 0 or db[s0 - 1] - db[s0] <= 3.0):
-            s0 -= 1; back -= 1
-        fwd = int((END_WALK if k + 1 == len(spans) else INNER_END_WALK) / HOP)
-        while fwd > 0 and e0 < hi and e0 < n and audible[e0] and (k + 1 < len(spans) or db[e0] - db[e0 - 1] <= 3.0):
-            e0 += 1; fwd -= 1
+        hi = spans[k + 1][0] if k < last_k else n
+        if k == 0:                                   # outer start: the onset, until the level is down at the floor
+            s0 = _walk(db, s0, -1, int(START_WALK / HOP), soft, max(lo, 0), speech_db)
+        else:
+            back = int(INNER_START_WALK / HOP)
+            while back > 0 and s0 > lo and audible[s0 - 1]:
+                s0 -= 1; back -= 1
+        if k == last_k:                              # outer end: let the last sound finish completely
+            e0 = _walk(db, e0, +1, int(END_WALK / HOP), soft, hi, speech_db, voiced)
+        else:
+            fwd = int(INNER_END_WALK / HOP)
+            while fwd > 0 and e0 < hi and e0 < n and audible[e0]:
+                e0 += 1; fwd -= 1
         spans[k] = (s0, e0)
     a, b = spans[0][0], spans[-1][1]
 
@@ -409,6 +497,9 @@ def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: 
         return res
 
     # ── A: cut to the words, punctuation-sized margins that never include sound ──
+    a0, b0 = a, b                                   # the measured edges, before the cushion
+    a = max(a - int(EXTRA_START / HOP), 0)          # a safety cushion on top of the measured edges,
+    b = min(b + int(EXTRA_END / HOP), n)            # so a word's last few ms are never the thing cut
     lead_f, tail_f = int(LEAD / HOP), int(_tail_for(script) / HOP)
     cut0 = a
     for _ in range(lead_f):
@@ -437,13 +528,16 @@ def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: 
             env[i1:i1 + ramp] = np.minimum(env[i1:i1 + ramp], np.linspace(low, 1, len(env[i1:i1 + ramp])))
         y = y * (env[:, None] if y.ndim > 1 else env)
         res.muted = len(mute)
-    fade = min(int(0.005 * sr), len(y) // 4)
-    if fade > 0:                                                  # no clicks at the cut
-        ramp_in = np.linspace(0, 1, fade, dtype="float32")
-        if y.ndim > 1:
-            ramp_in = ramp_in[:, None]
-        y[:fade] *= ramp_in
-        y[-fade:] *= ramp_in[::-1]
+    # Smooth fades so the cut never reads as a click or a chopped sound. They only use the
+    # cushion beyond the measured word edges, so the words themselves are never faded.
+    fin = min(int(FADE_IN * sr), max(int((a0 * HOP - t0) * sr), int(0.005 * sr)), len(y) // 4)
+    fout = min(int(FADE_OUT * sr), max(int((t1 - b0 * HOP) * sr), int(0.005 * sr)), len(y) // 4)
+    if fin > 0:
+        ramp = (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, fin))).astype("float32")      # raised cosine
+        y[:fin] *= ramp[:, None] if y.ndim > 1 else ramp
+    if fout > 0:
+        ramp = (0.5 + 0.5 * np.cos(np.linspace(0, np.pi, fout))).astype("float32")
+        y[-fout:] *= ramp[:, None] if y.ndim > 1 else ramp
 
     # ── Whisper must hear the script in what's left ──────────────────────────
     if verify:
