@@ -1,0 +1,129 @@
+# Lines that open with a vowel or a soft consonant (m n l r w y h, f s) instead of "The" or a hard
+# stop, to balance how generated sentences begin. Merged by load_script_bank(); keep unique across
+# all inflation_scripts*.txt files (scripts/check_script_bank.py).
+
+## plosives
+Every pup picked a path through the pumpkin patch.
+Mom packed the picnic basket and put it by the back door.
+Nobody touched the bucket, but it tipped over anyway.
+Little Bobby dropped the plate, and the pieces bounced.
+Our cat clawed the couch and knocked a cup off the table.
+Ellen carried the bag of potatoes up the back steps.
+Mabel baked a batch of blueberry biscuits for the bake sale.
+We tapped the barrel, and a thick brown beer poured out.
+Aunt Betty brought a big pot of peppery beef stew.
+Under the bridge, a bold crab crept past the pebbles.
+Rick picked up the bat, but the pitch came fast.
+Wendy dug a deep pit, dropped in the pot, and patted the dirt down.
+Almost every plane departed at the peak of the day.
+Honey, pack the towels, the tape, and the bottled water.
+Maybe Pete can type the paper before the deadline.
+Olivia put the tea cup back on the top shelf.
+Few people could picture the pirate's treasure chest.
+Sara kept the keys in a basket by the garage door.
+Yesterday I tripped on the curb and dropped the groceries.
+Rain pounded the tin roof all through the dark night.
+Anna tucked the baby in tight and turned the lights down.
+Nearby, a dog barked at the delivery truck.
+Our town's best bakery bakes crusty bread at dawn.
+Lisa took the boat out past the buoy before dusk.
+Wally kept a tidy toolbox under the back porch.
+Even the toughest cop took a break at the diner.
+Merry music poured from the bus, and the kids danced.
+Ice crackled underfoot as Dad pulled the sled up the path.
+Under a pale blue sky, the pilot checked the plane.
+Rob packed a bag, grabbed a cab, and caught the early train.
+Heather dipped the paintbrush in the can and began to paint.
+Laura typed a quick note, tucked it in the book, and left.
+Several kids tumbled out of the bus with their backpacks.
+Naomi picked a ripe peach and put it in her pocket.
+Linda tapped the glass, and the fish darted behind a plant.
+Orange peels piled up beside the cutting board.
+Mr. Baker's truck broke down at the top of the bridge.
+Whenever Gabe gets bored, he drums on the dashboard.
+Hungry crowds packed the pier for the fish fry.
+Anyone can bake a cake if they keep the oven hot.
+
+## clusters
+Every spring, strong winds scrape the shingles off the old barn.
+Frantic shoppers crowded the plaza before the storm.
+Mr. Strickland's grandchildren climbed the crooked staircase.
+Several scientists scrutinized the strange specimens.
+Wrapping presents takes patience, scissors, and plenty of tape.
+Almost everyone struggled to pronounce the word.
+Nothing prepared the crew for the frightening storm.
+Linda's flawless script impressed the entire audience.
+Our fragile glass figurines sat on the crowded shelf.
+Marcy sprinted through the splashing sprinklers.
+Heavy flooding stranded the travelers in three states.
+Many splendid sculptures stood in the sprawling garden.
+Even the strongest swimmers struggled in the strait.
+Under the streetlights, the strangers stretched and yawned.
+Rachel's strategy requires precise, practical planning.
+Honest critics praised the film's brilliant climax.
+Winter blizzards blasted the broad plains for three days.
+Alice grasped the splintered railing and trudged upward.
+Nobody expected the extraordinary transformation.
+Ryan's friends flew from France to Florida for the festival.
+Isabel clutched the crumpled script and began to read.
+Warm sprays of lilacs scented the spring air.
+Lonely shrubs sprouted from the cracked, crumbling pavement.
+Yesterday's thunderstorm flooded the strip mall.
+Evelyn drafted the proposal, then proofread every paragraph twice.
+Millions of tiny crystals sparkled on the frozen branches.
+Several students studied the glossary for the exam.
+Orville's trusty compass pointed straight north.
+Ellie scrubbed the grimy floors, stressed and tired.
+Anxious travelers crowded into the train station.
+Hannah clenched her fists and glared at the screen.
+Never trust a stranger offering a free sprinkler.
+Rain drizzled on the dreary, drooping trees.
+Ursula's blistering schedule left little time for sleep.
+Many grumpy grocers grumbled about the price of fresh fruit.
+Overhead, a flock of flamingos flapped across the plains.
+Wendy's grandmother crafted exquisite wooden clocks.
+Alan strolled through the market, examining freshly picked produce.
+Jessica's friend wrote a brilliant script about frozen planets.
+Reliable service and prompt replies keep our clients pleased.
+
+## sibilance
+Alice sliced the sweet potatoes and set them on the shelf.
+Ellen's sister sang a soft, soothing song.
+Mom served soup, salad, and sliced fruit on Sundays.
+Nobody saw the shy fox slip through the fence.
+Our visit to the savanna was a success.
+Rachel shuffled her cards and dealt a fresh hand.
+Yesterday I saw seven seals sunning themselves on the sand.
+Whenever it snows, the whole street feels safe and still.
+Honestly, I'd rather share the sofa than sit on the stairs.
+Marcy sipped her fizzy drink on the sunny deck.
+Lately the summer sunsets have been vivid and slow.
+Even in a snowstorm, the fish market stays open.
+Old Silas fixed the faulty switch with a fresh fuse.
+Anna whispered a sweet secret to the sleepy child.
+Under the surface, the fish swam south in the shallow stream.
+Many visitors found the village friendly and safe.
+Laura's voice softened as she read the verse.
+Our shuttle left the station and sped south.
+Ivy wished for sunshine, and the sky finally cleared.
+Nancy served fresh figs with a sprinkle of sea salt.
+
+## numbers
+8 people showed up at 6:45 on the 12th.
+12 eggs cost $3.89 this week.
+Exit 18 is closed for repairs until the 30th.
+7 days in a week, 24 hours in a day, and 60 minutes in an hour.
+My flight leaves at 9:15 a.m. from Gate 22.
+Our table is booked for 6 people at 8 p.m.
+Room 214 is on the second floor, next to the elevator.
+15 minutes from now, the doors will open.
+Mile 3 of the trail is steep, so bring water.
+Look at page 156 for the full list of 24 items.
+4 of the 9 tickets sold in the first hour.
+Her office is in Suite 1100, on the 11th floor.
+Once the timer hits 25 minutes, take the cake out.
+Nearly 5,000 people attended the rally in 2019.
+Eleven of the 40 chairs were broken.
+2 plus 8 is 10, and 3 times 4 is 12.
+Almost 80 percent of the class passed the midterm.
+Lunch is at 12:30, and the meeting starts at 1.

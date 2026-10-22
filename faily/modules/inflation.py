@@ -5,6 +5,7 @@ reference pool before Piper training. Pure logic; no UI imports.
 import asyncio
 import math
 import random
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -106,6 +107,77 @@ def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
     return bank
 
 
+# ── how a line starts ─────────────────────────────────────────────────────────
+# The first sound matters: a voice trained on lines that mostly open with "The" or a hard
+# stop learns to open that way, and has trouble starting a sentence softly. sample_lines()
+# therefore draws the opening sounds in these proportions (as far as the bank allows)
+# instead of however they happen to occur in the bank.
+START_WEIGHTS: dict[str, float] = {
+    "vowel": 0.25,        # a, e, i, o, u...
+    "sonorant": 0.30,     # m n l r w y h — soft consonants
+    "fricative": 0.20,    # s z f v sh
+    "th": 0.10,           # "the", "this", "that", "three"
+    "stop": 0.15,         # p b t d k g ch j — hard onsets
+}
+_TH_WORDS = {"the", "this", "that", "these", "those", "there", "then", "they", "their", "them", "than", "though", "thus",
+             "thin", "think", "thirty", "three", "through", "thick", "thousand", "thank", "thanks", "third", "thing", "things",
+             "thought", "throw", "threw", "thumb", "thunder", "thursday", "thirteen", "theory", "therefore", "these"}
+_SILENT_START = ("kn", "wr", "gn", "ps", "wh")
+_VOWEL_SOUND_H = {"hour", "honest", "heir", "honor", "honour"}
+
+
+def start_class(text: str) -> str:
+    """The class of a line's first sound, from its spelling (a close approximation)."""
+    m = re.search(r"[A-Za-z']+", text)
+    w = (m.group(0) if m else "").lower().strip("'")
+    if not w:
+        return "sonorant"                         # starts with a digit / symbol: spoken words, mostly soft
+    if w in _TH_WORDS or w.startswith("th"):
+        return "th"
+    if w in _VOWEL_SOUND_H:
+        return "vowel"
+    if w.startswith(("one", "once")):
+        return "sonorant"                         # "w"
+    if w.startswith(("use", "usu", "uni", "eu", "ew")):
+        return "sonorant"                         # "y"
+    if w.startswith(_SILENT_START):
+        return "sonorant"
+    c = w[0]
+    if c in "aeiou":
+        return "vowel"
+    if c in "mnlrwyh":
+        return "sonorant"
+    if c in "fvszx" or w.startswith(("sh", "ph", "ce", "ci", "cy")):
+        return "fricative"
+    return "stop"                                 # p b t d k g c ch j q
+
+
+def _balanced_order(texts: list[str], rng: random.Random) -> list[str]:
+    """`texts` in the order they should be drawn: each draw picks a start class by START_WEIGHTS
+    (among classes with lines left), then a first word at random within it, then one of that
+    word's lines — so no single opening ("The...") can dominate."""
+    groups: dict[str, dict[str, list[str]]] = {}
+    for t in texts:
+        m = re.search(r"[A-Za-z']+", t)
+        word = (m.group(0) if m else "").lower()
+        groups.setdefault(start_class(t), {}).setdefault(word, []).append(t)
+    for words in groups.values():
+        for lst in words.values():
+            rng.shuffle(lst)
+    out: list[str] = []
+    while groups:
+        classes = list(groups)
+        cls = rng.choices(classes, weights=[START_WEIGHTS.get(c, 0.1) for c in classes])[0]
+        words = groups[cls]
+        word = rng.choice(list(words))
+        out.append(words[word].pop())
+        if not words[word]:
+            del words[word]
+        if not words:
+            del groups[cls]
+    return out
+
+
 def _allocate_counts(weights: dict[str, float], count: int) -> dict[str, int]:
     """Largest-remainder (Hamilton) apportionment of `count` across categories
     proportional to `weights`. Categories with weight <= 0 are excluded, not
@@ -182,8 +254,8 @@ def sample_lines(
             if key not in taken:
                 taken.add(key)
                 fresh.append(text)
-        rng.shuffle(fresh)
-        pools[category] = fresh
+        # popped from the end, so reverse the preferred order
+        pools[category] = _balanced_order(fresh, rng)[::-1]
 
     usable = {k: w for k, w in weights.items() if w > 0 and pools.get(k)}
     want = _allocate_counts(usable, count)

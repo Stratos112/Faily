@@ -286,7 +286,8 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     )
                     n_review = sum(1 for c in _candidates if c.verdict == "review")
                     review_btn.set_visibility(n_review > 0)
-                    review_btn.set_text(f"QUALIFY {n_review} FLAGGED BY HAND")
+                    n_kept = sum(1 for c in _candidates if c.accepted)
+                    review_btn.set_text(f"ADD {n_kept} KEPT & REVIEW {n_review} FLAGGED")
 
                 def _render_review():
                     review_col.clear()
@@ -412,16 +413,11 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                         b.enable()
                     _render_review()
 
-                async def _qualify_flagged():
-                    """Hand the clips the tool wasn't sure about to the manual qualify screen."""
-                    picked = [c for c in _candidates if c.verdict == "review"]
-                    await _qualify_clips(picked)
-
                 async def _qualify():
                     await _qualify_clips()
 
-                async def _commit():
-                    commit_btn.disable()
+                def _add_selected() -> tuple[int, int]:
+                    """Add every ticked clip to the pool. Returns (added, failed)."""
                     ok, failed = 0, 0
                     for c in _candidates:
                         if not c.accepted:
@@ -434,6 +430,11 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                             ok += 1
                         except Exception:
                             failed += 1
+                    return ok, failed
+
+                async def _commit():
+                    commit_btn.disable()
+                    ok, failed = _add_selected()
                     if ok:
                         msg = f"{ok} clip{'s' if ok != 1 else ''} added to the reference pool"
                         if failed:
@@ -443,6 +444,38 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     else:
                         ui.notify("Nothing selected to commit" if not failed else f"All {failed} commits failed", type="warning")
                     dlg.close()
+
+                async def _add_and_review():
+                    """Add the ticked (kept) clips to the pool right now, then step through the
+                    flagged ones by hand; only the flagged ones the person accepts are added."""
+                    flagged = [c for c in _candidates if c.verdict == "review"]
+                    if not flagged:
+                        await _commit()
+                        return
+                    for b in (auto_btn, qualify_btn, commit_btn, review_btn):
+                        b.disable()
+                    ok, failed = _add_selected()
+                    if ok:
+                        ui.notify(f"{ok} kept clip{'s' if ok != 1 else ''} added — now reviewing "
+                                  f"{len(flagged)} flagged", type="positive", timeout=4000)
+                        on_committed()
+                    try:
+                        stage = await ni_run.io_bound(stage_inflated, flagged)
+                    except Exception as exc:
+                        show_error(exc)
+                        dlg.close()
+                        return
+
+                    def _committed(result: dict):
+                        ui.notify(f"{result['added']} reviewed clip{'s' if result['added'] != 1 else ''} "
+                                  f"added to the reference pool", type="positive", timeout=4000)
+                        on_committed()
+
+                    dlg.close()
+                    with host:
+                        open_qualify_dialog(stage, staging={
+                            "target": char_name, "is_new": False, "on_commit": _committed, "noun": "clips",
+                        })
 
                 async def _qualify_clips(picked: list | None = None):
                     """Stage the selected clips and run the full qualification on them (volume,
@@ -487,9 +520,13 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     ).classes("font-mono tracking-widest").tooltip(
                         "Step through the selected clips one at a time before they join the pool"
                     )
-                    review_btn = ui.button("QUALIFY 0 FLAGGED BY HAND", on_click=_qualify_flagged).props(
-                        "flat color=amber"
-                    ).classes("font-mono")
+                    review_btn = ui.button("ADD KEPT & REVIEW FLAGGED", icon="playlist_add_check", on_click=_add_and_review).props(
+                        "color=amber unelevated"
+                    ).classes("font-mono tracking-widest").tooltip(
+                        "Adds the clips that passed to the reference pool now, then steps through the flagged "
+                        "(unsure) ones by hand. Only the flagged clips you accept are added; clearly bad "
+                        "(rejected) clips are left out."
+                    )
                     review_btn.set_visibility(False)
                     commit_btn = ui.button("ADD SELECTED", on_click=_commit).props("flat color=grey")
                     ui.button("DISCARD & CLOSE", on_click=dlg.close).props("flat color=grey")
