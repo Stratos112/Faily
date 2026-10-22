@@ -2,7 +2,7 @@
 staging character, then add the survivors to a new or existing character.
 
 The staging character (outputs/characters/_stage_<id>/, hidden from every
-character list) lets the review reuse all of modules/cleanup.py unchanged; nothing
+character list) lets the review reuse all of modules/qualify.py unchanged; nothing
 touches a real character until commit_stage().
 """
 from __future__ import annotations
@@ -54,10 +54,10 @@ def stage_slices(slices: list[tuple[Path, Slice]], source: Path) -> str:
     return name
 
 
-def stage_padding(candidates: list, name_hint: str = "") -> str:
-    """Stage freshly generated padding clips (BufferCandidates) so they can go through the
-    same spell-check as an import before joining the pool. Their script is the transcript;
-    source/category are kept so they are still padding after commit_stage()."""
+def stage_inflated(candidates: list, name_hint: str = "") -> str:
+    """Stage freshly inflated clips (InflatedCandidates) so they can go through the
+    same qualification as an import before joining the pool. Their script is the transcript;
+    source/category are kept so they are still inflated data after commit_stage()."""
     purge_old_stages()
     name = f"{STAGE_PREFIX}{uuid.uuid4().hex[:8]}"
     d = C.CHARACTERS_DIR / name
@@ -68,7 +68,7 @@ def stage_padding(candidates: list, name_hint: str = "") -> str:
         shutil.copy2(cand.path, dest)
         clips.append({
             "file": f"refs/{dest.name}", "transcript": " ".join(cand.text.split()),
-            "source": "buffer", "category": cand.category,
+            "source": "inflated", "category": cand.category,
         })
     (d / "config.json").write_text(json.dumps({
         "name": name, "created": datetime.now().isoformat(), "ref_clips": clips,
@@ -85,10 +85,10 @@ def commit_stage(stage: str, target: str, is_new: bool) -> dict:
     """Move the staged clips into character `target`.
     New character: its primary reference is the first clip and the rest are ref clips.
     Existing: every clip is added as a ref clip. Returns counts and deletes the stage."""
-    from faily.modules.cleanup import own_clips
+    from faily.modules.qualify import own_clips
 
     clips = own_clips(stage)
-    # padding staged by stage_padding() stays padding (source/category); imports are "import"
+    # inflated clips staged by stage_inflated() stay inflated (source/category); imports are "import"
     tags = {e["audio"]: (e.get("source") or "import", e.get("category", ""))
             for e in C.get_ref_chain(stage) if e["owner"] == stage}
     if not clips:

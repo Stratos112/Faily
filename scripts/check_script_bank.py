@@ -1,4 +1,4 @@
-"""Report duplicate lines in the buffer script bank (faily/data/buffer_scripts*.txt).
+"""Report duplicate lines in the inflation script bank (faily/data/inflation_scripts*.txt).
 
 Duplicates are judged the same way sample_lines() does (whitespace- and
 case-insensitive), within a category and across categories/files. Run after
@@ -20,7 +20,7 @@ def main(fix: bool = False) -> int:
     seen: dict[str, str] = {}
     dupes = 0
     counts: dict[str, int] = {}
-    files = [DATA / "buffer_scripts.txt", *sorted(DATA.glob("buffer_scripts_*.txt"))]
+    files = [DATA / "inflation_scripts.txt", *sorted(DATA.glob("inflation_scripts_*.txt"))]
     for file in files:
         out, current = [], None
         for raw in file.read_text(encoding="utf-8").splitlines():

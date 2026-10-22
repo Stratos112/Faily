@@ -52,7 +52,7 @@ def cached_score(onnx: Path) -> dict | None:
 def score_model(onnx: Path, use_cache: bool = True) -> dict:
     """{"accuracy": 0-1, "words_per_sec": float, "worst": [{"said","heard"}...]}.
     Blocking (synthesis + Whisper); call from a worker thread."""
-    from faily.modules import cleanup as K
+    from faily.modules import qualify as K
     from faily.modules.asr import transcribe
     from faily.modules.piper import _piper_bin
 

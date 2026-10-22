@@ -1,7 +1,7 @@
-"""Audit for generated ("padding") clips: find noises, artifacts and words that aren't
+"""Audit for generated ("inflated") clips: find noises, artifacts and words that aren't
 in the script the clip was generated from.
 
-Padding clips are zero-shot TTS output of a known script line, so — unlike a
+Inflated clips are zero-shot TTS output of a known script line, so — unlike a
 human recording — the transcript is the ground truth and anything else in the
 audio is a defect: breaths and background noise, stray words ("Thank you."),
 dropped words, a noisy floor.
@@ -155,7 +155,7 @@ EFFECT_WER = 0.05                # a noise fix may change at most this share of 
 
 
 def _word_ops(script: str, heard: str):
-    from faily.modules.cleanup import normalize_words
+    from faily.modules.qualify import normalize_words
     import difflib
     a, b = normalize_words(script), normalize_words(heard)
     ops = difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes()
@@ -168,7 +168,7 @@ def _word_ops(script: str, heard: str):
 
 
 def _wer(a: list[str], b: list[str]) -> float:
-    from faily.modules.cleanup import word_error_rate
+    from faily.modules.qualify import word_error_rate
     return word_error_rate(a, b)
 
 
@@ -189,7 +189,7 @@ def _verified_edge_trim(
     steers a bisection (more words than the script → cut too late/early, fewer → the
     other way), so a long stray passage with many pauses still takes ~5 attempts.
     None if no gap leaves exactly the script."""
-    from faily.modules.cleanup import normalize_words
+    from faily.modules.qualify import normalize_words
     ref = normalize_words(script)
     dur = len(x) / sr
     cuts = sorted(c for c in _gap_cuts(x, sr) if 0.3 < c < dur - 0.3)
@@ -264,7 +264,7 @@ def audit_clip(
 ) -> dict:
     """Everything wrong with one clip's audio.
 
-    generated=True (a padding clip, whose text is the script it was made from): also
+    generated=True (an inflated clip, whose text is the script it was made from): also
     compares the words with the script, and flags a too-noisy background.
     generated=False (a human recording): noise events only — its transcript is checked
     by the normal transcript check, and a noisy room is normal.
@@ -314,7 +314,7 @@ def audit_clip(
     # repaired audio is re-transcribed and compared with the untouched audio. (A stretch
     # that merely sounds like noise can be breathy speech; checking just that stretch is
     # too weak, and muting it would cut a word.)
-    from faily.modules.cleanup import normalize_words, process_audio
+    from faily.modules.qualify import normalize_words, process_audio
     start_ev = [e for e in events if e.where == "start"]
     end_ev = [e for e in events if e.where == "end"]
     vs, ve = info["voiced_start"], info["voiced_end"]
@@ -380,9 +380,9 @@ def audit_character(
     keys: set[str] | None = None,
 ) -> dict[str, dict]:
     """Audit every one of a character's own clips: noise events for all of them, plus the
-    script comparison, duplicates and background check for generated (padding) clips.
+    script comparison, duplicates and background check for generated (inflated) clips.
     {clip_key: audit} for clips that need attention. Blocking."""
-    from faily.modules import cleanup as K
+    from faily.modules import qualify as K
     from faily.modules.asr import transcribe
 
     clips = [c for c in K.own_clips(name) if keys is None or c.key in keys]
@@ -393,7 +393,7 @@ def audit_character(
             break
         if progress:
             progress(i, len(clips), c.audio.stem)
-        generated = c.source == "buffer"
+        generated = c.source == "inflated"
         dup_of = None
         if generated:                              # repeated scripts matter for generated clips only
             key = " ".join(K.normalize_words(c.transcript))

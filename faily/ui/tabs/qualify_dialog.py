@@ -1,12 +1,12 @@
-"""Clean-up wizard for reference clips — a spell-check-style review, one clip per screen.
+"""Qualify wizard for reference clips — a one-clip-per-screen review.
 
-CHECK EVERYTHING analyzes the clips (volume/clipping, leading/trailing silence and
+QUALIFY EVERYTHING analyzes the clips (volume/clipping, leading/trailing silence and
 noise, transcripts that disagree with what Whisper hears), then shows each clip that
 needs attention on ONE screen: a headline of everything wrong with it ("6.6 dB too
 loud · 1.4 s of silence at the end · 2 transcript differences") and a control for each
 fix. ACCEPT applies the fixes that are ticked, IGNORE leaves the clip alone, DELETE
 removes it. Nothing is applied without you looking at it. Logic lives in
-faily/modules/cleanup.py.
+faily/modules/qualify.py.
 """
 import html
 import shutil
@@ -15,15 +15,15 @@ from pathlib import Path
 
 from nicegui import run as ni_run, ui
 
-from faily.modules import cleanup as K
-from faily.modules import padding_audit as PA
+from faily.modules import qualify as K
+from faily.modules import inflation_audit as PA
 from faily.modules.importer import commit_stage, discard_stage
 from faily.ui.components import bind_play, play_url, show_error
 from faily.ui.waveform import region_picker
 
 _PASSES = ("volume", "trim", "transcript")
 _TITLES = {"volume": "VOLUME", "trim": "TRIM", "transcript": "TRANSCRIPT", "artifacts": "NOISES"}
-_PREVIEW_DIR = Path("outputs/_cleanup_preview")
+_PREVIEW_DIR = Path("outputs/_qualify_preview")
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 _SECTION = "w-full gap-1 rounded border border-[#3a3217] bg-[#14110a] p-3"      # has an issue
 _SECTION_OK = "w-full gap-1 rounded border border-[#1d3a26] bg-[#0d1a12] p-3"   # nothing wrong
@@ -107,8 +107,8 @@ def _fold_audit_into_trim(sug: dict[str, dict]) -> None:
         gt["ok"] = False
 
 
-def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | None = None) -> None:
-    """Spell-check review of a character's own reference clips.
+def open_qualify_dialog(char_name: str, on_done=lambda: None, staging: dict | None = None) -> None:
+    """Qualify review of a character's own reference clips.
 
     staging: set when reviewing freshly imported slices held in a hidden staging
     character (modules/importer.py) — {"target": character they will join,
@@ -117,16 +117,16 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
     transcript is pre-filled from Whisper, and the end of the review offers ADD /
     DISCARD instead of just closing.
 
-    Every clip is also checked for noises and breaths (modules/padding_audit.py), each fix
-    verified not to change the words. Generated padding clips (source "buffer") get
+    Every clip is also checked for noises and breaths (modules/inflation_audit.py), each fix
+    verified not to change the words. Inflated clips (source "inflated") get
     more on the same screen — words that aren't in their script, duplicates, background
     noise — and are checked against their script instead of having it "corrected" by
     Whisper."""
     clips: dict[str, K.Clip] = {c.key: c for c in K.own_clips(char_name)}    # key -> current Clip
     if not clips:
-        ui.notify("No reference clips of its own to clean up", type="warning")
+        ui.notify("No reference clips of its own to qualify", type="warning")
         return
-    has_padding = any(c.source == "buffer" for c in clips.values())
+    has_inflated = any(c.source == "inflated" for c in clips.values())
     noun = (staging or {}).get("noun", "slices")
     all_checks = _PASSES + ("artifacts",)
     by_clip: dict[str, dict[str, dict]] = {}       # clip key -> {pass: suggestion}
@@ -147,8 +147,8 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
     ):
         with ui.row().classes("w-full items-center justify-between"):
             ui.label(
-                f"{'NEW PADDING' if noun == 'clips' else 'IMPORT'}  ·  {len(clips)} {noun} for {staging['target']}"
-                if staging else f"CLEAN UP DATA  ·  {char_name}"
+                f"{'NEW INFLATED DATA' if noun == 'clips' else 'IMPORT'}  ·  {len(clips)} {noun} for {staging['target']}"
+                if staging else f"QUALIFY DATA  ·  {char_name}"
             ).classes("text-white font-mono text-xs tracking-widest")
             ui.label(f"{len(clips)} clips").classes("text-[#555] font-mono text-[10px]")
 
@@ -173,22 +173,22 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                            "exactly the same thing afterwards. Natural breaths in your own recordings start "
                            "unticked."),
             ) + ((
-                ("PADDING", "Generated padding clips are also checked against their script: extra or wrong "
+                ("INFLATED", "Inflated clips are also checked against their script: extra or wrong "
                             "words, duplicates, and background noise that's too high."),
-            ) if has_padding else ())):
+            ) if has_inflated else ())):
                 with ui.row().classes("gap-2 items-baseline flex-nowrap"):
                     ui.label(t).classes("text-amber-500 font-mono text-[10px] tracking-widest w-24 shrink-0")
                     ui.label(d).classes("text-[#666] font-mono text-[10px] leading-snug")
-            n_padding = sum(1 for c in clips.values() if c.source == "buffer")
-            if has_padding and n_padding < len(clips) and not staging:
+            n_inflated = sum(1 for c in clips.values() if c.source == "inflated")
+            if has_inflated and n_inflated < len(clips) and not staging:
                 ui.label("CHECK").classes("text-[#444] font-mono text-[10px] tracking-widest mt-2")
                 scope = ui.toggle(
                     {"both": f"Both  ({len(clips)})",
-                     "original": f"Original clips  ({len(clips) - n_padding})",
-                     "padding": f"Padding clips  ({n_padding})"},
+                     "original": f"Original clips  ({len(clips) - n_inflated})",
+                     "inflated": f"Inflated clips  ({n_inflated})"},
                     value="both",
                 ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
-                ui.label("Original = your recordings, imports and the primary reference. Padding = the "
+                ui.label("Original = your recordings, imports and the primary reference. Inflated = the "
                          "generated clips.").classes("text-[#555] font-mono text-[10px]")
             else:
                 scope = None
@@ -200,7 +200,7 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             )
             with ui.row().classes("gap-2 mt-2 items-center"):
                 ui.button(
-                    "CHECK EVERYTHING", icon="spellcheck", on_click=lambda: _start(all_checks),
+                    "QUALIFY EVERYTHING", icon="spellcheck", on_click=lambda: _start(all_checks),
                 ).props("color=amber unelevated").classes("font-mono tracking-widest").tooltip(
                     "Run every check, then review each clip that needs attention"
                 )
@@ -308,7 +308,7 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
         use: dict = {}                # section -> its tick box
         ctl: dict = {}                # control widgets by name
         audit = sug.get("artifacts")
-        generated = clip.source == "buffer"
+        generated = clip.source == "inflated"
         mute_boxes: list[tuple] = []  # (checkbox, (start, end)) per noise between words
         GOOD = "text-[#6fbf8b]"
 
@@ -334,7 +334,7 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             btn = ui.button(icon="play_arrow").props("round flat color=amber")
             bind_play(btn, url=_url(clip.audio))
             with ui.column().classes("gap-0 min-w-0 flex-grow"):
-                ui.label(clip.audio.stem + ("   · padding clip" if generated else "")).classes(
+                ui.label(clip.audio.stem + ("   · inflated clip" if generated else "")).classes(
                     "text-white font-mono text-sm [overflow-wrap:anywhere]"
                 )
                 head_text = _headline(sug, clip, bool(staging))
@@ -383,7 +383,7 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             if audit["mute"]:
                 with ui.column().classes(_SECTION):
                     header("NOISES BETWEEN WORDS", False, "ticked ones are muted — the timing doesn't change", tickable=False)
-                    if clip.source != "buffer":
+                    if clip.source != "inflated":
                         ui.label("Natural breaths in a recording start unticked.").classes("text-[#666] font-mono text-[10px]")
                     for e in (e for e in audit["events"] if e.where == "inside"):
                         natural = not generated and e.kind == "breath"        # a person breathing is normal
@@ -565,14 +565,14 @@ def open_cleanup_dialog(char_name: str, on_done=lambda: None, staging: dict | No
         timer = ui.timer(0.3, lambda: (progress_lbl.set_text(prog["text"]), progress_bar.set_value(prog["frac"])))
         want = scope.value if scope is not None else "both"
         keys = {k for k, c in clips.items()
-                if want == "both" or (c.source == "buffer") == (want == "padding")}
+                if want == "both" or (c.source == "inflated") == (want == "inflated")}
         generic = tuple(p for p in passes if p != "artifacts")
         do_audit = "artifacts" in passes
         share = 0.5 if (generic and do_audit) else 1.0           # progress share of the generic checks
 
         def on_audit(i, n, name):
             prog["frac"] = (1 - share) + share * i / max(n, 1) if generic else i / max(n, 1)
-            prog["text"] = f"padding clips: noises and script · {i + 1}/{n} · {name}" + (
+            prog["text"] = f"inflated clips: noises and script · {i + 1}/{n} · {name}" + (
                 "  (loads Whisper — can take ~30 s)" if i == 0 and "transcript" not in generic else "")
 
         def run_checks():

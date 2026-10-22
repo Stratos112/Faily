@@ -1,5 +1,5 @@
-"""Buffer training — bulk-generate zero-shot clips of a character's own voice
-across a phonetically/prosodically diverse script bank, to pad out their
+"""Data inflation — bulk-generate zero-shot clips of a character's own voice
+across a phonetically/prosodically diverse script bank, to inflate their
 reference pool before Piper training. Pure logic; no UI imports.
 """
 import asyncio
@@ -12,7 +12,7 @@ from typing import Callable
 from faily.core.characters import build_ref_audio, clip_quality_issues, get_character
 from faily.modules.vc import generate
 
-_SCRIPT_BANK_PATH = Path("faily/data/buffer_scripts.txt")
+_SCRIPT_BANK_PATH = Path("faily/data/inflation_scripts.txt")
 
 # key -> {"label": str, "desc": str} — same shape as vc.BACKENDS, so Step 1's
 # slider builder can iterate this the same way model_picker iterates BACKENDS.
@@ -63,7 +63,7 @@ class ScriptLine:
 
 
 @dataclass
-class BufferCandidate:
+class InflatedCandidate:
     category: str
     text: str
     path: Path
@@ -72,7 +72,7 @@ class BufferCandidate:
 
 
 def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
-    """Parse the buffer-scripts text file (plus any buffer_scripts_*.txt beside
+    """Parse the inflation-scripts text file (plus any inflation_scripts_*.txt beside
     it) into {category_key: [line, ...]}.
 
     "## CATEGORY_KEY" header lines start a category; blank lines are ignored;
@@ -82,7 +82,7 @@ def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
     """
     if not path.exists():
         raise FileNotFoundError(f"Script bank not found: {path}")
-    # Extra banks sit beside the main one as buffer_scripts_<name>.txt (same
+    # Extra banks sit beside the main one as inflation_scripts_<name>.txt (same
     # format) and are merged in; sample_lines() drops cross-file duplicates.
     paths = [path, *sorted(path.parent.glob(f"{path.stem}_*{path.suffix}"))]
     bank: dict[str, list[str]] = {}
@@ -127,9 +127,9 @@ def _norm(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
-def used_buffer_lines(char_name: str) -> set[str]:
-    """Normalized text of every script line already committed as buffer
-    padding for this character or any ancestor (a sub-character's reference
+def used_inflated_lines(char_name: str) -> set[str]:
+    """Normalized text of every script line already committed as an inflated
+    clip for this character or any ancestor (a sub-character's reference
     chain includes its parents' clips). Excluded clips count: the line was
     still used. Pass the result to sample_lines(exclude=...)."""
     used: set[str] = set()
@@ -141,7 +141,7 @@ def used_buffer_lines(char_name: str) -> set[str]:
         if not char:
             break
         for rc in char.get("ref_clips", []):
-            if rc.get("source") == "buffer" and rc.get("transcript"):
+            if rc.get("source") == "inflated" and rc.get("transcript"):
                 used.add(_norm(rc["transcript"]))
         current = char.get("parent")
     return used
@@ -157,7 +157,7 @@ def sample_lines(
     """Weighted draw of up to `count` DISTINCT lines across categories.
 
     No line is ever returned twice, and none in `exclude` (normalized texts —
-    see used_buffer_lines) is returned at all. Duplicates inside the bank
+    see used_inflated_lines) is returned at all. Duplicates inside the bank
     itself (same text in two places) count as one line.
 
     Allocation across categories with weight > 0 uses largest-remainder
@@ -210,7 +210,7 @@ async def generate_batch(
     cancel_flag: list[bool],
     on_progress: Callable[[int, int, ScriptLine], None],
     on_error: Callable[[int, ScriptLine, Exception], None],
-) -> list[BufferCandidate]:
+) -> list[InflatedCandidate]:
     """Sequentially generate one zero-shot clip per script line, using the
     character's own existing reference audio as the zero-shot voice
     reference. Checks cancel_flag before starting each clip (an in-flight
@@ -219,7 +219,7 @@ async def generate_batch(
     aborting the rest of the batch.
     """
     staging_dir.mkdir(parents=True, exist_ok=True)
-    candidates: list[BufferCandidate] = []
+    candidates: list[InflatedCandidate] = []
     require_transcript = backend == "f5_tts"
     max_duration = 15.0 if backend == "f5_tts" else None
 
@@ -234,7 +234,7 @@ async def generate_batch(
                     backend, param1, param2, ref_text, char_name,
                 )
                 issues = clip_quality_issues(path)
-                candidates.append(BufferCandidate(
+                candidates.append(InflatedCandidate(
                     category=line.category, text=line.text, path=path, issues=issues,
                 ))
             except Exception as exc:

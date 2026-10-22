@@ -242,8 +242,8 @@ def clip_quality_issues(path: Path) -> list[str]:
 def add_ref_clip(name: str, clip_path: Path, transcript: str = "", source: str = "", category: str = "") -> Path:
     """Copy a generated clip into the character's ref pool and register it in config.
 
-    source/category are optional provenance tags (e.g. source="buffer" for zero-shot
-    padding clips from the buffer training wizard) — they persist permanently on the
+    source/category are optional provenance tags (e.g. source="inflated" for zero-shot
+    inflated clips from the data inflation wizard) — they persist permanently on the
     ref_clips entry so downstream code (get_ref_chain, training) doesn't need to
     regenerate or re-derive them, and the UI can group clips by source.
     """
@@ -389,7 +389,7 @@ def split_long_ref_clip(name: str, file_key: str, target_seconds: float) -> int:
     """Split an over-long ref_clips entry into shorter pieces near target_seconds,
     cutting at detected internal silence gaps and dividing its transcript across
     the pieces at sentence boundaries. Replaces the original entry with the new
-    ones (source/category carried over, so a buffer-generated clip stays tagged
+    ones (source/category carried over, so an inflated clip stays tagged
     as such). Returns the number of pieces created — 0 (original left untouched)
     if there's fewer than 2 sentences to split across, or no usable silence gap
     is found (e.g. one long unbroken sentence can't be cut without breaking
@@ -510,3 +510,24 @@ def set_piper_model(name: str, model_path: str) -> dict:
     cfg["piper_model"] = model_path
     p.write_text(json.dumps(cfg, indent=2))
     return cfg
+
+
+def migrate_legacy_tags() -> int:
+    """One-time rewrite of clips tagged source="buffer" (the old name for inflated data) to
+    source="inflated" in every character's config.json. Returns how many clips changed."""
+    changed = 0
+    if not CHARACTERS_DIR.is_dir():
+        return 0
+    for cfg_path in CHARACTERS_DIR.glob("*/config.json"):
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except Exception:
+            continue
+        hits = [rc for rc in cfg.get("ref_clips", []) if rc.get("source") == "buffer"]
+        if not hits:
+            continue
+        for rc in hits:
+            rc["source"] = "inflated"
+        cfg_path.write_text(json.dumps(cfg, indent=2))
+        changed += len(hits)
+    return changed

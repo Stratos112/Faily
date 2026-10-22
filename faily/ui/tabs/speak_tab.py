@@ -1,3 +1,4 @@
+import asyncio
 import re
 from contextlib import nullcontext
 from nicegui import ui, run as ni_run
@@ -163,9 +164,9 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 _out["model_loader"].set_visibility(False)
                 _out["progress_bar"].set_value(1.0)
                 _out["progress_bar"].set_visibility(True)
-                await ui.run_javascript("await new Promise(r => setTimeout(r, 400))")
-                _out["progress_bar"].set_visibility(False)
                 gen_btn.enable()
+                await asyncio.sleep(0.4)      # server-side: a client JS round trip can time out and skip the cleanup
+                _out["progress_bar"].set_visibility(False)
 
     def _on_stage2(key: str):
         _stage2[0] = key
@@ -579,9 +580,9 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 _out["model_loader"].set_visibility(False)
                 _out["progress_bar"].set_value(1.0)
                 _out["progress_bar"].set_visibility(True)
-                await ui.run_javascript("await new Promise(r => setTimeout(r, 400))")
-                _out["progress_bar"].set_visibility(False)
                 gen_btn.enable()
+                await asyncio.sleep(0.4)      # server-side: a client JS round trip can time out and skip the cleanup
+                _out["progress_bar"].set_visibility(False)
 
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
         _section_row("CHARACTER", "Pick a character — uses their full reference chain for zero-shot cloning.")

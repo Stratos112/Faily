@@ -1,6 +1,6 @@
 """Split a long recording into clip-sized slices at natural pauses.
 
-Used by the CLONE tab's "split & clean" import: the slices become a character's
+Used by the CLONE tab's "split & qualify" import: the slices become a character's
 reference clips. Cuts go in the middle of pauses, so every slice keeps some
 silence at both ends (the trim check later tightens it), and a cut never lands
 inside a word unless a stretch has no pause at all for far longer than a slice
@@ -14,9 +14,9 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from faily.modules.cleanup import _frame_db
+from faily.modules.qualify import _frame_db
 
-HOP = 0.01                       # seconds per analysis frame (matches cleanup._frame_db)
+HOP = 0.01                       # seconds per analysis frame (matches qualify._frame_db)
 
 # slice length presets: (target, min, max) seconds
 PRESETS = {

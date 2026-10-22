@@ -9,7 +9,7 @@ from faily.core.characters import (
     rename_ref_audio, update_ref_clip, clip_quality_issues, add_ref_clip,
     set_ref_clip_excluded, split_long_ref_clip, CHARACTERS_DIR,
 )
-from faily.modules.cleanup import delete_padding_clips
+from faily.modules.qualify import delete_inflated_clips
 from faily.ui.components import (
     section_label, show_error, send_to_edit, bind_play, prime_audio, play_url,
 )
@@ -19,11 +19,11 @@ from faily.modules.piper import (
 from faily.core.model_manager import manager
 from faily.core.settings import (
     get_default_base_voice, set_default_base_voice,
-    get_piper_learning_rate, set_piper_learning_rate,
-    get_piper_match, set_piper_match, get_piper_use_padding, set_piper_use_padding,
+    get_piper_learning_rate, set_piper_learning_rate, get_piper_epochs, set_piper_epochs,
+    get_piper_match, set_piper_match, get_piper_use_inflated, set_piper_use_inflated,
 )
-from faily.ui.tabs.buffer_training_dialog import open_buffer_training_dialog
-from faily.ui.tabs.cleanup_dialog import open_cleanup_dialog
+from faily.ui.tabs.inflation_dialog import open_inflation_dialog
+from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 from faily.ui.tabs.import_dialog import open_import_dialog
 from faily.ui.tabs.models_panel import build_models_panel
 from faily.ui.tabs.piper_training_dialog import (
@@ -259,13 +259,13 @@ def build_characters_tab(on_speak, on_change):
         # active_refs = what's actually used to build the VC reference — excludes
         # opted-out own clips; inherited is already excluded-filtered by get_ref_chain.
         excluded_count = sum(1 for r in own_refs if r.get("excluded"))
-        n_padding = sum(1 for r in own_refs if r.get("source") == "buffer")
+        n_inflated = sum(1 for r in own_refs if r.get("source") == "inflated")
 
-        def _confirm_delete_padding(n=name):
+        def _confirm_delete_inflated(n=name):
             with ui.dialog() as d, ui.card().classes("bg-[#1a1a1a] border border-[#333] gap-3"):
-                ui.label("DELETE ALL PADDING CLIPS?").classes("text-white font-mono text-xs tracking-widest")
+                ui.label("DELETE ALL INFLATED CLIPS?").classes("text-white font-mono text-xs tracking-widest")
                 ui.label(
-                    f"Removes all {n_padding} generated padding clips from {n} (your own recordings are not "
+                    f"Removes all {n_inflated} inflated clips from {n} (your own recordings are not "
                     "touched). The audio is moved to refs_trash/ in the character's folder, so it can be "
                     "recovered by hand. Already-trained models are unaffected."
                 ).classes("text-[#888] font-mono text-[11px] max-w-md")
@@ -273,11 +273,11 @@ def build_characters_tab(on_speak, on_change):
                     ui.button("Cancel", on_click=d.close).props("flat dense color=grey")
 
                     def go():
-                        removed = delete_padding_clips(n)
+                        removed = delete_inflated_clips(n)
                         d.close()
-                        ui.notify(f"Deleted {removed} padding clips (kept in refs_trash/)", timeout=4000)
+                        ui.notify(f"Deleted {removed} inflated clips (kept in refs_trash/)", timeout=4000)
                         _rebuild_detail()        # last: it deletes the elements this handler runs in
-                    ui.button(f"DELETE {n_padding}", icon="delete_forever", on_click=go).props(
+                    ui.button(f"DELETE {n_inflated}", icon="delete_forever", on_click=go).props(
                         "color=negative unelevated dense")
             d.open()
         active_refs = [r for r in own_refs if not r.get("excluded")] + inherited
@@ -453,7 +453,7 @@ def build_characters_tab(on_speak, on_change):
                             on_click=lambda: (_upload_mode.__setitem__(0, "add"), ref_upload.run_method("upload")),
                         ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest")
                         ui.button(
-                            "Split & clean…", icon="content_cut",
+                            "Split & qualify…", icon="content_cut",
                             on_click=lambda: (_upload_mode.__setitem__(0, "split"), ref_upload.run_method("upload")),
                         ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest").tooltip(
                             "Slice the selected recording at its pauses, check each slice (volume, "
@@ -515,7 +515,7 @@ def build_characters_tab(on_speak, on_change):
                                             "flat dense color=amber"
                                         ).classes("shrink-0")
                                         ui.icon(
-                                            "star" if is_primary else ("science" if ref.get("source") == "buffer" else "mic"),
+                                            "star" if is_primary else ("science" if ref.get("source") == "inflated" else "mic"),
                                             size="12px",
                                         ).classes(
                                             ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
@@ -576,27 +576,27 @@ def build_characters_tab(on_speak, on_change):
                                                 icon="close", on_click=_del,
                                             ).props("flat dense color=grey").classes("shrink-0")
 
-                                buffer_refs = [r for r in own_refs if r.get("source") == "buffer"]
-                                direct_refs = [r for r in own_refs if r.get("source") != "buffer"]
+                                inflated_refs = [r for r in own_refs if r.get("source") == "inflated"]
+                                direct_refs = [r for r in own_refs if r.get("source") != "inflated"]
 
                                 for ref in direct_refs:
                                     _render_own_ref_row(ref)
 
-                                if buffer_refs:
+                                if inflated_refs:
                                     with ui.row().classes("items-center gap-2 w-full mt-2 mb-1"):
                                         ui.icon("science", size="12px").classes("text-[#555] shrink-0")
-                                        ui.label("BUFFER CLIPS — ZERO-SHOT PADDING").classes(
+                                        ui.label("INFLATED CLIPS — ZERO-SHOT").classes(
                                             "text-[#555] font-mono text-[9px] tracking-widest flex-grow"
                                         )
-                                        ui.label(str(len(buffer_refs))).classes(
+                                        ui.label(str(len(inflated_refs))).classes(
                                             "text-[#333] font-mono text-[9px] bg-[#1a1a1a] px-1.5 rounded"
                                         )
                                         ui.button(
-                                            "DELETE ALL", icon="delete_sweep", on_click=_confirm_delete_padding,
+                                            "DELETE ALL", icon="delete_sweep", on_click=_confirm_delete_inflated,
                                         ).props("flat dense color=negative").classes("font-mono text-[9px]").tooltip(
-                                            "Remove every generated padding clip (kept in refs_trash/)"
+                                            "Remove every inflated clip (kept in refs_trash/)"
                                         )
-                                    for ref in buffer_refs:
+                                    for ref in inflated_refs:
                                         _render_own_ref_row(ref)
 
                                 for entry in inherited:
@@ -702,24 +702,24 @@ def build_characters_tab(on_speak, on_change):
                                     MATCH_CHOICES, value=_match[_aspect],
                                     on_change=lambda e, a=_aspect: set_piper_match(a, e.value),
                                 ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
-                    # ── padding clips ───────────────────────────────────────
+                    # ── inflated clips ───────────────────────────────────────
                     ui.switch(
-                        "Include generated padding clips",
-                        value=get_piper_use_padding(),
-                        on_change=lambda e: set_piper_use_padding(e.value),
+                        "Include inflated clips",
+                        value=get_piper_use_inflated(),
+                        on_change=lambda e: set_piper_use_inflated(e.value),
                     ).props("dense color=amber").classes("font-mono text-[10px] text-[#888] mb-2").tooltip(
-                        "Padding clips are synthetic clips of this voice reading a "
-                        "phonetically varied script (from ADD BUFFER TRAINING). They cover "
+                        "Inflated clips are synthetic clips of this voice reading a "
+                        "phonetically varied script (from INFLATE DATA). They cover "
                         "sounds your references might miss. Turn off to train on your "
                         "own recordings only."
                     )
-                    if n_padding:
+                    if n_inflated:
                         with ui.row().classes("items-center gap-2 -mt-1 mb-2"):
-                            ui.label(f"{n_padding} padding clips on this character").classes(
+                            ui.label(f"{n_inflated} inflated clips on this character").classes(
                                 "text-[#555] font-mono text-[10px]"
                             )
                             ui.button(
-                                "DELETE ALL…", icon="delete_sweep", on_click=_confirm_delete_padding,
+                                "DELETE ALL…", icon="delete_sweep", on_click=_confirm_delete_inflated,
                             ).props("flat dense color=negative").classes("font-mono text-[10px]")
 
                     # ── learning rate ───────────────────────────────────────
@@ -746,6 +746,30 @@ def build_characters_tab(on_speak, on_change):
                     lr_input = (
                         ui.number(value=get_piper_learning_rate(), format="%.2e", min=1e-7, max=1e-3,
                                   step=1e-5, on_change=_on_lr_change)
+                        .props("outlined dark dense").classes("w-48 mb-2 font-mono")
+                    )
+
+                    # ── epochs ──────────────────────────────────────────────
+                    def _on_epochs_change(e):
+                        try:
+                            if e.value and e.value >= 1:
+                                set_piper_epochs(e.value)
+                        except Exception:
+                            pass
+
+                    with ui.row().classes("items-center gap-1"):
+                        section_label("EPOCHS")
+                        ui.icon("info_outline", size="13px").classes(
+                            "text-[#3a3a3a] cursor-help"
+                        ).tooltip(
+                            "How many additional epochs to fine-tune for, counted from the "
+                            "starting checkpoint. A checkpoint is saved for audition every "
+                            "100 epochs (or just once at the end if you ask for fewer than 100), "
+                            "so you can pick an earlier one if later ones overfit. You can also stop early at any time."
+                        )
+                    epochs_input = (
+                        ui.number(value=get_piper_epochs(), format="%d", min=1, max=100000, step=100,
+                                  on_change=_on_epochs_change)
                         .props("outlined dark dense").classes("w-48 mb-2 font-mono")
                     )
 
@@ -872,7 +896,7 @@ def build_characters_tab(on_speak, on_change):
 
                     async def _do_train(n=name, opts: dict | None = None):
                         """Start training. opts (from the MODELS tab's "train from this") overrides
-                        the settings on this tab: base_voice, learning_rate, match, use_padding,
+                        the settings on this tab: base_voice, learning_rate, match, use_inflated,
                         resume_model, replace_id."""
                         st = read_training_status(CHARACTERS_DIR / n)
                         if st and st.get("state") in _ACTIVE_STATES:
@@ -943,8 +967,9 @@ def build_characters_tab(on_speak, on_change):
                         from faily.modules.piper import diagnose
                         chosen_voice = opts["base_voice"] if opts else _base_voice_key[0]
                         run_match = opts["match"] if opts else get_piper_match()
-                        run_padding = opts["use_padding"] if opts else get_piper_use_padding()
+                        run_inflated = opts["use_inflated"] if opts else get_piper_use_inflated()
                         run_lr = opts["learning_rate"] if opts else (lr_input.value or None)
+                        run_epochs = int((opts or {}).get("epochs") or epochs_input.value or get_piper_epochs())
                         reason = await ni_run.io_bound(diagnose)
                         if reason:
                             ui.notify(f"Piper not ready — {reason}", type="warning", timeout=8000)
@@ -957,23 +982,24 @@ def build_characters_tab(on_speak, on_change):
                             return
                         train_chain = [
                             c for c in chain
-                            if run_padding or c.get("source") != "buffer"
+                            if run_inflated or c.get("source") != "inflated"
                         ]
                         if len(train_chain) < 2:
                             ui.notify(
-                                "Not enough clips to train on once padding clips are left out — "
-                                "turn padding back on or add more recordings",
+                                "Not enough clips to train on once inflated clips are left out — "
+                                "turn inflated back on or add more recordings",
                                 type="warning", timeout=6000,
                             )
                             return
                         if len(train_chain) < len(chain):
                             ui.notify(
                                 f"Training on {len(train_chain)} of {len(chain)} clips "
-                                "(padding clips left out)", timeout=4000,
+                                "(inflated clips left out)", timeout=4000,
                             )
                         if start_training(
                             n, train_chain, chosen_voice, run_lr, run_match,
                             resume_model=(opts or {}).get("resume_model"), replace_id=(opts or {}).get("replace_id"),
+                            max_epochs=run_epochs,
                         ):
                             open_training_dialog(n, on_change, _rebuild_detail)
 
@@ -983,19 +1009,19 @@ def build_characters_tab(on_speak, on_change):
                         "silence/noise and wrong transcripts"
                     ).classes("text-[#444] font-mono text-[9px] tracking-widest")
                     ui.button(
-                        "CLEAN UP DATA", icon="cleaning_services",
-                        on_click=lambda n=name: open_cleanup_dialog(n, _rebuild_detail),
+                        "QUALIFY DATA", icon="cleaning_services",
+                        on_click=lambda n=name: open_qualify_dialog(n, _rebuild_detail),
                     ).props("flat dense color=amber").classes(f"{_BTN} mb-1").tooltip(
                         "Whisper-assisted review: fix volume/clipping, trim silence and noise, "
                         "correct transcripts — or delete bad clips. Originals are kept."
                     )
                     ui.separator().classes("my-2 opacity-10")
                     ui.label(
-                        "Optional — pad out reference audio before training"
+                        "Optional — inflate the reference data before training"
                     ).classes("text-[#444] font-mono text-[9px] tracking-widest")
                     ui.button(
-                        "+ ADD BUFFER TRAINING", icon="dynamic_form",
-                        on_click=lambda n=name: open_buffer_training_dialog(n, _rebuild_detail),
+                        "+ INFLATE DATA", icon="dynamic_form",
+                        on_click=lambda n=name: open_inflation_dialog(n, _rebuild_detail),
                     ).props("flat dense color=grey").classes(
                         f"{_BTN} mb-1"
                     ).tooltip(
@@ -1130,7 +1156,7 @@ def build_characters_tab(on_speak, on_change):
                     on_click=lambda: (_rebuild_list(), _rebuild_detail()),
                 ).props("flat dense color=grey").tooltip("Reload")
             left_col = ui.column().classes("w-full gap-1 mt-2")
-            # Long-lived parent for the split-and-clean dialogs: right_col is rebuilt (and
+            # Long-lived parent for the split-and-qualify dialogs: right_col is rebuilt (and
             # everything in it deleted) whenever a clip is edited or added.
             dialog_host = ui.element("div").classes("hidden")
 

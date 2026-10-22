@@ -9,7 +9,7 @@ from pathlib import Path
 from nicegui import run as ni_run, ui
 
 from faily.core import piper_models as PM
-from faily.core.settings import get_piper_learning_rate, get_piper_match, get_piper_use_padding
+from faily.core.settings import get_piper_epochs, get_piper_learning_rate, get_piper_match, get_piper_use_inflated
 from faily.modules.piper import (
     DEFAULT_MATCH, MATCH_ASPECTS, MATCH_CHOICES, infer,
 )
@@ -136,7 +136,7 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                 row("FROZEN PARTS", m.get("frozen") or "none")
             if clips:
                 row("TRAINING CLIPS", f"{clips.get('n')} ({clips.get('n_real')} recordings + "
-                    f"{clips.get('n_padding')} padding) · {clips.get('minutes')} min of audio")
+                    f"{clips.get('n_inflated', clips.get('n_padding', 0))} inflated) · {clips.get('minutes')} min of audio")
             if m.get("batch"):
                 row("BATCH", f"{m['batch']} (micro-batch × accumulation) · validation split {m.get('validation_split')}")
             row("LOSS", (f"generator {loss['gen']} · validation {loss['val']} (around epoch {loss['epoch']})"
@@ -212,6 +212,9 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                 label="Learning rate", value=m.get("learning_rate") or get_piper_learning_rate(),
                 format="%.2e", min=1e-7, max=1e-3, step=1e-5,
             ).props("outlined dark dense").classes("w-48 font-mono")
+            epochs = ui.number(
+                label="Epochs", value=(m.get("max_epochs") or get_piper_epochs()), format="%d", min=1, max=100000, step=100,
+            ).props("outlined dark dense").classes("w-48 font-mono")
             toggles = {}
             for a, info in MATCH_ASPECTS.items():
                 with ui.row().classes("items-center gap-2"):
@@ -220,8 +223,8 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                         "dense no-caps unelevated toggle-color=amber text-color=grey-6"
                     )
             pad = ui.switch(
-                "Include generated padding clips",
-                value=(clips.get("n_padding", 0) > 0) if clips else get_piper_use_padding(),
+                "Include inflated clips",
+                value=(clips.get("n_inflated", clips.get("n_padding", 0)) > 0) if clips else get_piper_use_inflated(),
             ).props("dense color=amber").classes("font-mono text-[10px] text-[#888]")
             with ui.row().classes("w-full justify-end gap-2 mt-2"):
                 ui.button("Cancel", on_click=d.close).props("flat dense color=grey")
@@ -232,8 +235,9 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                     opts = {
                         "base_voice": m["base_voice"],
                         "learning_rate": lr.value or None,
+                        "epochs": int(epochs.value or get_piper_epochs()),
                         "match": {a: t.value for a, t in toggles.items()},
-                        "use_padding": pad.value,
+                        "use_inflated": pad.value,
                         "resume_model": m if mode.value == "continue" else None,
                         "replace_id": m["id"] if save_as.value == "replace" else None,
                     }

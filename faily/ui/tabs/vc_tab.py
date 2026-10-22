@@ -182,7 +182,7 @@ def build_vc_tab(on_characters_changed=lambda: None):
             ref_list = ui.column().classes("w-full gap-1 mt-1")
             import_host = ui.element("div").classes("hidden")      # long-lived parent for the import review dialog
 
-            def _split_and_clean():
+            def _split_and_qualify():
                 if _ref_path[0] is None or not _ref_path[0].exists():
                     ui.notify("Upload or select a recording first", type="warning")
                     return
@@ -191,7 +191,7 @@ def build_vc_tab(on_characters_changed=lambda: None):
                     on_added=lambda: (_rebuild_char_list(), on_characters_changed()),
                 )
 
-            ui.button("SPLIT & CLEAN…", icon="content_cut", on_click=_split_and_clean).props(
+            ui.button("SPLIT & QUALIFY…", icon="content_cut", on_click=_split_and_qualify).props(
                 "flat dense color=amber"
             ).classes(f"{_BTN} text-[10px]").tooltip(
                 "Slice the selected recording at its pauses, check each slice (volume, silence, "

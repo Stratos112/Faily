@@ -1196,7 +1196,7 @@ async def _train(
             return sf.info(str(c["audio"])).duration
         except Exception:
             return 0.0
-    n_padding = sum(1 for c in usable if c.get("source") == "buffer")
+    n_inflated = sum(1 for c in usable if c.get("source") == "inflated")
     status(run={
         "base_voice": base_voice, "base_voice_label": voice_label,
         "base_epoch": (resume_model or {}).get("base_epoch") if resume_model else base_epoch,
@@ -1207,7 +1207,7 @@ async def _train(
         "frozen": frozen_modules(match),
         "max_epochs": max_epochs, "target_epoch": target_epochs,
         "batch": f"{_MICRO_BATCH} x {_ACCUMULATE}", "validation_split": round(validation_split, 4),
-        "clips": {"n": len(usable), "n_real": len(usable) - n_padding, "n_padding": n_padding,
+        "clips": {"n": len(usable), "n_real": len(usable) - n_inflated, "n_inflated": n_inflated,
                   "minutes": round(sum(_dur(c) for c in usable) / 60, 1)},
     })
     status(
@@ -1324,7 +1324,7 @@ def promote_candidate(char_dir: Path, onnx: Path, activate: bool = True) -> dict
         "base_epoch": run.get("base_epoch"), "epoch": epoch,
         "epochs_trained": (epoch - start) if start is not None else None,
         "epochs_since_base": (epoch - run["base_epoch"]) if run.get("base_epoch") is not None else None,
-        "learning_rate": run.get("learning_rate"), "match": run.get("match"), "frozen": run.get("frozen"),
+        "learning_rate": run.get("learning_rate"), "max_epochs": run.get("max_epochs"), "match": run.get("match"), "frozen": run.get("frozen"),
         "batch": run.get("batch"), "validation_split": run.get("validation_split"),
         "clips": run.get("clips"), "parent": run.get("resumed_from"),
         "trained_seconds": round(time.time() - st["started"]) if st.get("started") else None,
@@ -1341,6 +1341,38 @@ def promote_candidate(char_dir: Path, onnx: Path, activate: bool = True) -> dict
     return saved
 
 
+def _sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?…])\s+|\n+", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _bad_take(audio: "np.ndarray", sr: int, n_chars: int, length_scale: float) -> str | None:
+    """Why a synthesized sentence is unusable, or None. VITS occasionally blows up on a
+    sentence (more often at high VARIATION / PACING VARIABILITY): the rest of the line is
+    fine but that sentence turns into loud white noise, or stretches out absurdly."""
+    import numpy as np
+    if audio.size < sr * 0.1:
+        return "empty"
+    x = audio.astype(np.float32)
+    secs = len(x) / sr
+    if secs > max(3.0, n_chars * 0.22 * max(length_scale, 1.0)):
+        return f"{secs:.0f} s for {n_chars} characters (runaway duration)"
+    win, hop = 1024, 512
+    if len(x) < win:
+        return None
+    idx = np.arange(win)[None, :] + hop * np.arange(1 + (len(x) - win) // hop)[:, None]
+    frames = x[idx] * np.hanning(win)
+    power = np.abs(np.fft.rfft(frames, axis=1)) ** 2 + 1e-12
+    flat = np.exp(np.mean(np.log(power), axis=1)) / np.mean(power, axis=1)   # ~0.5 white noise, <0.1 speech
+    rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    loud = rms > max(rms.max() * 0.1, 1e-4)
+    if loud.sum() >= 4 and np.mean(flat[loud] > 0.3) > 0.4:
+        return "white-noise burst"
+    if np.abs(x).max() >= 0.999 and np.mean(np.abs(x) > 0.98) > 0.02:
+        return "clipping"
+    return None
+
+
 def infer(
     text: str,
     model_path: Path,
@@ -1349,8 +1381,63 @@ def infer(
     noise_scale: float = 0.667,
     noise_w_scale: float = 0.8,
     sentence_silence: float = 0.3,
+    max_retries: int = 4,
 ) -> Path:
     """Blocking piper inference. Returns out_path.
+
+    Each sentence is synthesized as its own utterance and checked; one that came out as
+    white noise or ran away in length is re-rolled (later attempts with calmer
+    VARIATION / PACING VARIABILITY) instead of ending up in the result. Sentences are then
+    joined with `sentence_silence` seconds between them. See _infer_raw for the parameters.
+    """
+    import numpy as np
+    import soundfile as sf
+    sentences = _sentences(text) or [text]
+    tmp_dir = out_path.parent / f"_piper_tmp_{out_path.stem}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    pieces, sr = [], 22050
+    try:
+        for n, sent in enumerate(sentences):
+            audio, why = None, None
+            for attempt in range(max_retries + 1):
+                # the first tries use the sliders as set; after that, back off
+                ns = noise_scale if attempt < 2 else min(noise_scale, 0.5)
+                nw = noise_w_scale if attempt < 2 else min(noise_w_scale, 0.5 if attempt == 2 else 0.3)
+                take = tmp_dir / f"s{n:03d}_{attempt}.wav"
+                _infer_raw(sent, model_path, take, length_scale, ns, nw, 0.0)
+                data, sr = sf.read(str(take), dtype="float32", always_2d=False)
+                if data.ndim > 1:
+                    data = data.mean(axis=1)
+                why = _bad_take(data, sr, len(sent), length_scale)
+                audio = data
+                if why is None:
+                    break
+                print(f"[piper] sentence {n + 1}/{len(sentences)} take {attempt + 1}: {why} — retrying", flush=True)
+            if why is not None:
+                print(f"[piper] sentence {n + 1}: still bad after {max_retries + 1} takes ({why}); "
+                      "dropping it rather than keeping noise", flush=True)
+                continue
+            pieces.append(audio)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    if not pieces:
+        raise RuntimeError("Piper produced only unusable audio (noise/empty) — try lowering VARIATION and PACING VARIABILITY")
+    gap = np.zeros(int(sr * sentence_silence), dtype=np.float32)
+    out = np.concatenate([x for p in pieces for x in (p, gap)][:-1])
+    sf.write(str(out_path), out, sr, subtype="PCM_16")
+    return out_path
+
+
+def _infer_raw(
+    text: str,
+    model_path: Path,
+    out_path: Path,
+    length_scale: float = 1.0,
+    noise_scale: float = 0.667,
+    noise_w_scale: float = 0.8,
+    sentence_silence: float = 0.3,
+) -> Path:
+    """One piper CLI call, no checking.
 
     length_scale: phoneme length — lower is faster/higher-pitched speech, higher is slower.
     noise_scale: generator noise — controls prosodic variability/expressiveness.

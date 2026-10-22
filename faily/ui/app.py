@@ -257,6 +257,9 @@ def run():
 
         _maybe_prompt_hf_token()
 
+    from faily.core.characters import migrate_legacy_tags
+    migrate_legacy_tags()           # clips tagged "buffer" before the rename to "inflated"
+
     _native = os.environ.get("FAILY_NATIVE", "0") == "1"
     ui.run(
         title="Faily",

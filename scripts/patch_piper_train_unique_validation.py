@@ -3,7 +3,7 @@ Patches piper_train/vits/lightning.py's VitsModel._load_datasets so the
 validation set never shares a transcript with the training set.
 
 Stock piper_train splits with a blind random_split, so when the dataset holds
-the same sentence more than once (padding lines reused across runs, repeated
+the same sentence more than once (inflated lines reused across runs, repeated
 takes of one line) a validation clip can have a twin in the training set and
 val_loss then measures memorisation instead of generalisation. This replaces
 the split with one that groups utterances by normalised text (case- and

@@ -1,4 +1,4 @@
-"""Whisper transcription for dataset cleanup and the pronunciation score.
+"""Whisper transcription for dataset qualification and the pronunciation score.
 
 Calls the Whisper model directly (processor + generate) instead of going through
 transformers' ASR pipeline: transformers 5's pipeline decodes through

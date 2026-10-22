@@ -1,6 +1,6 @@
-"""Reference-clip cleanup: find clips with volume / clipping problems, stray
+"""Reference-clip qualification: find clips with volume / clipping problems, stray
 silence or noise at the ends, or transcripts that disagree with the audio, and
-apply fixes. Pure logic — the UI lives in faily/ui/tabs/cleanup_dialog.py.
+apply fixes. Pure logic — the UI lives in faily/ui/tabs/qualify_dialog.py.
 
 Three independent analyses (volume, trim, transcript), each returning a
 suggestion per clip; plus apply helpers that edit the character's own clips in
@@ -53,12 +53,12 @@ class Clip:
     key: str                      # file_key, or PRIMARY
     audio: Path
     transcript: str
-    source: str = ""              # "buffer" for generated padding
+    source: str = ""              # "inflated" for generated (inflated) clips
 
 
 def own_clips(name: str) -> list[Clip]:
     """The character's own, non-excluded reference clips (inherited ones belong
-    to — and are cleaned on — their parent)."""
+    to — and are qualified on — their parent)."""
     out = []
     for e in C.get_ref_chain(name):
         if e["owner"] != name:
@@ -344,8 +344,8 @@ def analyze_all(
                 return out
             if progress:
                 progress(p, i, len(clips), clip.audio.stem)
-            if p == "transcript" and clip.source == "buffer":
-                continue           # a generated clip's text is its script: modules/padding_audit.py checks the audio against it
+            if p == "transcript" and clip.source == "inflated":
+                continue           # a generated clip's text is its script: modules/inflation_audit.py checks the audio against it
             try:
                 if p == "volume":
                     r = analyze_volume(clip.audio, target_db)
@@ -445,15 +445,15 @@ def apply_audio_fix(name: str, clip: Clip, gain_db: float = 0.0,
     return Clip(new_key, new_audio, clip.transcript, clip.source)
 
 
-def delete_padding_clips(name: str) -> int:
-    """Remove every generated padding ("buffer") clip from the character's own
+def delete_inflated_clips(name: str) -> int:
+    """Remove every inflated ("inflated") clip from the character's own
     reference clips — excluded ones too. The audio goes to refs_trash/ (so it can be
     recovered by hand) and the config is rewritten once. Returns how many were removed."""
     cfg_path = _char_dir(name) / "config.json"
     cfg = json.loads(cfg_path.read_text())
     keep, gone = [], []
     for rc in cfg.get("ref_clips", []):
-        (gone if rc.get("source") == "buffer" else keep).append(rc)
+        (gone if rc.get("source") == "inflated" else keep).append(rc)
     if not gone:
         return 0
     trash = _char_dir(name) / "refs_trash"

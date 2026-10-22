@@ -1,6 +1,6 @@
-# Extra Buffer Training script lines (200 per category) — merged into the bank by
-# load_script_bank() alongside buffer_scripts.txt. Same format. Keep every line
-# unique across ALL buffer_scripts*.txt files (scripts/check_script_bank.py).
+# Extra Data Inflation script lines (200 per category) — merged into the bank by
+# load_script_bank() alongside inflation_scripts.txt. Same format. Keep every line
+# unique across ALL inflation_scripts*.txt files (scripts/check_script_bank.py).
 
 ## plosives
 Put the paper cup back on the top shelf.

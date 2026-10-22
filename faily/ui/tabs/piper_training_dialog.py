@@ -82,6 +82,7 @@ def _fmt_eta(secs: float | None) -> str:
 async def _run_session(
     name: str, chain: list[dict], base_voice: str, learning_rate: float | None,
     match: dict | None, resume_model: dict | None, replace_id: str | None, sess: dict,
+    max_epochs: int = 1000,
 ) -> None:
     char_dir = CHARACTERS_DIR / name
     log = sess["log"].append
@@ -97,6 +98,7 @@ async def _run_session(
         await train(
             chain, char_dir, log, sess["proc"], base_voice=base_voice, learning_rate=learning_rate,
             match=match, resume_model=resume_model, replace_id=replace_id,
+            max_epochs=max_epochs,
         )
     except Exception as exc:
         log(f"ERROR: {exc}")
@@ -110,6 +112,7 @@ async def _run_session(
 def start_training(
     name: str, chain: list[dict], base_voice: str, learning_rate: float | None = None,
     match: dict | None = None, resume_model: dict | None = None, replace_id: str | None = None,
+    max_epochs: int = 1000,
 ) -> bool:
     """Kick off a background training run. False if one is already active."""
     busy = training_in_progress(CHARACTERS_DIR)
@@ -127,7 +130,7 @@ def start_training(
         detail="", candidates=0,
     )
     sess["task"] = background_tasks.create(
-        _run_session(name, chain, base_voice, learning_rate, match, resume_model, replace_id, sess)
+        _run_session(name, chain, base_voice, learning_rate, match, resume_model, replace_id, sess, max_epochs)
     )
     return True
 

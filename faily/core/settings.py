@@ -27,20 +27,25 @@ _DEFAULTS: dict = {
     # (2e-4 decayed over 2000+ epochs); this restarts lower for gentler,
     # smoother late-stage convergence.
     "piper_learning_rate": 5e-5,
+    # How many MORE epochs a training run fine-tunes for (on top of the checkpoint's own).
+    "piper_epochs": 1000,
     # Per aspect: "base" = keep the base voice's, "reference" = learn from the
     # clips. See modules/piper.MATCH_ASPECTS.
     "piper_match_timbre": "reference",
     "piper_match_rhythm": "base",
     "piper_match_pronunciation": "base",
-    # Include generated "buffer" padding clips in the training set.
-    "piper_use_padding": True,
+    # Include inflated clips in the training set.
+    "piper_use_inflated": True,
 }
 
 
 def load_settings() -> dict:
     if _SETTINGS_FILE.exists():
         try:
-            return {**_DEFAULTS, **json.loads(_SETTINGS_FILE.read_text())}
+            stored = json.loads(_SETTINGS_FILE.read_text())
+            if "piper_use_padding" in stored:         # renamed when "padding" became "inflated"
+                stored.setdefault("piper_use_inflated", stored.pop("piper_use_padding"))
+            return {**_DEFAULTS, **stored}
         except Exception:
             pass
     return dict(_DEFAULTS)
@@ -70,6 +75,16 @@ def set_piper_learning_rate(lr: float) -> None:
     save_settings(data)
 
 
+def get_piper_epochs() -> int:
+    return max(1, int(load_settings()["piper_epochs"]))
+
+
+def set_piper_epochs(n: int) -> None:
+    data = load_settings()
+    data["piper_epochs"] = max(1, int(n))
+    save_settings(data)
+
+
 def get_piper_match() -> dict:
     d = load_settings()
     return {a: d[f"piper_match_{a}"] for a in ("timbre", "rhythm", "pronunciation")}
@@ -81,11 +96,11 @@ def set_piper_match(aspect: str, choice: str) -> None:
     save_settings(data)
 
 
-def get_piper_use_padding() -> bool:
-    return bool(load_settings()["piper_use_padding"])
+def get_piper_use_inflated() -> bool:
+    return bool(load_settings()["piper_use_inflated"])
 
 
-def set_piper_use_padding(use: bool) -> None:
+def set_piper_use_inflated(use: bool) -> None:
     data = load_settings()
-    data["piper_use_padding"] = bool(use)
+    data["piper_use_inflated"] = bool(use)
     save_settings(data)

@@ -1,6 +1,6 @@
-"""Buffer Training wizard — a 4-step dialog (Timbral Direction, Zero-Shot
+"""Data Inflation wizard — a 4-step dialog (Timbral Direction, Zero-Shot
 Backend, Generate, Review & Commit) that bulk-generates zero-shot clips of a
-character's own voice to pad out their reference pool before Piper training.
+character's own voice to inflate their reference pool before Piper training.
 """
 import shutil
 from pathlib import Path
@@ -11,15 +11,15 @@ from nicegui import run as ni_run, ui
 from faily.core.characters import get_ref_chain, add_ref_clip
 from faily.core.model_manager import manager
 from faily.modules.vc import BACKENDS
-from faily.modules.buffer_training import (
-    CATEGORIES, ScriptLine, BufferCandidate,
-    load_script_bank, sample_lines, generate_batch, used_buffer_lines,
+from faily.modules.inflation import (
+    CATEGORIES, ScriptLine, InflatedCandidate,
+    load_script_bank, sample_lines, generate_batch, used_inflated_lines,
 )
-from faily.modules.importer import stage_padding
+from faily.modules.importer import stage_inflated
 from faily.ui.components import section_label, show_error, model_picker, bind_play
-from faily.ui.tabs.cleanup_dialog import open_cleanup_dialog
+from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 
-_STAGING_ROOT = Path("outputs/vc/_buffer_staging")
+_STAGING_ROOT = Path("outputs/vc/_inflation_staging")
 
 
 def _section_row(text: str, tip: str):
@@ -32,8 +32,8 @@ def _fmt_dur(seconds: float) -> str:
     return f"{seconds:.0f}s" if seconds < 60 else f"{seconds / 60:.1f}m"
 
 
-def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]) -> None:
-    """Open the Buffer Training wizard for char_name. on_committed() fires
+def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> None:
+    """Open the Data Inflation wizard for char_name. on_committed() fires
     after Step 4 commits at least one candidate into the reference pool."""
     chain = get_ref_chain(char_name)
     if not chain:
@@ -46,7 +46,7 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
         show_error(exc)
         return
 
-    # the spell-check dialog is created here, not inside the wizard dialog (which closes first)
+    # the qualify dialog is created here, not inside the wizard dialog (which closes first)
     host = ui.context.slot.parent
 
     staging_dir = _STAGING_ROOT / char_name
@@ -63,19 +63,19 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
     _param1: list[float] = [BACKENDS["chatterbox"]["param1"]["default"]]
     _param2: list[float] = [BACKENDS["chatterbox"]["param2"]["default"]]
     _lines: list[ScriptLine] = []
-    _candidates: list[BufferCandidate] = []
+    _candidates: list[InflatedCandidate] = []
     _cancel: list[bool] = [False]
     _started: list[bool] = [False]
 
     with ui.dialog().classes("w-full max-w-5xl") as dlg, ui.card().classes(
         "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
     ):
-        ui.label(f"BUFFER TRAINING — {char_name}").classes(
+        ui.label(f"DATA INFLATION — {char_name}").classes(
             "text-white font-mono text-xs tracking-widest"
         )
         ui.label(
             "Bulk-generate zero-shot clips of this character's own voice, across a "
-            "diverse script bank, to pad out the reference pool before training."
+            "diverse script bank, to inflate the reference pool before training."
         ).classes("text-[#444] font-mono text-[10px] leading-snug")
         ui.separator().classes("opacity-20")
 
@@ -204,11 +204,11 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                     _started[0] = True
                     stepper.next()
 
-                    # Never repeat a script line this character's padding already used
+                    # Never repeat a script line this character's inflated clips already used
                     # (committed in an earlier run), nor within this run.
                     _lines[:] = sample_lines(
                         bank, {k: w[0] for k, w in _weights.items()}, _count[0],
-                        exclude=used_buffer_lines(char_name),
+                        exclude=used_inflated_lines(char_name),
                     )
                     if not _lines:
                         _ui_safe(lambda: gen_status.set_text(
@@ -287,7 +287,7 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                             ui.label("No clips generated.").classes("text-[#444] font-mono text-[10px] py-2")
                         _refresh_header()
                         return
-                    groups: dict[str, list[BufferCandidate]] = {}
+                    groups: dict[str, list[InflatedCandidate]] = {}
                     for c in _candidates:
                         groups.setdefault(c.category, []).append(c)
 
@@ -356,7 +356,7 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                         try:
                             add_ref_clip(
                                 char_name, c.path, transcript=" ".join(c.text.split()),
-                                source="buffer", category=c.category,
+                                source="inflated", category=c.category,
                             )
                             ok += 1
                         except Exception:
@@ -371,25 +371,25 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
                         ui.notify("Nothing selected to commit" if not failed else f"All {failed} commits failed", type="warning")
                     dlg.close()
 
-                async def _spellcheck():
-                    """Stage the selected clips and run the full spell-check on them (volume,
+                async def _qualify():
+                    """Stage the selected clips and run the full qualification on them (volume,
                     trim, noises, script words, duplicates); ADD at the end puts the survivors
-                    in the pool as padding."""
+                    in the pool as inflated data."""
                     picked = [c for c in _candidates if c.accepted]
                     if not picked:
                         ui.notify("Nothing selected to check", type="warning")
                         return
-                    spell_btn.disable(); commit_btn.disable()
+                    qualify_btn.disable(); commit_btn.disable()
                     try:
-                        stage = await ni_run.io_bound(stage_padding, picked)
+                        stage = await ni_run.io_bound(stage_inflated, picked)
                     except Exception as exc:
                         show_error(exc)
-                        spell_btn.enable(); commit_btn.enable()
+                        qualify_btn.enable(); commit_btn.enable()
                         return
 
                     def _committed(result: dict):
                         ui.notify(
-                            f"{result['added']} padding clip{'s' if result['added'] != 1 else ''} "
+                            f"{result['added']} inflated clip{'s' if result['added'] != 1 else ''} "
                             f"added to the reference pool",
                             type="positive", timeout=4000,
                         )
@@ -397,15 +397,15 @@ def open_buffer_training_dialog(char_name: str, on_committed: Callable[[], None]
 
                     dlg.close()
                     with host:
-                        open_cleanup_dialog(stage, staging={
+                        open_qualify_dialog(stage, staging={
                             "target": char_name, "is_new": False, "on_commit": _committed, "noun": "clips",
                         })
 
                 with ui.stepper_navigation():
-                    spell_btn = ui.button("SPELLCHECK & ADD", icon="spellcheck", on_click=_spellcheck).props(
+                    qualify_btn = ui.button("QUALIFY & ADD", icon="spellcheck", on_click=_qualify).props(
                         "color=amber unelevated"
                     ).classes("font-mono tracking-widest").tooltip(
-                        "Run the full spell-check on the selected clips before they join the pool"
+                        "Run the full qualification on the selected clips before they join the pool"
                     )
                     commit_btn = ui.button("ADD WITHOUT CHECKING", on_click=_commit).props("flat color=grey")
                     ui.button("DISCARD & CLOSE", on_click=dlg.close).props("flat color=grey")

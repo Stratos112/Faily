@@ -828,6 +828,41 @@ def _split_text_for_generation(text: str, max_chars: int) -> list[str]:
 
 
 _CROSSFADE_SECONDS = 0.04
+_TRIM_KEEP_LEAD = 0.03     # seconds of lead-in kept before the first speech when trimming a chunk
+_TRIM_KEEP_TAIL = 0.08     # ...and after the last speech (so word endings aren't clipped)
+# Pause put between two glued chunks, by how the earlier chunk's text ends. The model's own
+# silence at a chunk's edges is trimmed away, so this is the only gap — flowing, but still
+# respecting the punctuation.
+_PAUSE_AFTER = {".": 0.35, "!": 0.35, "?": 0.35, "…": 0.4, ":": 0.25, ";": 0.25, ",": 0.18, "—": 0.18}
+
+
+def _trim_edges(data: "np.ndarray", sr: int) -> "np.ndarray":
+    """Cut silence off the start and end of a generated chunk (shape [frames, channels]).
+    'Silence' = frames more than 40 dB under the chunk's loudest, so quiet word endings and
+    breaths inside the speech stay."""
+    import numpy as np
+    if len(data) == 0:
+        return data
+    mono = np.abs(data).max(axis=1) if data.ndim > 1 else np.abs(data)
+    win = max(int(0.01 * sr), 1)
+    n = len(mono) // win
+    if n == 0:
+        return data
+    env = mono[: n * win].reshape(n, win).max(axis=1)
+    peak = env.max()
+    if peak <= 1e-4:
+        return data
+    live = np.nonzero(env > peak * 0.01)[0]          # -40 dB
+    if len(live) == 0:
+        return data
+    start = max(int(live[0] * win - _TRIM_KEEP_LEAD * sr), 0)
+    end = min(int((live[-1] + 1) * win + _TRIM_KEEP_TAIL * sr), len(data))
+    return data[start:end]
+
+
+def _pause_after(text: str) -> float:
+    t = text.rstrip().rstrip("\"'”’)]»")
+    return _PAUSE_AFTER.get(t[-1:], 0.0)
 _CHARS_PER_SECOND = 15.0  # rough speaking-rate estimate, used only to size the preview bar
 
 
@@ -858,6 +893,7 @@ def _generate_chunked(
 
     scratch_dir = Path(tempfile.mkdtemp(prefix="faily_batch_"))
     pending: "np.ndarray | None" = None
+    prev_text = ""
     sr: int | None = None
     channels: int | None = None
     frames_written = 0
@@ -888,8 +924,17 @@ def _generate_chunked(
             data, chunk_sr = sf.read(str(chunk_path), dtype="float32", always_2d=True)
             if sr is None:
                 sr, channels = chunk_sr, data.shape[1]
+            data = _trim_edges(data, chunk_sr)
 
             if pending is None:
+                pending = data
+                prev_text = chunk
+                continue
+
+            gap = int(_pause_after(prev_text) * sr)
+            prev_text = chunk
+            if gap > 0:      # a punctuation pause: deliberate silence instead of whatever the model left
+                _flush(np.concatenate([pending, np.zeros((gap, pending.shape[1]), dtype="float32")]))
                 pending = data
                 continue
 

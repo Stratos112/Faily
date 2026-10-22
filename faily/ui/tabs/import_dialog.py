@@ -1,5 +1,5 @@
-"""CLONE tab: "split & clean" import. Slices a recording at its pauses, then hands the
-slices to the spell-check review (cleanup_dialog) with Whisper's transcripts
+"""CLONE tab: "split & qualify" import. Slices a recording at its pauses, then hands the
+slices to the qualify review (qualify_dialog) with Whisper's transcripts
 pre-filled, and finally adds the survivors to a new or existing character."""
 import shutil
 import uuid
@@ -12,7 +12,7 @@ from faily.core.characters import get_character, list_characters
 from faily.modules.importer import stage_slices
 from faily.modules.slicer import PRESETS, split_file
 from faily.ui.components import show_error
-from faily.ui.tabs.cleanup_dialog import open_cleanup_dialog
+from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 
 _TMP = Path("outputs/vc/_slices_tmp")
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
@@ -37,7 +37,7 @@ def open_import_dialog(
     with ui.dialog().props("persistent").classes("w-full") as dlg, ui.card().classes(
         "bg-[#0d0d0d] border border-[#252525] w-full max-w-xl gap-3 p-5"
     ):
-        ui.label(f"SPLIT & CLEAN  ·  {source.name}  ({length})").classes("text-white font-mono text-xs tracking-widest")
+        ui.label(f"SPLIT & QUALIFY  ·  {source.name}  ({length})").classes("text-white font-mono text-xs tracking-widest")
         ui.label(
             "Splits the recording at its pauses into clip-sized slices, then checks every slice — "
             "volume, stray silence and noise, and a transcript suggested by Whisper that you only "
@@ -128,6 +128,6 @@ def open_import_dialog(
             on_added()
 
         with host:
-            open_cleanup_dialog(stage, staging={"target": target, "is_new": is_new, "on_commit": _committed})
+            open_qualify_dialog(stage, staging={"target": target, "is_new": is_new, "on_commit": _committed})
 
     dlg.open()

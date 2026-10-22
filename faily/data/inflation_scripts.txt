@@ -1,7 +1,7 @@
-# Buffer Training script bank — parsed by faily/modules/buffer_training.py:load_script_bank().
+# Data Inflation script bank — parsed by faily/modules/inflation.py:load_script_bank().
 # Format: "## CATEGORY_KEY" header lines, one script line per following line.
 # Blank lines are ignored. Lines starting with "#" (outside a header) are comments.
-# Category keys here must match faily.modules.buffer_training.CATEGORIES exactly.
+# Category keys here must match faily.modules.inflation.CATEGORIES exactly.
 
 ## plosives
 Pick a peck of pickled peppers before breakfast.
