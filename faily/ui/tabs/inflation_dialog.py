@@ -16,7 +16,8 @@ from faily.modules.inflation import (
     load_script_bank, sample_lines, generate_batch, used_inflated_lines,
 )
 from faily.modules.importer import stage_inflated
-from faily.ui.components import section_label, show_error, model_picker, bind_play
+from faily.modules import autoqualify as AQ
+from faily.ui.components import section_label, show_error, model_picker, bind_play, output_url
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 
 _STAGING_ROOT = Path("outputs/vc/_inflation_staging")
@@ -265,6 +266,10 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
             # ══ STEP 4 — REVIEW & COMMIT ════════════════════════════════
             with ui.step("Review & Commit"):
                 review_header = ui.label("").classes("text-[#888] font-mono text-[10px] tracking-widest")
+                with ui.row().classes("w-full items-center gap-2 mt-1"):
+                    auto_status = ui.label("").classes("text-amber-400 font-mono text-[10px] flex-grow")
+                auto_bar = ui.linear_progress(value=0, show_value=False).props("color=amber track-color=grey-10")
+                auto_bar.set_visibility(False)
                 review_col = ui.column().classes("w-full gap-1 mt-1")
 
                 def _refresh_header():
@@ -279,6 +284,9 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     review_header.set_text(
                         f"{len(selected)} / {len(_candidates)} selected  ·  {_fmt_dur(total_dur)}"
                     )
+                    n_review = sum(1 for c in _candidates if c.verdict == "review")
+                    review_btn.set_visibility(n_review > 0)
+                    review_btn.set_text(f"QUALIFY {n_review} FLAGGED BY HAND")
 
                 def _render_review():
                     review_col.clear()
@@ -320,7 +328,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
 
                                     for c in items:
                                         rel = c.path.relative_to(Path("outputs"))
-                                        url = f"/outputs/{rel.as_posix()}"
+                                        url = output_url(c.path)
                                         with ui.row().classes(
                                             "w-full items-center gap-1 px-2 py-1 rounded "
                                             "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
@@ -337,7 +345,15 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                                                 ).classes("shrink-0"),
                                                 url=url,
                                             )
-                                            if c.issues:
+                                            if c.verdict == "reject":
+                                                ui.icon("block", size="12px").classes("text-red-400 shrink-0").tooltip(c.note)
+                                            elif c.verdict == "review":
+                                                ui.icon("help_outline", size="12px").classes(
+                                                    "text-amber-500 shrink-0").tooltip(c.note)
+                                            elif c.verdict == "ok":
+                                                ui.icon("check_circle", size="12px").classes(
+                                                    "text-[#6fbf8b] shrink-0").tooltip(c.note or "auto-qualified")
+                                            elif c.issues:
                                                 ui.icon("warning", size="12px").classes(
                                                     "text-amber-500 shrink-0"
                                                 ).tooltip(", ".join(c.issues))
@@ -345,7 +361,64 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                                                 ui.label(c.text).classes(
                                                     "text-[#aaa] font-mono text-[10px] truncate"
                                                 )
+                                                if c.note and c.verdict:
+                                                    ui.label(c.note).classes(
+                                                        ("text-red-400" if c.verdict == "reject" else
+                                                         "text-amber-500" if c.verdict == "review" else "text-[#555]")
+                                                        + " font-mono text-[9px] truncate")
                     _refresh_header()
+
+                async def _auto_qualify():
+                    """Align every clip's script to its audio, cut to the words, mute short gap
+                    sounds, and have Whisper confirm — no stepping. Clips that pass stay selected;
+                    unsure ones (review) and bad ones (reject) are unticked with the reason shown."""
+                    if not _candidates:
+                        return
+                    for b in (auto_btn, qualify_btn, commit_btn, review_btn):
+                        b.disable()
+                    auto_bar.set_visibility(True); auto_bar.set_value(0)
+                    prog = {"i": 0, "n": len(_candidates)}
+                    timer = ui.timer(0.3, lambda: (
+                        auto_bar.set_value(prog["i"] / max(prog["n"], 1)),
+                        auto_status.set_text(f"auto-qualifying {prog['i'] + 1}/{prog['n']}"
+                                             + ("  (first clip loads the models — ~30 s)" if prog["i"] == 0 else ""))))
+                    cancel = [False]
+
+                    def _run():
+                        return AQ.qualify_batch(
+                            [(c.path, c.text) for c in _candidates],
+                            progress=lambda i, n: prog.update(i=i, n=n), cancel=cancel,
+                        )
+                    try:
+                        results = await ni_run.io_bound(_run)
+                    except Exception as exc:
+                        show_error(exc)
+                        results = []
+                    finally:
+                        timer.cancel()
+                        auto_bar.set_visibility(False)
+                    counts = {"ok": 0, "review": 0, "reject": 0}
+                    trimmed = 0
+                    for c, r in zip(_candidates, results):
+                        c.verdict, c.note = r.status, r.summary()
+                        c.accepted = r.status == "ok"
+                        counts[r.status] += 1
+                        trimmed += r.status == "ok" and (r.trimmed_start + r.trimmed_end > 0.05)
+                    auto_status.set_text(
+                        f"auto-qualified: {counts['ok']} kept ({trimmed} trimmed), "
+                        f"{counts['review']} need a person, {counts['reject']} rejected"
+                    )
+                    for b in (auto_btn, qualify_btn, commit_btn, review_btn):
+                        b.enable()
+                    _render_review()
+
+                async def _qualify_flagged():
+                    """Hand the clips the tool wasn't sure about to the manual qualify screen."""
+                    picked = [c for c in _candidates if c.verdict == "review"]
+                    await _qualify_clips(picked)
+
+                async def _qualify():
+                    await _qualify_clips()
 
                 async def _commit():
                     commit_btn.disable()
@@ -371,11 +444,11 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                         ui.notify("Nothing selected to commit" if not failed else f"All {failed} commits failed", type="warning")
                     dlg.close()
 
-                async def _qualify():
+                async def _qualify_clips(picked: list | None = None):
                     """Stage the selected clips and run the full qualification on them (volume,
                     trim, noises, script words, duplicates); ADD at the end puts the survivors
                     in the pool as inflated data."""
-                    picked = [c for c in _candidates if c.accepted]
+                    picked = picked if picked is not None else [c for c in _candidates if c.accepted]
                     if not picked:
                         ui.notify("Nothing selected to check", type="warning")
                         return
@@ -402,12 +475,23 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                         })
 
                 with ui.stepper_navigation():
-                    qualify_btn = ui.button("QUALIFY & ADD", icon="spellcheck", on_click=_qualify).props(
+                    auto_btn = ui.button("AUTO-QUALIFY", icon="auto_fix_high", on_click=_auto_qualify).props(
                         "color=amber unelevated"
                     ).classes("font-mono tracking-widest").tooltip(
-                        "Run the full qualification on the selected clips before they join the pool"
+                        "No stepping: aligns each script to its audio, trims everything outside the words "
+                        "(breaths, vocalizations, long silences), mutes short sounds between words, and has "
+                        "Whisper confirm the result. Unsure and bad clips are unticked with the reason shown."
                     )
-                    commit_btn = ui.button("ADD WITHOUT CHECKING", on_click=_commit).props("flat color=grey")
+                    qualify_btn = ui.button("QUALIFY BY HAND & ADD", icon="spellcheck", on_click=_qualify).props(
+                        "outline color=amber"
+                    ).classes("font-mono tracking-widest").tooltip(
+                        "Step through the selected clips one at a time before they join the pool"
+                    )
+                    review_btn = ui.button("QUALIFY 0 FLAGGED BY HAND", on_click=_qualify_flagged).props(
+                        "flat color=amber"
+                    ).classes("font-mono")
+                    review_btn.set_visibility(False)
+                    commit_btn = ui.button("ADD SELECTED", on_click=_commit).props("flat color=grey")
                     ui.button("DISCARD & CLOSE", on_click=dlg.close).props("flat color=grey")
 
         def _on_hide():

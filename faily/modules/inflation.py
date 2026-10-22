@@ -69,6 +69,8 @@ class InflatedCandidate:
     path: Path
     issues: list[str] = field(default_factory=list)
     accepted: bool = True
+    verdict: str = ""            # after auto-qualify: "ok" | "review" | "reject"
+    note: str = ""               # what auto-qualify did / found
 
 
 def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
