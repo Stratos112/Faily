@@ -113,10 +113,11 @@ def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
 # therefore draws the opening sounds in these proportions (as far as the bank allows)
 # instead of however they happen to occur in the bank.
 START_WEIGHTS: dict[str, float] = {
-    "vowel": 0.25,        # a, e, i, o, u...
-    "sonorant": 0.30,     # m n l r w y h — soft consonants
-    "fricative": 0.20,    # s z f v sh
-    "th": 0.10,           # "the", "this", "that", "three"
+    "vowel": 0.23,        # a, e, i, o, u...
+    "sonorant": 0.28,     # m n l r w y h — soft consonants
+    "fricative": 0.19,    # s z f v sh
+    "the": 0.10,          # sentences that open with "The" — about as often as in natural writing
+    "th": 0.05,           # other "th" openings: this, that, three...
     "stop": 0.15,         # p b t d k g ch j — hard onsets
 }
 _TH_WORDS = {"the", "this", "that", "these", "those", "there", "then", "they", "their", "them", "than", "though", "thus",
@@ -132,6 +133,8 @@ def start_class(text: str) -> str:
     w = (m.group(0) if m else "").lower().strip("'")
     if not w:
         return "sonorant"                         # starts with a digit / symbol: spoken words, mostly soft
+    if w == "the":
+        return "the"
     if w in _TH_WORDS or w.startswith("th"):
         return "th"
     if w in _VOWEL_SOUND_H:
@@ -297,7 +300,9 @@ async def generate_batch(
     require_transcript = backend == "f5_tts"
     max_duration = 15.0 if backend == "f5_tts" else None
 
-    with build_ref_audio(char_name, require_transcript=require_transcript, max_duration=max_duration) as (ref_path, ref_text):
+    # Clone from the real recordings only: cloning inflated clips would compound their drift.
+    with build_ref_audio(char_name, require_transcript=require_transcript, max_duration=max_duration,
+                         live_only=True) as (ref_path, ref_text):
         total = len(lines)
         for i, line in enumerate(lines):
             if cancel_flag[0]:

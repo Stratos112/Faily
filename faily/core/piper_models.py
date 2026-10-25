@@ -138,8 +138,10 @@ def save_model(name: str, *, onnx: Path, ckpt: Path | None, meta: dict,
     return get_model(name, mid)
 
 
-def update_meta(name: str, model_id: str, **fields) -> None:
-    d = models_root(name) / model_id
+def update_meta(char: str, model_id: str, /, **fields) -> None:
+    """Merge `fields` into a saved model's meta.json. The character and model id are
+    positional-only so a field called "name" (the model's display name) can be passed."""
+    d = models_root(char) / model_id
     meta = json.loads(_meta_path(d).read_text())
     meta.update(fields)
     _meta_path(d).write_text(json.dumps(meta, indent=2, default=str))

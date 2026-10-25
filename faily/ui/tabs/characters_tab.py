@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from nicegui import ui, run as ni_run
 from faily.core.characters import (
@@ -129,6 +130,28 @@ def build_characters_tab(on_speak, on_change):
                 ui.button("Cancel", on_click=dlg.close).props("flat dense color=grey")
                 ui.button("Rename", on_click=_do_rename).props("color=amber unelevated dense")
         dlg.open()
+
+    def _split_ref_clip(char_name: str, ref: dict):
+        """Run a reference clip through the split & qualify wizard (slice at pauses, then check by
+        hand / automatically / automatically with the flagged reviewed). The slices are added to
+        this character; the long original can be removed afterwards (a copy goes to refs_trash/)."""
+        audio, fk = ref["audio"], ref.get("file_key")
+        is_primary = ref["kind"] == "primary"
+
+        def _remove_original():
+            if is_primary or not fk:
+                return
+            trash = CHARACTERS_DIR / char_name / "refs_trash"
+            trash.mkdir(exist_ok=True)
+            if audio.exists():
+                shutil.copy2(audio, trash / audio.name)
+            remove_ref_clip(char_name, fk)
+
+        with dialog_host:
+            open_import_dialog(
+                audio, audio.stem, dialog_host, on_added=_rebuild_detail, fixed_target=char_name,
+                remove_original=None if is_primary else _remove_original,
+            )
 
     def _open_ref_edit(char_name: str, audio: Path, is_primary: bool, file_key: str | None, transcript: str):
         with ui.dialog() as dlg, ui.card().classes(
@@ -557,10 +580,18 @@ def build_characters_tab(on_speak, on_change):
                                                 "text-[#3a3a3a] font-mono text-[9px] bg-[#161616] px-1.5 "
                                                 "rounded shrink-0"
                                             )
-                                        ui.button(
-                                            icon="tune",
-                                            on_click=lambda r=ref: send_to_edit(r["audio"], name),
-                                        ).props("flat dense color=grey").classes("shrink-0").tooltip("Send to Edit tab")
+                                        with ui.button(icon="tune").props("flat dense color=grey").classes(
+                                            "shrink-0"
+                                        ).tooltip("Work on this clip…"):
+                                            with ui.menu():
+                                                ui.menu_item(
+                                                    "Send to the Edit tab — manual work",
+                                                    on_click=lambda r=ref: send_to_edit(r["audio"], name),
+                                                )
+                                                ui.menu_item(
+                                                    "Split & qualify… — the quality wizard",
+                                                    on_click=lambda r=ref: _split_ref_clip(name, r),
+                                                )
                                         ui.button(
                                             icon="edit",
                                             on_click=lambda r=ref: _open_ref_edit(

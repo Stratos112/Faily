@@ -31,7 +31,7 @@ def get_character(name: str) -> dict | None:
     return json.loads(p.read_text()) if p.exists() else None
 
 
-def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
+def get_ref_chain(name: str, include_excluded: bool = False, live_only: bool = False) -> list[dict]:
     """Walk ancestry root→name; return [{audio, transcript, owner, file_key}] for
     all ref audio in each node.
 
@@ -45,6 +45,8 @@ def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
     an ancestor's, for an inherited sub-character chain) and its ref_clips file key, so
     callers can act on it in place (exclude/split) — file_key is None for a node's
     primary ref_audio, which isn't a ref_clips entry and can't be removed/split that way.
+
+    live_only=True leaves out inflated (generated) clips: the real recordings only.
     """
     path_up, seen, current = [], set(), name
     while current and current not in seen:
@@ -65,6 +67,8 @@ def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
         for rc in char.get("ref_clips", []):
             if rc.get("excluded") and not include_excluded:
                 continue
+            if live_only and rc.get("source") == "inflated":
+                continue
             audio = CHARACTERS_DIR / node / rc["file"]
             if audio.exists():
                 chain.append({"audio": audio, "transcript": rc.get("transcript", ""), "owner": node, "file_key": rc["file"],
@@ -73,7 +77,8 @@ def get_ref_chain(name: str, include_excluded: bool = False) -> list[dict]:
 
 
 @contextmanager
-def build_ref_audio(name: str, require_transcript: bool = False, max_duration: float | None = None):
+def build_ref_audio(name: str, require_transcript: bool = False, max_duration: float | None = None,
+                    live_only: bool = False):
     """Yield (Path, transcript) for the full ref chain.
 
     Single-entry chains return the existing file directly (no copy).
@@ -82,8 +87,9 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
     max_duration: stop accumulating clips once this total duration (seconds) would be exceeded.
       F5-TTS generates [ref]+[gen] as one sequence and trims by duration — optimal ref is
       5–15 s; longer refs break the trim and cause the ref speech to bleed into output.
+    live_only: use the real recordings only, leaving out inflated clips.
     """
-    chain = get_ref_chain(name)
+    chain = get_ref_chain(name, live_only=live_only)
     if require_transcript:
         chain = [n for n in chain if n["transcript"].strip()]
     if max_duration is not None:

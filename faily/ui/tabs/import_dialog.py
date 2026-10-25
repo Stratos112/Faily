@@ -9,7 +9,8 @@ import soundfile as sf
 from nicegui import run as ni_run, ui
 
 from faily.core.characters import get_character, list_characters
-from faily.modules.importer import stage_slices
+from faily.modules import autoqualify as AQ
+from faily.modules.importer import stage_slices, move_clips, commit_stage, discard_stage
 from faily.modules.slicer import PRESETS, split_file
 from faily.ui.components import show_error
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
@@ -21,12 +22,16 @@ _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 def open_import_dialog(
     source: Path, default_name: str, host, on_added=lambda: None,
     fixed_target: str | None = None, delete_source: bool = False,
+    remove_original=None,
 ) -> None:
     """host: a long-lived element to create the review dialog under (this dialog is
     closed before the review opens, and a dialog nested in a closed one would vanish).
     fixed_target: add the slices to this existing character and don't ask where.
     delete_source: `source` is a temporary upload — remove it once it has been sliced
-    (or the dialog is cancelled)."""
+    (or the dialog is cancelled).
+    remove_original: a function that takes the long clip out of its character — when given,
+    the dialog offers to run it once the slices have been added (used when splitting a clip
+    that is already a character's reference)."""
     try:
         info = sf.info(str(source))
         length = f"{info.duration:.0f} s" if info.duration < 120 else f"{info.duration / 60:.1f} min"
@@ -65,6 +70,25 @@ def open_import_dialog(
         if fixed_target:
             for el in (target_kind, name_in, existing_sel):
                 el.set_visibility(False)
+
+        ui.label("HOW TO CHECK THE SLICES").classes(_LBL)
+        check_mode = ui.radio(
+            {"hand": "By hand — step through every slice",
+             "auto_review": "Auto-qualify, add the clean ones, then review the flagged by hand",
+             "auto_only": "Auto-qualify and add only the ones that pass"},
+            value="hand",
+        ).props("dense color=amber")
+        ui.label(
+            "Auto-qualify has Whisper write each slice's transcript, aligns it to the audio and cuts the "
+            "slice to its words. A slice it isn't sure about (alignment doubt, a sound between words, "
+            "nothing heard) counts as flagged. Transcripts added this way come from Whisper and have not "
+            "been read by a person."
+        ).classes("text-[#555] font-mono text-[10px] leading-snug")
+        remove_cb = None
+        if remove_original is not None:
+            remove_cb = ui.checkbox(
+                "Remove the original long clip once its slices are added (kept in refs_trash/)", value=True,
+            ).props("dense color=amber").classes("font-mono text-[11px] text-[#888]")
 
         ui.label("SLICE LENGTH").classes(_LBL)
         preset = ui.toggle(
@@ -117,17 +141,83 @@ def open_import_dialog(
             shutil.rmtree(tmp, ignore_errors=True)
         _drop_source()
         dur = [s.duration for _, s in files]
-        ui.notify(f"{len(files)} slices ({min(dur):.1f}–{max(dur):.1f} s) — checking each now", timeout=3500)
-        dlg.close()
+        mode = check_mode.value
+        state = {"added": 0, "is_new": is_new}
+
+        def _finish():
+            """Everything the person asked for is done: remove the original if that was asked."""
+            if state["added"] and remove_cb is not None and remove_cb.value and remove_original is not None:
+                try:
+                    remove_original()
+                except Exception as exc:
+                    show_error(exc)
+            if state["added"]:
+                on_added()
 
         def _committed(result: dict):
+            state["added"] += result["added"]
             msg = f"Added {result['added']} clip{'s' if result['added'] != 1 else ''} to {target}"
             if result["no_transcript"]:
                 msg += f" — {result['no_transcript']} still need a transcript"
             ui.notify(msg, type="positive", timeout=6000)
+            _finish()
+
+        if mode == "hand":
+            ui.notify(f"{len(files)} slices ({min(dur):.1f}–{max(dur):.1f} s) — checking each now", timeout=3500)
+            dlg.close()
+            with host:
+                open_qualify_dialog(stage, staging={"target": target, "is_new": is_new, "on_commit": _committed,
+                                                    "on_discard": lambda: None})
+            return
+
+        # ── auto-qualify: transcribe + align + cut every slice, add the clean ones ──
+        prog = {"i": 0, "n": len(files)}
+        timer = ui.timer(0.3, lambda: status.set_text(
+            f"Transcribing and aligning slice {prog['i'] + 1}/{prog['n']}"
+            + ("  (the first one loads the models — ~30 s)" if prog["i"] == 0 else "")))
+        try:
+            results = await ni_run.io_bound(
+                AQ.auto_qualify_stage, stage, lambda i, n, name: prog.update(i=i, n=n))
+        except Exception as exc:
+            timer.cancel()
+            status.set_text("")
+            show_error(exc)
+            discard_stage(stage)
+            go_btn.enable(); cancel_btn.enable()
+            return
+        timer.cancel()
+        ok_keys = [k for k, r in results.items() if r.status == "ok"]
+        flagged = [k for k, r in results.items() if r.status != "ok"]
+        try:
+            if ok_keys:
+                ok_stage = move_clips(stage, ok_keys)
+                res = commit_stage(ok_stage, target, state["is_new"])
+                state["added"] += res["added"]
+                state["is_new"] = False
+        except Exception as exc:
+            show_error(exc)
+            discard_stage(stage)
+            dlg.close()
+            return
+        dlg.close()
+        summary = f"Auto-qualify: {len(ok_keys)} of {len(results)} slices passed and were added to {target}"
+        if mode == "auto_review" and flagged:
+            ui.notify(summary + f" — reviewing the {len(flagged)} flagged by hand", type="positive", timeout=6000)
             on_added()
 
-        with host:
-            open_qualify_dialog(stage, staging={"target": target, "is_new": is_new, "on_commit": _committed})
+            def _flagged_committed(result: dict):
+                state["added"] += result["added"]
+                ui.notify(f"Added {result['added']} reviewed clip{'s' if result['added'] != 1 else ''} to {target}",
+                          type="positive", timeout=5000)
+                _finish()
+
+            with host:
+                open_qualify_dialog(stage, staging={"target": target, "is_new": state["is_new"], "noun": "slices",
+                                                    "on_commit": _flagged_committed, "on_discard": _finish})
+        else:
+            discard_stage(stage)
+            ui.notify(summary + (f"; {len(flagged)} flagged slice{'s' if len(flagged) != 1 else ''} dropped"
+                                 if flagged else ""), type="positive", timeout=6000)
+            _finish()
 
     dlg.open()

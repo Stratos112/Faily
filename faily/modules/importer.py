@@ -76,6 +76,27 @@ def stage_inflated(candidates: list, name_hint: str = "") -> str:
     return name
 
 
+def move_clips(stage: str, keys: list[str]) -> str:
+    """Move the staged clips whose file keys are in `keys` into a new staging character and
+    return its name. The rest stay in `stage`."""
+    purge_old_stages()
+    src = C.CHARACTERS_DIR / stage
+    cfg = json.loads((src / "config.json").read_text())
+    moving = [rc for rc in cfg.get("ref_clips", []) if rc["file"] in set(keys)]
+    staying = [rc for rc in cfg.get("ref_clips", []) if rc["file"] not in set(keys)]
+    name = f"{STAGE_PREFIX}{uuid.uuid4().hex[:8]}"
+    dst = C.CHARACTERS_DIR / name
+    (dst / "refs").mkdir(parents=True)
+    for rc in moving:
+        shutil.move(str(src / rc["file"]), str(dst / rc["file"]))
+    (dst / "config.json").write_text(json.dumps({
+        "name": name, "created": datetime.now().isoformat(), "ref_clips": moving,
+    }, indent=2))
+    cfg["ref_clips"] = staying
+    (src / "config.json").write_text(json.dumps(cfg, indent=2))
+    return name
+
+
 def discard_stage(stage: str) -> None:
     if stage.startswith(STAGE_PREFIX):
         shutil.rmtree(C.CHARACTERS_DIR / stage, ignore_errors=True)

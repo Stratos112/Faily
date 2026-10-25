@@ -9,7 +9,7 @@ from faily.ui.tabs.speak_tab import build_speak_tab
 from faily.ui.tabs.edit_tab import build_edit_tab
 from faily.ui.tabs.daw_tab import build_daw_tab
 from faily.ui.tabs.characters_tab import build_characters_tab
-from faily.ui.components import set_edit_callback, set_daw_callback
+from faily.ui.components import set_edit_callback, set_daw_callback, set_overlay_host
 
 OUTPUTS = Path("outputs")
 
@@ -178,6 +178,8 @@ def run():
                     ui.button("Save", on_click=_save).props("color=amber unelevated dense")
             dlg.open()
 
+        set_overlay_host(ui.element("div").classes("hidden"))     # dialogs that must outlive tab rebuilds
+
         with ui.header().classes(
             "bg-[#0f0f0f] border-b border-[#252525] flex items-center px-8 py-4"
         ).style("min-height:56px"):
@@ -191,6 +193,8 @@ def run():
                 on_change=lambda: _on_char_change(),
                 on_done=lambda: _chars_refresh[0](),
             )
+            from faily.ui.tabs.inflation_dialog import global_inflation_chip
+            global_inflation_chip()
             ui.label(manager.device.upper()).classes(
                 "text-[#555] font-mono text-[10px] tracking-widest border border-[#333] px-2 py-1 rounded"
             )

@@ -14,7 +14,7 @@ from faily.core.characters import (
 )
 from faily.ui.components import (
     output_panel, section_label, show_error, model_picker, preview_meter,
-    prime_audio, play_url,
+    prime_audio, play_url, ref_mode_toggle, ref_live_only, ref_counts_text,
 )
 
 _BTN = "font-mono tracking-widest"
@@ -62,7 +62,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     _vc_source:     list[str]   = ["refs"]
 
     def _ref_source_opts(name: str) -> dict[str, str]:
-        chain = get_ref_chain(name)
+        chain = get_ref_chain(name, live_only=ref_live_only())
         n = len(chain)
         opts = {"refs": f"Reference clips ({n})" if n else "Reference clips (none)"}
         char = get_character(name)
@@ -70,7 +70,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
             opts["piper"] = "Piper (trained voice)"
         return opts
 
-    def _update_info(name: str):
+    def _update_info(name: str, keep: bool = False):
         char_state[0] = name
         _current_char[0] = name
         if name == _NO_CHAR:
@@ -80,11 +80,13 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         char = get_character(name)
         chain = get_ref_chain(name)
         ancestry = f"↳ {char['parent']}" if char and "parent" in char else "base"
-        refs = f"{len(chain)} ref{'s' if len(chain) != 1 else ''}" if chain else "⚠  no ref audio"
+        refs = ref_counts_text(name) if chain else "⚠  no ref audio"
         char_info.set_text(f"{ancestry}  ·  {refs}")
 
         opts = _ref_source_opts(name)
         default = "piper" if "piper" in opts else "refs"
+        if keep and _vc_source[0] in opts:        # only the clip counts changed: keep the person's choice
+            default = _vc_source[0]
         _vc_source[0] = default
         ref_source_select.set_options(opts, value=default)
         ref_source_select.set_visibility(True)
@@ -115,8 +117,10 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         text = text_input.value.strip()
         if not text:
             ui.notify("Enter a line to speak", type="warning"); return
-        if not get_ref_chain(char_state[0]):
-            ui.notify("Character has no reference audio — save from CLONE first", type="warning"); return
+        if not get_ref_chain(char_state[0], live_only=ref_live_only()):
+            ui.notify("This character has no recordings to clone from — switch to “Recordings + inflated”, "
+                      "or add recordings" if ref_live_only() else
+                      "Character has no reference audio — save from CLONE first", type="warning"); return
         gen_btn.disable()
         n = _candidates[0]
         results: list[tuple[Path, str]] = []
@@ -134,7 +138,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 return
             ref_cm = nullcontext((piper_ref, ""))
         else:
-            ref_cm = build_ref_audio(char_state[0])
+            ref_cm = build_ref_audio(char_state[0], live_only=ref_live_only())
         with ref_cm as (ref, _):
             try:
                 for i in range(n):
@@ -180,6 +184,12 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
             .props("outlined dark dense").classes("w-full")
         )
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
+        _section_row(
+            "CLONE FROM",
+            "Which of the character's clips the voice conversion / cloning uses as its reference. "
+            "Recordings + inflated is steadier; recordings only is closest to the real voice.",
+        )
+        ref_mode_toggle(lambda: _update_info(char_state[0]) if char_state[0] != _NO_CHAR else None)
 
         _section_row(
             "REFERENCE SOURCE",
@@ -507,9 +517,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         if name == _NO_CHAR:
             char_info.set_text(""); return
         chain = get_ref_chain(name)
-        char_info.set_text(
-            f"{len(chain)} ref clip{'s' if len(chain) != 1 else ''}" if chain else "⚠  no reference audio"
-        )
+        char_info.set_text(ref_counts_text(name) if chain else "⚠  no reference audio")
 
     def _rebuild_params():
         params_col.clear()
@@ -541,16 +549,18 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         if char_state[0] == _NO_CHAR:
             ui.notify("Select a character first", type="warning"); return
         text = text_input.value.strip() or "sample text"
-        chain = get_ref_chain(char_state[0])
+        chain = get_ref_chain(char_state[0], live_only=ref_live_only())
         if not chain:
-            ui.notify("Character has no reference audio", type="warning"); return
+            ui.notify("This character has no recordings to clone from — switch to “Recordings + inflated”, "
+                      "or add recordings" if ref_live_only() else "Character has no reference audio", type="warning"); return
         gen_btn.disable()
         n = _candidates[0]
         results: list[tuple[Path, str]] = []
         _out["model_loader"].set_visibility(True)
         _poll.active = True
         _is_f5 = _backend[0] == "f5_tts"
-        with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=15.0 if _is_f5 else None) as (ref, chain_transcript):
+        with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=15.0 if _is_f5 else None,
+                             live_only=ref_live_only()) as (ref, chain_transcript):
             try:
                 for i in range(n):
                     _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
@@ -591,6 +601,12 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
             .props("outlined dark dense").classes("w-full")
         )
         char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
+        _section_row(
+            "CLONE FROM",
+            "Which of the character's clips are used as the voice to clone. Recordings + inflated "
+            "is steadier; recordings only is closest to the real voice.",
+        )
+        ref_mode_toggle(lambda: _update_info(char_state[0]) if char_state[0] != _NO_CHAR else None)
 
         _section_row("BACKEND", "Voice cloning engine — same options as the CLONE tab.")
         model_picker(BACKENDS, "xtts_v2", _on_backend)

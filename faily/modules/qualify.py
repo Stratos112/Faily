@@ -380,9 +380,11 @@ MUTE_DB = -60.0                  # how far a muted noise is pushed down (timing 
 
 def process_audio(x: np.ndarray, sr: int, gain_db: float = 0.0,
                   trim_start: float = 0.0, trim_end: float | None = None,
-                  mute: tuple = ()) -> np.ndarray:
+                  mute: tuple = (), fade: tuple[float, float] | None = None) -> np.ndarray:
     """mute: [(start_s, end_s)] ranges (in the ORIGINAL clip's time) to push down by
-    40 dB with short fades — removes a breath between words without shifting anything."""
+    40 dB with short fades — removes a breath between words without shifting anything.
+    fade: (in_s, out_s) smooth raised-cosine fades at the start/end of the result (inflated
+    clips use these so a cut never reads as a click)."""
     if mute:
         x = x.copy()
         env = np.ones(len(x), dtype="float32")
@@ -400,21 +402,30 @@ def process_audio(x: np.ndarray, sr: int, gain_db: float = 0.0,
     a = int(max(trim_start, 0.0) * sr)
     b = len(x) if trim_end is None else int(min(trim_end * sr, len(x)))
     y = x[a:b] * (10 ** (gain_db / 20))
-    return np.clip(y, -1.0, 1.0).astype("float32")
+    y = np.clip(y, -1.0, 1.0).astype("float32")
+    if fade and len(y):
+        fin, fout = min(int(fade[0] * sr), len(y) // 4), min(int(fade[1] * sr), len(y) // 4)
+        if fin > 0:
+            y[:fin] *= (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, fin))).astype("float32")
+        if fout > 0:
+            y[-fout:] *= (0.5 + 0.5 * np.cos(np.linspace(0, np.pi, fout))).astype("float32")
+    return y
 
 
 def render_preview(path: Path, out: Path, gain_db: float = 0.0,
-                   trim_start: float = 0.0, trim_end: float | None = None, mute: tuple = ()) -> Path:
+                   trim_start: float = 0.0, trim_end: float | None = None, mute: tuple = (),
+                   fade: tuple[float, float] | None = None) -> Path:
     x, sr = sf.read(str(path), dtype="float32", always_2d=False)
     if x.ndim > 1:
         x = x.mean(axis=1)
     out.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(out), process_audio(x, sr, gain_db, trim_start, trim_end, mute), sr)
+    sf.write(str(out), process_audio(x, sr, gain_db, trim_start, trim_end, mute, fade), sr)
     return out
 
 
 def apply_audio_fix(name: str, clip: Clip, gain_db: float = 0.0,
-                    trim_start: float = 0.0, trim_end: float | None = None, mute: tuple = ()) -> Clip:
+                    trim_start: float = 0.0, trim_end: float | None = None, mute: tuple = (),
+                    fade: tuple[float, float] | None = None) -> Clip:
     """Rewrite the clip with gain / trim applied. Non-WAV clips (e.g. mp3) are
     written as WAV and the character config is repointed at the new file.
     Returns the updated Clip."""
@@ -422,7 +433,7 @@ def apply_audio_fix(name: str, clip: Clip, gain_db: float = 0.0,
         return clip
     x, sr = sf.read(str(clip.audio), dtype="float32", always_2d=False)
     mono = x.mean(axis=1) if x.ndim > 1 else x
-    y = process_audio(mono, sr, gain_db, trim_start, trim_end, mute)
+    y = process_audio(mono, sr, gain_db, trim_start, trim_end, mute, fade)
     _backup(name, clip.audio)
     if clip.audio.suffix.lower() == ".wav":
         sf.write(str(clip.audio), y, sr, subtype="PCM_16")

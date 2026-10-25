@@ -301,7 +301,14 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                 ).tooltip("Delete this model")
 
     def refresh_sync():
-        models = PM.list_models(name)
+        try:
+            models = PM.list_models(name)
+        except Exception as exc:               # show what went wrong instead of an empty panel
+            list_col.clear()
+            with list_col:
+                ui.label(f"Couldn't read this character's models: {type(exc).__name__}: {exc}").classes(
+                    "text-red-400 font-mono text-[11px] leading-snug py-2")
+            return
         count_lbl.set_text(f"{len(models)} model{'s' if len(models) != 1 else ''}")
         list_col.clear()
         with list_col:
@@ -311,17 +318,28 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                     "save from the audition list shows up here."
                 ).classes("text-[#555] font-mono text-[11px] leading-snug py-2")
             for m in models:
-                card(m)
+                try:
+                    card(m)
+                except Exception as exc:       # one odd model must not hide the others
+                    ui.label(f"Couldn't show “{m.get('name', m.get('id'))}” ({m.get('id')}): "
+                             f"{type(exc).__name__}: {exc}").classes("text-red-400 font-mono text-[10px] py-1")
 
-    async def first_load():
-        if name not in _migrated:
-            _migrated.add(name)
-            with list_col:
-                ui.label("Checking for an existing model…").classes("text-[#555] font-mono text-[11px]")
-            try:
-                await ni_run.io_bound(PM.ensure_migrated, name)
-            except Exception as exc:
-                show_error(exc)
-        refresh_sync()
+    async def adopt_old_model():
+        """A model from before the registry is adopted as the first entry (can take a while:
+        it reads checkpoints), then the list is redrawn."""
+        if name in _migrated:
+            return
+        _migrated.add(name)
+        try:
+            await ni_run.io_bound(PM.ensure_migrated, name)
+        except Exception as exc:
+            show_error(exc)
+            return
+        try:
+            refresh_sync()
+        except Exception:                       # the panel was rebuilt while this ran
+            pass
 
-    ui.timer(0.05, first_load, once=True)
+    # Draw what's saved right away (no timer to miss), then look for an old pre-registry model.
+    refresh_sync()
+    ui.timer(0.1, adopt_old_model, once=True)

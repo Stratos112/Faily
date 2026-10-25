@@ -17,6 +17,7 @@ from nicegui import run as ni_run, ui
 
 from faily.modules import qualify as K
 from faily.modules import inflation_audit as PA
+from faily.modules import autoqualify as AQ
 from faily.modules.importer import commit_stage, discard_stage
 from faily.ui.components import bind_play, play_url, show_error
 from faily.ui.waveform import region_picker
@@ -90,6 +91,18 @@ def _fold_audit_into_trim(sug: dict[str, dict]) -> None:
         return
     at, gt = audit.get("trim"), sug.get("trim")
     edge = list(audit.get("edge_issues", []))
+    if audit.get("aligned"):
+        # The script was aligned to the audio (the same analysis AUTO-QUALIFY uses), so its cut
+        # points replace the loudness-based ones — the two screens can't disagree.
+        sug.pop("trim", None)
+        if at:
+            sug["trim"] = {
+                **at, "issues": edge, "ok": not edge, "fade": at.get("fade"),
+                "note": "Cut to the words, found by aligning the script to the audio — "
+                        "the same cut AUTO-QUALIFY makes.",
+            }
+        audit["trim"] = None
+        return
     if at:
         base = gt or {"issues": [], "duration": at["duration"], "speech_start": at["speech_start"],
                       "speech_end": at["speech_end"], "trim_start": 0.0, "trim_end": at["duration"]}
@@ -260,6 +273,8 @@ def open_qualify_dialog(char_name: str, on_done=lambda: None, staging: dict | No
         discard_stage(char_name)
         _release()
         dlg.close()
+        if staging and staging.get("on_discard"):
+            staging["on_discard"]()
 
     def _finish_staging():
         """FINISH during an import: ask what to do with the slices."""
@@ -292,10 +307,10 @@ def open_qualify_dialog(char_name: str, on_done=lambda: None, staging: dict | No
         ui.notify(f"Deleted {clip.audio.stem} (kept in refs_trash/)", timeout=2500)
         _advance("deleted")
 
-    def _preview(key: str, gain: float, t0: float, t1: float | None, mute: tuple = ()):
+    def _preview(key: str, gain: float, t0: float, t1: float | None, mute: tuple = (), fade=None):
         out = _PREVIEW_DIR / f"p_{int(time.time() * 1000) % 10**9}.wav"
         try:
-            K.render_preview(clips[key].audio, out, gain, t0, t1, mute)
+            K.render_preview(clips[key].audio, out, gain, t0, t1, mute, fade)
         except Exception as exc:
             show_error(exc)
             return
@@ -458,6 +473,16 @@ def open_qualify_dialog(char_name: str, on_done=lambda: None, staging: dict | No
                     ui.label("Your text has “um”/“uh” that Whisper leaves out — keep them if they're real.").classes(
                         "text-[#666] font-mono text-[10px]")
 
+        def fade_for(t1: float | None):
+            """Smooth edges for an inflated clip's cut, only inside the cushion past the words."""
+            tr = (audit or {}).get("trim") or sug.get("trim") or {}
+            if not generated or "speech_start" not in tr:
+                return None
+            fin = tr["fade"][0] if tr.get("fade") else 0.015
+            fout = tr["fade"][1] if tr.get("fade") else 0.06
+            end = t1 if t1 is not None else tr["duration"]
+            return (fin, max(min(fout, end - tr["speech_end"]), 0.005))
+
         def audio_args() -> tuple[float, float, float | None, tuple]:
             gain = (ctl["gain"].value or 0.0) if "volume" in use and use["volume"].value else 0.0
             mute = tuple(rng for cb, rng in mute_boxes if cb.value)
@@ -477,7 +502,8 @@ def open_qualify_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             cur = clips[key]
             try:
                 if gain or t0 > 0 or t1 is not None or mute:
-                    new = K.apply_audio_fix(char_name, cur, gain_db=gain, trim_start=t0, trim_end=t1, mute=mute)
+                    new = K.apply_audio_fix(char_name, cur, gain_db=gain, trim_start=t0, trim_end=t1, mute=mute,
+                                            fade=fade_for(t1) if (t0 > 0 or t1 is not None) else None)
                     if new.key != key:                       # mp3 -> wav changes the key
                         clips[new.key] = clips.pop(key)
                     clips[new.key] = cur = new
@@ -501,7 +527,7 @@ def open_qualify_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             if "volume" in sug or "trim" in sug or audit is not None:
                 ui.button(
                     "PREVIEW", icon="volume_up",
-                    on_click=lambda: _preview(key, *audio_args()),
+                    on_click=lambda: _preview(key, *audio_args(), fade=fade_for(audio_args()[2]) if audio_args()[2] is not None or audio_args()[1] > 0 else None),
                 ).props("flat dense color=grey").classes("font-mono text-[10px]").tooltip(
                     "Hear the clip with the ticked volume, trim and noise fixes applied"
                 )
@@ -575,10 +601,21 @@ def open_qualify_dialog(char_name: str, on_done=lambda: None, staging: dict | No
             prog["text"] = f"inflated clips: noises and script · {i + 1}/{n} · {name}" + (
                 "  (loads Whisper — can take ~30 s)" if i == 0 and "transcript" not in generic else "")
 
+        def on_refine(i, n, name):
+            prog["frac"] = i / max(n, 1)
+            prog["text"] = f"aligning scripts to audio · {i + 1}/{n} · {name}" + (
+                "  (loads the aligner — can take ~30 s)" if i == 0 else "")
+
         def run_checks():
             out = K.analyze_all(char_name, generic, None, on_progress, cancel, keys=keys) if generic else {}
             if do_audit and not cancel[0]:
                 out["artifacts"] = PA.audit_character(char_name, on_audit, cancel, keys=keys)
+                # Inflated clips: cut points and stray sounds come from aligning the script to
+                # the audio, exactly as AUTO-QUALIFY does, so this screen agrees with it.
+                inflated = [(k, c.audio, c.transcript) for k, c in clips.items()
+                            if k in keys and c.source == "inflated" and c.transcript.strip()]
+                if inflated and not cancel[0]:
+                    AQ.refine_audits(out["artifacts"], inflated, on_refine, cancel)
             return out
 
 

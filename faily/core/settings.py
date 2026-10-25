@@ -36,6 +36,9 @@ _DEFAULTS: dict = {
     "piper_match_pronunciation": "base",
     # Include inflated clips in the training set.
     "piper_use_inflated": True,
+    # Which clips zero-shot generation (SPEAK / TUNE) clones from: "all" = recordings plus
+    # inflated clips (more stable), "live" = the real recordings only (more authentic).
+    "zero_shot_reference": "all",
 }
 
 
@@ -82,6 +85,16 @@ def get_piper_epochs() -> int:
 def set_piper_epochs(n: int) -> None:
     data = load_settings()
     data["piper_epochs"] = max(1, int(n))
+    save_settings(data)
+
+
+def get_zero_shot_reference() -> str:
+    return "live" if load_settings().get("zero_shot_reference") == "live" else "all"
+
+
+def set_zero_shot_reference(mode: str) -> None:
+    data = load_settings()
+    data["zero_shot_reference"] = "live" if mode == "live" else "all"
     save_settings(data)
 
 

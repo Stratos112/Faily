@@ -1,7 +1,7 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import tune_generate, STAGE2_BACKENDS
 from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
-from faily.ui.components import output_panel, section_label, show_error, model_picker
+from faily.ui.components import output_panel, section_label, show_error, model_picker, ref_mode_toggle, ref_live_only, ref_counts_text
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
@@ -41,7 +41,7 @@ def build_tune_tab():
         char = get_character(name)
         chain = get_ref_chain(name)
         ancestry = f"↳ {char['parent']}" if char and "parent" in char else "base character"
-        ref_label = f"{len(chain)} ref clip{'s' if len(chain) != 1 else ''}" if chain else "⚠  no reference audio — save from CLONE tab"
+        ref_label = ref_counts_text(name) if chain else "⚠  no reference audio — save from CLONE tab"
         char_info.set_text(f"{ancestry}  ·  {ref_label}")
 
     def _on_char(e):
@@ -60,7 +60,7 @@ def build_tune_tab():
         if not text:
             ui.notify("Enter a line to speak", type="warning")
             return
-        if not get_ref_chain(_char_name[0]):
+        if not get_ref_chain(_char_name[0], live_only=ref_live_only()):
             ui.notify("Character has no reference audio — save it from the CLONE tab first", type="warning")
             return
 
@@ -70,7 +70,7 @@ def build_tune_tab():
         _out["model_loader"].set_visibility(True)
         _poll.active = True
 
-        with build_ref_audio(_char_name[0]) as (ref, _):
+        with build_ref_audio(_char_name[0], live_only=ref_live_only()) as (ref, _):
             try:
                 path = await ni_run.io_bound(
                     tune_generate,
@@ -118,6 +118,12 @@ def build_tune_tab():
                 .classes("w-full")
             )
             char_info = ui.label("").classes("text-[#444] font-mono text-[10px] tracking-wide")
+            _section_row(
+                "CLONE FROM",
+                "Which of the character's clips are used as the reference voice. Recordings + inflated "
+                "is steadier; recordings only is closest to the real voice.",
+            )
+            ref_mode_toggle(lambda: _update_char_info(_char_name[0]))
 
             _section_row(
                 "VOICE CONVERSION",

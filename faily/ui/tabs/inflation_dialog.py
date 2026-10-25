@@ -17,7 +17,7 @@ from faily.modules.inflation import (
 )
 from faily.modules.importer import stage_inflated
 from faily.modules import autoqualify as AQ
-from faily.ui.components import section_label, show_error, model_picker, bind_play, output_url
+from faily.ui.components import section_label, show_error, model_picker, bind_play, output_url, overlay_host
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 
 _STAGING_ROOT = Path("outputs/vc/_inflation_staging")
@@ -33,9 +33,47 @@ def _fmt_dur(seconds: float) -> str:
     return f"{seconds:.0f}s" if seconds < 60 else f"{seconds / 60:.1f}m"
 
 
+# One wizard session per character. The dialog is minimized (hidden, still running) instead of
+# closed when you click away, and a chip in the app header brings it back.
+_SESSIONS: dict[str, dict] = {}
+
+
+def _reopen(char_name: str) -> None:
+    sess = _SESSIONS.get(char_name)
+    if sess:
+        sess["minimized"][0] = False
+        sess["dlg"].open()
+
+
+def global_inflation_chip() -> None:
+    """App-header indicator for a minimized Data Inflation wizard (like the training chip)."""
+    target = [None]
+    btn = ui.button(on_click=lambda: target[0] and _reopen(target[0])).props(
+        "flat dense no-caps icon=science").classes("font-mono text-[10px]")
+    btn.set_visibility(False)
+
+    def _refresh():
+        mins = [(c, s) for c, s in _SESSIONS.items() if s["minimized"][0]]
+        if not mins:
+            target[0] = None
+            btn.set_visibility(False)
+            return
+        char, sess = mins[0]
+        target[0] = char
+        btn.set_text(f"inflating {char}: {sess['label']()}")
+        btn.props(f"color={'amber' if sess['phase'][0] == 'generating' else 'positive'}")
+        btn.set_visibility(True)
+
+    _refresh()
+    ui.timer(1.5, _refresh)
+
+
 def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> None:
     """Open the Data Inflation wizard for char_name. on_committed() fires
     after Step 4 commits at least one candidate into the reference pool."""
+    if char_name in _SESSIONS:             # already running / minimized: bring it back, don't start over
+        _reopen(char_name)
+        return
     chain = get_ref_chain(char_name)
     if not chain:
         ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
@@ -47,8 +85,9 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
         show_error(exc)
         return
 
-    # the qualify dialog is created here, not inside the wizard dialog (which closes first)
-    host = ui.context.slot.parent
+    # Dialogs live under the app's overlay host, not the tab that opened them, so rebuilding a
+    # tab can't delete a wizard that is minimized or still generating.
+    host = overlay_host() or ui.context.slot.parent
 
     staging_dir = _STAGING_ROOT / char_name
     if staging_dir.exists():
@@ -67,13 +106,22 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
     _candidates: list[InflatedCandidate] = []
     _cancel: list[bool] = [False]
     _started: list[bool] = [False]
+    _minimized: list[bool] = [False]
+    _phase: list[str] = ["setup"]          # setup -> generating -> review
 
-    with ui.dialog().classes("w-full max-w-5xl") as dlg, ui.card().classes(
+    with host, ui.dialog().props("persistent").classes("w-full max-w-5xl") as dlg, ui.card().classes(
         "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
     ):
-        ui.label(f"DATA INFLATION — {char_name}").classes(
-            "text-white font-mono text-xs tracking-widest"
-        )
+        with ui.row().classes("w-full items-center gap-2"):
+            ui.label(f"DATA INFLATION — {char_name}").classes(
+                "text-white font-mono text-xs tracking-widest flex-grow"
+            )
+            ui.button(icon="remove", on_click=lambda: _minimize()).props("flat dense round color=grey").tooltip(
+                "Minimize — it keeps generating; bring it back from the chip in the top right"
+            )
+            ui.button(icon="close", on_click=lambda: _request_close()).props("flat dense round color=grey").tooltip(
+                "Close and discard"
+            )
         ui.label(
             "Bulk-generate zero-shot clips of this character's own voice, across a "
             "diverse script bank, to inflate the reference pool before training."
@@ -104,7 +152,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     def _on_count(e):
                         _count[0] = int(e.value)
                         count_lbl.set_text(str(int(e.value)))
-                    ui.slider(min=20, max=1000, step=10, value=200, on_change=_on_count).classes(
+                    ui.slider(min=20, max=2000, step=10, value=200, on_change=_on_count).classes(
                         "flex-grow"
                     ).props("color=amber")
 
@@ -203,6 +251,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     if _started[0]:
                         return
                     _started[0] = True
+                    _phase[0] = "generating"
                     stepper.next()
 
                     # Never repeat a script line this character's inflated clips already used
@@ -252,8 +301,10 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     except Exception as exc:
                         _ui_safe(lambda: show_error(exc))
                         _ui_safe(lambda: gen_status.set_text("error"))
+                        _phase[0] = "review"
                         return
 
+                    _phase[0] = "review"
                     if _cancel[0]:
                         _ui_safe(lambda: gen_status.set_text(
                             f"{len(_candidates)}/{len(_lines)} generated — stopped early, reviewing what we have"
@@ -272,15 +323,22 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                 auto_bar.set_visibility(False)
                 review_col = ui.column().classes("w-full gap-1 mt-1")
 
+                _dur_cache: dict[Path, float] = {}
+
+                def _clip_dur(path: Path) -> float:
+                    # read each file's length once: ticking a whole category fires this per clip,
+                    # which with thousands of clips would otherwise reread every file every time
+                    if path not in _dur_cache:
+                        import soundfile as sf
+                        try:
+                            _dur_cache[path] = sf.info(str(path)).duration
+                        except Exception:
+                            _dur_cache[path] = 0.0
+                    return _dur_cache[path]
+
                 def _refresh_header():
                     selected = [c for c in _candidates if c.accepted]
-                    total_dur = 0.0
-                    import soundfile as sf
-                    for c in selected:
-                        try:
-                            total_dur += sf.info(str(c.path)).duration
-                        except Exception:
-                            pass
+                    total_dur = sum(_clip_dur(c.path) for c in selected)
                     review_header.set_text(
                         f"{len(selected)} / {len(_candidates)} selected  ·  {_fmt_dur(total_dur)}"
                     )
@@ -398,6 +456,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     finally:
                         timer.cancel()
                         auto_bar.set_visibility(False)
+                    _dur_cache.clear()              # auto-qualify rewrote the clips: lengths changed
                     counts = {"ok": 0, "review": 0, "reject": 0}
                     trimmed = 0
                     for c, r in zip(_candidates, results):
@@ -532,8 +591,38 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     ui.button("DISCARD & CLOSE", on_click=dlg.close).props("flat color=grey")
 
         def _on_hide():
+            if _minimized[0]:              # only tucked away: keep generating, keep every clip
+                return
             _cancel[0] = True
+            _SESSIONS.pop(char_name, None)
             shutil.rmtree(staging_dir, ignore_errors=True)
         dlg.on("hide", _on_hide)
 
+    def _minimize():
+        _minimized[0] = True
+        dlg.close()
+
+    def _request_close():
+        if not (_candidates or _started[0]):
+            dlg.close()
+            return
+        with host, ui.dialog() as ask, ui.card().classes("bg-[#1a1a1a] border border-[#333] gap-3"):
+            ui.label("DISCARD THIS INFLATION?").classes("text-white font-mono text-xs tracking-widest")
+            ui.label(
+                "Generation stops and the clips made so far are thrown away. "
+                "Use minimize (–) to keep it running in the background."
+            ).classes("text-[#888] font-mono text-[11px] max-w-sm")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("KEEP IT", on_click=ask.close).props("flat dense color=grey")
+                ui.button("DISCARD", on_click=lambda: (ask.close(), dlg.close())).props("color=negative unelevated dense")
+        ask.open()
+
+    def _chip_label() -> str:
+        if _phase[0] == "generating":
+            return f"{len(_candidates)}/{len(_lines)} clips"
+        if _phase[0] == "review":
+            return f"{len(_candidates)} clips ready to review"
+        return "set up"
+
+    _SESSIONS[char_name] = {"dlg": dlg, "minimized": _minimized, "phase": _phase, "label": _chip_label}
     dlg.open()

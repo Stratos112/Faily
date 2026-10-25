@@ -8,6 +8,7 @@ from faily.core.characters import (
     CHARACTERS_DIR, list_character_clips, list_character_favorites,
 )
 from faily.ui.components import section_label, show_error
+from faily.ui.tabs.import_dialog import open_import_dialog
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
@@ -356,6 +357,28 @@ def build_edit_tab():
             src_now_playing = ui.label("").classes("text-[#333] font-mono text-[9px]")
             src_info = ui.label("no file loaded").classes(
                 "text-[#444] font-mono text-[10px] tracking-wide"
+            )
+            split_host = ui.element("div").classes("hidden")      # long-lived parent for the review dialogs
+
+            def _split_and_qualify():
+                src = _src[0]
+                if src is None or not Path(src).exists():
+                    ui.notify("Load a clip first", type="warning")
+                    return
+                char = _src_char[0] if _src_char[0] and _src_char[0] != _NO_CHAR else None
+                with split_host:
+                    open_import_dialog(
+                        Path(src), char or Path(src).stem, split_host,
+                        on_added=lambda: ui.notify("Slices added", type="positive", timeout=2000),
+                        fixed_target=char,
+                    )
+
+            ui.button("SPLIT & QUALIFY…", icon="content_cut", on_click=_split_and_qualify).props(
+                "flat dense color=amber"
+            ).classes(f"{_BTN} text-[10px]").tooltip(
+                "Cut a long clip into pieces at its pauses and qualify them — by hand, automatically, "
+                "or automatically with the flagged ones reviewed by hand — then add the pieces to a "
+                "character. Works on the loaded source as it is on disk (apply and save any edits first)."
             )
 
             ui.separator().classes("my-1 opacity-20")

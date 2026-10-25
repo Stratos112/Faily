@@ -406,38 +406,58 @@ def _align_best(x16: np.ndarray, script: str):
     return best
 
 
-def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: bool = True) -> Result:
-    """Qualify one inflated clip against its script. When the verdict is "ok" the trimmed (and
-    gap-muted) audio is written to `out_path` (default: replaces `path`)."""
-    res = Result()
-    out_path = out_path or path
+@dataclass
+class Analysis:
+    """What the aligner and the signal say about one clip — everything needed to cut it, with
+    nothing written. qualify_clip() applies it; the manual qualify screen shows it, so the two
+    always agree."""
+    status: str = "ok"                       # ok | review | reject
+    reasons: list[str] = field(default_factory=list)
+    score: float = 0.0
+    duration: float = 0.0
+    speech_start: float = 0.0                # measured edges of the words (before the cushion)
+    speech_end: float = 0.0
+    cut: tuple[float, float] | None = None   # (start, end) seconds to keep
+    mute: list[tuple[float, float]] = field(default_factory=list)       # sounds between words
+    events: list[tuple[float, float, str, float]] = field(default_factory=list)   # (start, end, where, dB vs speech)
+    words: list[tuple[str, float, float, float]] = field(default_factory=list)
+    aligned: bool = False                    # False = couldn't align (no cut / events available)
+
+
+def analyze_clip(path: Path, script: str, recording: bool = False) -> Analysis:
+    """Align `script` to the clip and work out the cut, the sounds to mute, and the verdict.
+
+    recording=True is for a person's recording: a sound between words is as likely a natural
+    breath or laugh as junk, and it is not ours to mute, so it is flagged for a look instead."""
+    an = Analysis()
     x, sr = sf.read(str(path), dtype="float32", always_2d=False)
     mono = x.mean(axis=1) if x.ndim > 1 else x
-    if len(mono) / sr > MAX_SECONDS or len(mono) < sr * 0.2:
-        res.status, res.reasons = "review", ["clip length is unusual"]
-        return res
+    an.duration = len(mono) / sr
+    if an.duration > MAX_SECONDS or len(mono) < sr * 0.2:
+        an.status, an.reasons = "review", ["clip length is unusual"]
+        return an
 
     x16 = K_resample(mono, sr)
     best = _align_best(x16, script)
     if best is None:
-        res.status, res.reasons = "review", ["couldn't align the script to the audio"]
-        return res
+        an.status, an.reasons = "review", ["couldn't align the script to the audio"]
+        return an
     (aligned, mean_score), aligner_words, owner, toks = best
-    res.score = mean_score
-    res.words = [(aligner_words[wi], s, e, sc) for wi, s, e, sc in aligned]
+    an.score = mean_score
+    an.words = [(aligner_words[wi], s, e, sc) for wi, s, e, sc in aligned]
     if mean_score < MIN_CLIP_SCORE:
-        res.status, res.reasons = "review", [f"words don't match the audio well (alignment {mean_score:.2f})"]
-        return res
+        an.status, an.reasons = "review", [f"words don't match the audio well (alignment {mean_score:.2f})"]
+        return an
     worst = min(aligned, key=lambda a: a[3])
     if worst[3] < MIN_WORD_SCORE:
-        res.status, res.reasons = "review", [f"“{aligner_words[worst[0]].lower()}” isn't clearly in the audio"]
-        return res
+        an.status, an.reasons = "review", [f"“{aligner_words[worst[0]].lower()}” isn't clearly in the audio"]
+        return an
 
     # ── energy envelope + the words' (refined) spans ─────────────────────────
     db = K._frame_db(mono, sr)                      # 20 ms windows, 10 ms hop
     n = len(db)
-    to_f = lambda s: int(round(s / HOP))
-    spans = [(to_f(s), max(to_f(e), to_f(s) + 1)) for _, s, e, _ in aligned]
+    to_f = lambda t: int(round(t / HOP))
+    spans = [(to_f(st), max(to_f(en), to_f(st) + 1)) for _, st, en, _ in aligned]
     in_span = np.zeros(n, dtype=bool)
     for a, b in spans:
         in_span[max(a, 0):min(b, n)] = True
@@ -447,8 +467,8 @@ def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: 
     audible = db > thresh
 
     # Each word's span is a spike per letter, so it misses a trailing "s"/"sh" or a soft onset.
-    # Grow every span over the audible frames touching it (stopping at a fresh rise in energy,
-    # which is a new sound — enforced only on the clip's outer edges), a little at the outer edges and more between words.
+    # Grow every span over the audible frames touching it, more between words than at the
+    # clip's outer edges, where a fresh rise in energy is a new sound (a breath, a moan).
     from faily.modules.inflation_audit import frame_features
     harm = frame_features(mono, sr)["harm"]
     voiced = np.zeros(n, dtype=bool)
@@ -473,31 +493,41 @@ def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: 
                 e0 += 1; fwd -= 1
         spans[k] = (s0, e0)
     a, b = spans[0][0], spans[-1][1]
+    an.speech_start, an.speech_end = a * HOP, min(b * HOP, an.duration)
 
     # ── B: sound that no word explains ───────────────────────────────────────
-    mute: list[tuple[float, float]] = []
     claimed = np.zeros(n, dtype=bool)
     guard = int(EVENT_GUARD / HOP)
     for s0, e0 in spans:
         claimed[max(s0 - guard, 0):min(e0 + guard, n)] = True
     left_over = audible & ~claimed
+    inside, outside = [], []
     for s0, e0 in _runs(left_over):
         if (e0 - s0) * HOP < MIN_EVENT:
             continue
-        if e0 <= a or s0 >= b:                       # before the first word / after the last: cut away by A
-            continue
-        dur = (e0 - s0) * HOP
-        loud = float(db[s0:e0].max()) > speech_db - LOUD_EVENT_DB
-        if dur > MUTE_MAX or loud:
-            res.status = "reject"
-            res.reasons.append(f"{'loud ' if loud else ''}sound between words at {s0 * HOP:.1f} s ({dur:.2f} s)")
+        rel = float(db[s0:e0].max()) - speech_db
+        if e0 <= a:
+            outside.append((s0 * HOP, e0 * HOP, "start", rel))
+        elif s0 >= b:
+            outside.append((s0 * HOP, e0 * HOP, "end", rel))
         else:
-            mute.append((s0 * HOP, e0 * HOP))
-    if res.status == "reject":
-        return res
+            inside.append((s0 * HOP, e0 * HOP, "inside", rel))
+    if recording:
+        if inside:
+            an.status = "review"
+            an.reasons.append(f"a sound between words at {inside[0][0]:.1f} s (breath, laugh or noise?) — check it")
+        an.mute = []
+    else:
+        for ev in inside:
+            dur = ev[1] - ev[0]
+            loud = ev[3] > -LOUD_EVENT_DB
+            if dur > MUTE_MAX or loud:
+                an.status = "reject"
+                an.reasons.append(f"{'loud ' if loud else ''}sound between words at {ev[0]:.1f} s ({dur:.2f} s)")
+        an.mute = [(ev[0], ev[1]) for ev in inside]
+    an.events = inside + outside
 
     # ── A: cut to the words, punctuation-sized margins that never include sound ──
-    a0, b0 = a, b                                   # the measured edges, before the cushion
     a = max(a - int(EXTRA_START / HOP), 0)          # a safety cushion on top of the measured edges,
     b = min(b + int(EXTRA_END / HOP), n)            # so a word's last few ms are never the thing cut
     lead_f, tail_f = int(LEAD / HOP), int(_tail_for(script) / HOP)
@@ -511,38 +541,40 @@ def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: 
         if cut1 >= n or audible[cut1]:
             break
         cut1 += 1
-    t0, t1 = cut0 * HOP, min(cut1 * HOP, len(mono) / sr)
-    res.trimmed_start, res.trimmed_end = t0, len(mono) / sr - t1
+    an.cut = (cut0 * HOP, min(cut1 * HOP, an.duration))
+    an.aligned = True
+    return an
 
-    y = x[int(t0 * sr):int(t1 * sr)].copy()
-    if mute:
-        env = np.ones(len(y), dtype="float32")
-        ramp, low = max(int(0.01 * sr), 1), 10 ** (-60 / 20)
-        for m0, m1 in mute:
-            i0, i1 = int((m0 - t0) * sr), int((m1 - t0) * sr)
-            i0, i1 = max(i0, 0), min(i1, len(y))
-            if i1 <= i0:
-                continue
-            env[i0:i1] = low
-            env[max(i0 - ramp, 0):i0] = np.minimum(env[max(i0 - ramp, 0):i0], np.linspace(1, low, i0 - max(i0 - ramp, 0)))
-            env[i1:i1 + ramp] = np.minimum(env[i1:i1 + ramp], np.linspace(low, 1, len(env[i1:i1 + ramp])))
-        y = y * (env[:, None] if y.ndim > 1 else env)
-        res.muted = len(mute)
-    # Smooth fades so the cut never reads as a click or a chopped sound. They only use the
-    # cushion beyond the measured word edges, so the words themselves are never faded.
-    fin = min(int(FADE_IN * sr), max(int((a0 * HOP - t0) * sr), int(0.005 * sr)), len(y) // 4)
-    fout = min(int(FADE_OUT * sr), max(int((t1 - b0 * HOP) * sr), int(0.005 * sr)), len(y) // 4)
-    if fin > 0:
-        ramp = (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, fin))).astype("float32")      # raised cosine
-        y[:fin] *= ramp[:, None] if y.ndim > 1 else ramp
-    if fout > 0:
-        ramp = (0.5 + 0.5 * np.cos(np.linspace(0, np.pi, fout))).astype("float32")
-        y[-fout:] *= ramp[:, None] if y.ndim > 1 else ramp
+
+def fades_for(an: Analysis, cut: tuple[float, float]) -> tuple[float, float]:
+    """(fade-in, fade-out) seconds for a clip cut at `cut`: smooth, but only inside the cushion
+    beyond the measured word edges, so the words themselves are never faded."""
+    fin = min(FADE_IN, max(an.speech_start - cut[0], 0.005))
+    fout = min(FADE_OUT, max(cut[1] - an.speech_end, 0.005))
+    return fin, fout
+
+
+def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: bool = True,
+                 recording: bool = False) -> Result:
+    """Qualify one inflated clip against its script. When the verdict is "ok" the trimmed (and
+    gap-muted) audio is written to `out_path` (default: replaces `path`)."""
+    res = Result()
+    out_path = out_path or path
+    an = analyze_clip(path, script, recording)
+    res.score, res.words = an.score, an.words
+    if not an.aligned or an.status in ("reject", "review"):
+        res.status, res.reasons = an.status, an.reasons
+        return res
+    x, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    y = K.process_audio(x.mean(axis=1) if x.ndim > 1 else x, sr, 0.0, an.cut[0], an.cut[1],
+                        tuple(an.mute), fade=fades_for(an, an.cut))
+    res.trimmed_start, res.trimmed_end = an.cut[0], an.duration - an.cut[1]
+    res.muted = len(an.mute)
 
     # ── Whisper must hear the script in what's left ──────────────────────────
     if verify:
         from faily.modules.asr import transcribe
-        heard = transcribe(y.mean(axis=1) if y.ndim > 1 else y, sr)
+        heard = transcribe(y, sr)
         ref, hyp = K.normalize_words(script), K.normalize_words(heard)
         res.wer = K.word_error_rate(ref, hyp)
         if res.wer >= WER_REJECT:
@@ -554,6 +586,108 @@ def qualify_clip(path: Path, script: str, out_path: Path | None = None, verify: 
 
     sf.write(str(out_path), y, sr)
     return res
+
+
+def auto_qualify_stage(
+    stage: str, progress: Callable[[int, int, str], None] | None = None, cancel: list[bool] | None = None,
+) -> dict[str, Result]:
+    """Auto-qualify freshly split RECORDING slices held in a staging character. Whisper writes each
+    slice's transcript, the transcript is aligned to the audio, and a slice that aligns cleanly is cut
+    to its words (rewritten in place). Anything unsure — alignment doubt, a sound between words,
+    nothing heard — is left as it is and marked "review". Returns {clip key: Result}."""
+    from faily.modules.asr import transcribe
+    out: dict[str, Result] = {}
+    try:
+        clips = K.own_clips(stage)
+        for i, c in enumerate(clips):
+            if cancel and cancel[0]:
+                break
+            if progress:
+                progress(i, len(clips), c.audio.stem)
+            try:
+                x, sr = sf.read(str(c.audio), dtype="float32", always_2d=False)
+                text = transcribe(x.mean(axis=1) if x.ndim > 1 else x, sr).strip()
+                if not text:
+                    out[c.key] = Result(status="review", reasons=["no speech heard"])
+                    continue
+                K.set_transcript(stage, c, text)
+                out[c.key] = qualify_clip(c.audio, text, verify=False, recording=True)
+            except Exception as exc:
+                out[c.key] = Result(status="review", reasons=[f"couldn't check: {exc}"])
+    finally:
+        unload()
+        try:
+            from faily.modules.asr import unload as _unload_asr
+            _unload_asr()
+        except Exception:
+            pass
+    return out
+
+
+# ── the manual qualify screen uses the same analysis ─────────────────────────
+
+def refine_audits(
+    audits: dict[str, dict], clips: list[tuple[str, Path, str]],
+    progress: Callable[[int, int, str], None] | None = None, cancel: list[bool] | None = None,
+) -> None:
+    """Make the qualify screen's findings for inflated clips come from the same analysis as
+    AUTO-QUALIFY. `audits` (from inflation_audit.audit_character) is updated in place: its trim,
+    noise events and noises-between-words are replaced with this module's; its script
+    comparison, duplicate and background findings stay. `clips` = [(key, path, script)]."""
+    from faily.modules.inflation_audit import Event
+    try:
+        for i, (key, path, script) in enumerate(clips):
+            if cancel and cancel[0]:
+                break
+            if progress:
+                progress(i, len(clips), path.stem)
+            try:
+                an = analyze_clip(path, script)
+            except Exception as exc:
+                an = Analysis(status="review", reasons=[f"couldn't align: {exc}"])
+            audit = audits.get(key)
+            if audit is None:
+                audit = audits[key] = {"events": [], "duration": round(an.duration, 2), "snr_db": 0.0, "mute": [],
+                                       "trim": None, "words": None, "recommend_delete": False, "reason": "",
+                                       "issues": [], "edge_issues": [], "ok": True, "skipped": 0}
+            if not an.aligned:                            # no alignment: keep the older findings, say why
+                audit["issues"] = list(audit.get("issues", [])) + [f"auto-qualify can't verify the edges: {an.reasons[0]}"]
+                audit["ok"] = False
+                continue
+            audit["aligned"] = True
+            audit["score"] = round(an.score, 2)
+            audit["issues"] = [i_ for i_ in audit.get("issues", []) if "between words" not in i_]
+            audit["events"] = [Event(s, e, "sound between words" if w == "inside" else "sound outside the words", rel, w)
+                               for s, e, w, rel in an.events]
+            audit["mute"] = [(round(s, 2), round(e, 2)) for s, e in an.mute]
+            audit["skipped"] = 0
+            if an.mute:
+                audit["issues"].append(f"{len(an.mute)} sound{'s' if len(an.mute) != 1 else ''} between words")
+            if an.status == "reject":
+                audit["issues"] += [r for r in an.reasons if r not in audit["issues"]]
+                audit["recommend_delete"] = True
+                audit["reason"] = audit.get("reason") or "there is a sound between its words that can't be removed cleanly"
+            t0, t1 = an.cut
+            lead, tail = t0, an.duration - t1
+            before = an.speech_start                       # seconds before the first word
+            after = an.duration - an.speech_end            # seconds after the last word
+            edge = []
+            if any(ev[2] == "start" for ev in an.events):
+                edge.append("a stray noise before the first word")
+            elif before > 0.25:
+                edge.append(f"{before:.1f} s before the first word")
+            if any(ev[2] == "end" for ev in an.events):
+                edge.append("a stray noise after the last word")
+            elif after > 0.25:
+                edge.append(f"{after:.1f} s after the last word")
+            audit["edge_issues"] = edge
+            audit["trim"] = ({"trim_start": round(t0, 2), "trim_end": round(t1, 2), "duration": round(an.duration, 2),
+                              "speech_start": round(an.speech_start, 2), "speech_end": round(an.speech_end, 2),
+                              "fade": fades_for(an, an.cut)}
+                             if lead > 0.005 or tail > 0.005 else None)
+            audit["ok"] = not (audit["issues"] or edge)
+    finally:
+        unload()
 
 
 def K_resample(mono: np.ndarray, sr: int) -> np.ndarray:

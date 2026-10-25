@@ -150,6 +150,63 @@ def bind_play(*els, url: str) -> None:
             el._props["data-faily-play"] = url
 
 
+# A long-lived element (created once by the app, outside every tab) that wizards put their
+# dialogs under, so rebuilding a tab can't delete a dialog that is minimized or still running.
+_OVERLAY: list = [None]
+
+
+def set_overlay_host(el) -> None:
+    _OVERLAY[0] = el
+
+
+def overlay_host():
+    return _OVERLAY[0]
+
+
+_REF_TOGGLES: list = []
+
+
+def ref_mode_toggle(on_change=lambda: None):
+    """'Live + inflated' / 'Live only' switch for which clips zero-shot generation clones from.
+    One shared, saved setting: every toggle on every tab stays in step."""
+    from faily.core.settings import get_zero_shot_reference, set_zero_shot_reference
+    tg = ui.toggle(
+        {"all": "Recordings + inflated", "live": "Recordings only"}, value=get_zero_shot_reference(),
+    ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
+    tg.tooltip(
+        "What the voice is cloned from. Including the inflated clips gives the model more to go on "
+        "and a steadier result; recordings only keeps it closest to the real voice (the inflated "
+        "clips are themselves generated, so they pull it a little toward the generator)."
+    )
+
+    def _changed(e):
+        set_zero_shot_reference(e.value)
+        for other in list(_REF_TOGGLES):
+            if other is not tg and other.value != e.value:
+                try:
+                    other.set_value(e.value)
+                except Exception:
+                    _REF_TOGGLES.remove(other)
+        on_change()
+    tg.on_value_change(_changed)
+    _REF_TOGGLES.append(tg)
+    return tg
+
+
+def ref_live_only() -> bool:
+    from faily.core.settings import get_zero_shot_reference
+    return get_zero_shot_reference() == "live"
+
+
+def ref_counts_text(name: str) -> str:
+    """'12 recordings · 340 inflated' (what a character offers as reference audio)."""
+    from faily.core.characters import get_ref_chain
+    chain = get_ref_chain(name)
+    n_inf = sum(1 for c in chain if c.get("source") == "inflated")
+    live = len(chain) - n_inf
+    return f"{live} recording{'s' if live != 1 else ''}" + (f" · {n_inf} inflated" if n_inf else "")
+
+
 def prime_audio(btn) -> None:
     """For a button whose handler generates audio and then calls play_url()."""
     btn.on("click", js_handler="() => window.failyPlay.prime()")
