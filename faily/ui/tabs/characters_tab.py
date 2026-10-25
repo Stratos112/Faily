@@ -15,13 +15,14 @@ from faily.ui.components import (
     section_label, show_error, send_to_edit, bind_play, prime_audio, play_url,
 )
 from faily.modules.piper import (
-    BASE_VOICES, MATCH_ASPECTS, MATCH_CHOICES, frozen_modules, base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT,
+    BASE_VOICES, MATCH_ASPECTS, MATCH_CHOICES, TRAIN_DATA_CHOICES, filter_training_clips, frozen_modules,
+    base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT,
 )
 from faily.core.model_manager import manager
 from faily.core.settings import (
     get_default_base_voice, set_default_base_voice,
     get_piper_learning_rate, set_piper_learning_rate, get_piper_epochs, set_piper_epochs,
-    get_piper_match, set_piper_match, get_piper_use_inflated, set_piper_use_inflated,
+    get_piper_match, set_piper_match, get_piper_train_data, set_piper_train_data,
 )
 from faily.ui.tabs.inflation_dialog import open_inflation_dialog
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
@@ -733,17 +734,52 @@ def build_characters_tab(on_speak, on_change):
                                     MATCH_CHOICES, value=_match[_aspect],
                                     on_change=lambda e, a=_aspect: set_piper_match(a, e.value),
                                 ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
-                    # ── inflated clips ───────────────────────────────────────
-                    ui.switch(
-                        "Include inflated clips",
-                        value=get_piper_use_inflated(),
-                        on_change=lambda e: set_piper_use_inflated(e.value),
-                    ).props("dense color=amber").classes("font-mono text-[10px] text-[#888] mb-2").tooltip(
-                        "Inflated clips are synthetic clips of this voice reading a "
-                        "phonetically varied script (from INFLATE DATA). They cover "
-                        "sounds your references might miss. Turn off to train on your "
-                        "own recordings only."
-                    )
+                    # ── what to train on ─────────────────────────────────────
+                    with ui.row().classes("items-center gap-1"):
+                        section_label("TRAIN ON")
+                        ui.icon("info_outline", size="13px").classes("text-[#3a3a3a] cursor-help").tooltip(
+                            "Recordings only keeps the model closest to the real voice. Recordings + inflated "
+                            "adds the generated clips for coverage and stability. Inflated only trains on the "
+                            "generated clips alone: the steadiest and cleanest data, but the model can never "
+                            "be better than the zero-shot clone it learns from."
+                        )
+                    train_data_sel = ui.toggle(
+                        TRAIN_DATA_CHOICES, value=get_piper_train_data(),
+                    ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
+                    train_data_info = ui.label("").classes("text-[#555] font-mono text-[10px] leading-snug mb-1")
+
+                    def _train_data_summary(mode: str) -> tuple[str, bool]:
+                        """('120 clips · 14.2 min will be used', warn) for the chosen source."""
+                        import soundfile as _sf2
+                        picked = filter_training_clips(get_ref_chain(name), mode)
+                        mins = 0.0
+                        for c in picked:
+                            try:
+                                mins += _sf2.info(str(c["audio"])).duration
+                            except Exception:
+                                pass
+                        mins /= 60
+                        text = f"{len(picked)} clip{'s' if len(picked) != 1 else ''} · {mins:.1f} min will be used"
+                        warn = False
+                        if mode == "inflated":
+                            if not picked:
+                                text, warn = "no inflated clips yet — use INFLATE DATA first", True
+                            elif mins < 30:
+                                text += " — inflated-only usually needs 30+ min (ideally 60+) to be stable"
+                                warn = True
+                        elif mode == "recordings" and mins < 10:
+                            text += " — fine-tunes usually need 10+ min for a recognizable voice"
+                            warn = True
+                        return text, warn
+
+                    def _on_train_data(e=None):
+                        set_piper_train_data(train_data_sel.value)
+                        text, warn = _train_data_summary(train_data_sel.value)
+                        train_data_info.set_text(text)
+                        train_data_info.classes(
+                            replace=("text-amber-500" if warn else "text-[#555]") + " font-mono text-[10px] leading-snug mb-1")
+                    train_data_sel.on_value_change(_on_train_data)
+                    _on_train_data()
                     if n_inflated:
                         with ui.row().classes("items-center gap-2 -mt-1 mb-2"):
                             ui.label(f"{n_inflated} inflated clips on this character").classes(
@@ -927,15 +963,20 @@ def build_characters_tab(on_speak, on_change):
 
                     async def _do_train(n=name, opts: dict | None = None):
                         """Start training. opts (from the MODELS tab's "train from this") overrides
-                        the settings on this tab: base_voice, learning_rate, match, use_inflated,
+                        the settings on this tab: base_voice, learning_rate, match, train_data,
                         resume_model, replace_id."""
                         st = read_training_status(CHARACTERS_DIR / n)
                         if st and st.get("state") in _ACTIVE_STATES:
                             open_training_dialog(n, on_change, _rebuild_detail)
                             return
-                        chain = get_ref_chain(n)
+                        run_mode = (opts or {}).get("train_data") or get_piper_train_data()
+                        full_chain = get_ref_chain(n)
+                        chain = filter_training_clips(full_chain, run_mode)
                         if not chain:
-                            ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
+                            ui.notify(
+                                "No ref clips — add clips from CLONE or TUNE first" if not full_chain else
+                                f"No clips match “{TRAIN_DATA_CHOICES[run_mode]}” — pick another TRAIN ON option "
+                                "(or use INFLATE DATA first)", type="warning")
                             return
 
                         import soundfile as _sf
@@ -971,7 +1012,7 @@ def build_characters_tab(on_speak, on_change):
                             # relying solely on train()'s deeper guard, so that case
                             # exits cleanly instead of proceeding into GPU-freeing /
                             # base-voice-download work first.
-                            chain = get_ref_chain(n)
+                            chain = filter_training_clips(get_ref_chain(n), run_mode)
                             if not chain:
                                 ui.notify("No reference clips left after review — nothing to train on", type="warning")
                                 return
@@ -998,7 +1039,6 @@ def build_characters_tab(on_speak, on_change):
                         from faily.modules.piper import diagnose
                         chosen_voice = opts["base_voice"] if opts else _base_voice_key[0]
                         run_match = opts["match"] if opts else get_piper_match()
-                        run_inflated = opts["use_inflated"] if opts else get_piper_use_inflated()
                         run_lr = opts["learning_rate"] if opts else (lr_input.value or None)
                         run_epochs = int((opts or {}).get("epochs") or epochs_input.value or get_piper_epochs())
                         reason = await ni_run.io_bound(diagnose)
@@ -1011,21 +1051,18 @@ def build_characters_tab(on_speak, on_change):
                         except ValueError as exc:
                             ui.notify(str(exc), type="warning", timeout=7000)
                             return
-                        train_chain = [
-                            c for c in chain
-                            if run_inflated or c.get("source") != "inflated"
-                        ]
+                        train_chain = chain          # already limited to the chosen TRAIN ON source
                         if len(train_chain) < 2:
                             ui.notify(
-                                "Not enough clips to train on once inflated clips are left out — "
-                                "turn inflated back on or add more recordings",
+                                f"Not enough clips to train on with “{TRAIN_DATA_CHOICES[run_mode]}” — pick another "
+                                "TRAIN ON option or add more clips",
                                 type="warning", timeout=6000,
                             )
                             return
-                        if len(train_chain) < len(chain):
+                        if len(train_chain) < len(full_chain):
                             ui.notify(
-                                f"Training on {len(train_chain)} of {len(chain)} clips "
-                                "(inflated clips left out)", timeout=4000,
+                                f"Training on {len(train_chain)} of {len(full_chain)} clips "
+                                f"({TRAIN_DATA_CHOICES[run_mode].lower()})", timeout=4000,
                             )
                         if start_training(
                             n, train_chain, chosen_voice, run_lr, run_match,

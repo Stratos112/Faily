@@ -916,6 +916,23 @@ def list_candidates(char_dir: Path) -> list[tuple[int, Path]]:
     return sorted(out)
 
 
+TRAIN_DATA_CHOICES = {
+    "recordings": "Recordings only",
+    "mixed": "Recordings + inflated",
+    "inflated": "Inflated only",
+}
+
+
+def filter_training_clips(chain: list[dict], mode: str) -> list[dict]:
+    """The ref-chain entries a run trains on: the real recordings, the inflated (generated)
+    clips, or both."""
+    if mode == "inflated":
+        return [c for c in chain if c.get("source") == "inflated"]
+    if mode == "recordings":
+        return [c for c in chain if c.get("source") != "inflated"]
+    return list(chain)
+
+
 async def train(
     clips: list[dict],
     char_dir: Path,
@@ -1207,6 +1224,7 @@ async def _train(
         "frozen": frozen_modules(match),
         "max_epochs": max_epochs, "target_epoch": target_epochs,
         "batch": f"{_MICRO_BATCH} x {_ACCUMULATE}", "validation_split": round(validation_split, 4),
+        "train_data": "inflated" if (n_inflated and n_inflated == len(usable)) else ("mixed" if n_inflated else "recordings"),
         "clips": {"n": len(usable), "n_real": len(usable) - n_inflated, "n_inflated": n_inflated,
                   "minutes": round(sum(_dur(c) for c in usable) / 60, 1)},
     })
@@ -1324,7 +1342,7 @@ def promote_candidate(char_dir: Path, onnx: Path, activate: bool = True) -> dict
         "base_epoch": run.get("base_epoch"), "epoch": epoch,
         "epochs_trained": (epoch - start) if start is not None else None,
         "epochs_since_base": (epoch - run["base_epoch"]) if run.get("base_epoch") is not None else None,
-        "learning_rate": run.get("learning_rate"), "max_epochs": run.get("max_epochs"), "match": run.get("match"), "frozen": run.get("frozen"),
+        "learning_rate": run.get("learning_rate"), "max_epochs": run.get("max_epochs"), "train_data": run.get("train_data"), "match": run.get("match"), "frozen": run.get("frozen"),
         "batch": run.get("batch"), "validation_split": run.get("validation_split"),
         "clips": run.get("clips"), "parent": run.get("resumed_from"),
         "trained_seconds": round(time.time() - st["started"]) if st.get("started") else None,

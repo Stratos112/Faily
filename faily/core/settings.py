@@ -34,8 +34,9 @@ _DEFAULTS: dict = {
     "piper_match_timbre": "reference",
     "piper_match_rhythm": "base",
     "piper_match_pronunciation": "base",
-    # Include inflated clips in the training set.
-    "piper_use_inflated": True,
+    # What a Piper training run learns from: "recordings", "mixed" (recordings + inflated clips)
+    # or "inflated" (the generated clips only). See modules/piper.TRAIN_DATA_CHOICES.
+    "piper_train_data": "mixed",
     # Which clips zero-shot generation (SPEAK / TUNE) clones from: "all" = recordings plus
     # inflated clips (more stable), "live" = the real recordings only (more authentic).
     "zero_shot_reference": "all",
@@ -48,6 +49,8 @@ def load_settings() -> dict:
             stored = json.loads(_SETTINGS_FILE.read_text())
             if "piper_use_padding" in stored:         # renamed when "padding" became "inflated"
                 stored.setdefault("piper_use_inflated", stored.pop("piper_use_padding"))
+            if "piper_train_data" not in stored and "piper_use_inflated" in stored:    # was an on/off switch
+                stored["piper_train_data"] = "mixed" if stored["piper_use_inflated"] else "recordings"
             return {**_DEFAULTS, **stored}
         except Exception:
             pass
@@ -109,11 +112,12 @@ def set_piper_match(aspect: str, choice: str) -> None:
     save_settings(data)
 
 
-def get_piper_use_inflated() -> bool:
-    return bool(load_settings()["piper_use_inflated"])
+def get_piper_train_data() -> str:
+    v = load_settings().get("piper_train_data")
+    return v if v in ("recordings", "mixed", "inflated") else "mixed"
 
 
-def set_piper_use_inflated(use: bool) -> None:
+def set_piper_train_data(mode: str) -> None:
     data = load_settings()
-    data["piper_use_inflated"] = bool(use)
+    data["piper_train_data"] = mode if mode in ("recordings", "mixed", "inflated") else "mixed"
     save_settings(data)
