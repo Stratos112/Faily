@@ -15,12 +15,13 @@ from faily.modules.inflation import (
     CATEGORIES, ScriptLine, InflatedCandidate,
     load_script_bank, sample_lines, generate_batch, used_inflated_lines,
 )
+from faily.core.paths import TMP_DIR
 from faily.modules.importer import stage_inflated
 from faily.modules import autoqualify as AQ
 from faily.ui.components import section_label, show_error, model_picker, bind_play, output_url, overlay_host
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 
-_STAGING_ROOT = Path("outputs/vc/_inflation_staging")
+_STAGING_ROOT = TMP_DIR / "inflation_staging"
 
 
 def _section_row(text: str, tip: str):

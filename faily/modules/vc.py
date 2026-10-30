@@ -41,7 +41,7 @@ def _patch_ffmpeg_read():
     au.ffmpeg_read = _sf_read
     au._faily_patched = True
 
-VC_OUTPUT_DIR = Path("outputs/vc")
+from faily.core.paths import history_dir
 
 
 def _make_clip_name(char_name: str | None, style: str, text: str, output_dir: Path) -> str:
@@ -542,7 +542,7 @@ def tune_generate(
 ) -> Path:
     """Two-stage TUNE pipeline: expression engine → voice conversion."""
     if output_dir is None:
-        output_dir = VC_OUTPUT_DIR
+        output_dir = history_dir(char_name, ref_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     clip_name = _make_clip_name(char_name, expression, text, output_dir)
@@ -971,7 +971,7 @@ def generate(
     preview_ref: dict | None = None,
 ) -> Path:
     if output_dir is None:
-        output_dir = VC_OUTPUT_DIR
+        output_dir = history_dir(char_name, ref_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = BACKENDS[backend]

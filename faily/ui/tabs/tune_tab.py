@@ -1,7 +1,8 @@
 from nicegui import ui, run as ni_run
 from faily.modules.vc import tune_generate, STAGE2_BACKENDS
 from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
-from faily.ui.components import output_panel, section_label, show_error, model_picker, ref_mode_toggle, ref_live_only, ref_counts_text
+from faily.core.paths import history_dir
+from faily.ui.components import output_panel, output_url, section_label, show_error, model_picker, ref_mode_toggle, ref_live_only, ref_counts_text
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
@@ -35,6 +36,7 @@ def build_tune_tab():
 
     def _update_char_info(name: str):
         _char_name[0] = name
+        if _out.get("reload_history"): _out["reload_history"]()
         if name == _NO_CHAR:
             char_info.set_text("")
             return
@@ -87,7 +89,7 @@ def build_tune_tab():
                     svc_steps=_svc_steps[0],
                     svc_cfg=_svc_cfg[0],
                 )
-                _out["main_player"].set_source(f"/outputs/vc/{path.name}")
+                _out["main_player"].set_source(output_url(path))
                 _out["status"].set_text(f"✓  {path.name}")
                 _out["add_to_history"](path, text)
             except Exception as exc:
@@ -234,11 +236,12 @@ def build_tune_tab():
                 .props("color=amber unelevated")
             )
 
-        pb, ml, mp, st, _, _, ath, _ = output_panel(
-            "vc",
+        pb, ml, mp, st, _, _, ath, _, rh = output_panel(
+            lambda: history_dir(_char_name[0] if _char_name[0] != _NO_CHAR else None),
             get_char_name=lambda: _char_name[0] if _char_name[0] != _NO_CHAR else None,
         )
-        _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
+        _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath,
+                    reload_history=rh)
 
     def _tick():
         val = _progress[0]

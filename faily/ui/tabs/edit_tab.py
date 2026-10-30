@@ -1,6 +1,7 @@
 import shutil
 import time
 from pathlib import Path
+from faily.core.paths import TMP_DIR
 from nicegui import ui, run as ni_run
 from faily.modules.edit import apply_edits, audio_info
 from faily.core.characters import (
@@ -12,7 +13,7 @@ from faily.ui.tabs.import_dialog import open_import_dialog
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
-EDIT_DIR = Path("outputs/edit")
+EDIT_DIR = TMP_DIR / "edit"
 
 _TRIM_JS = """
 <script>
@@ -124,7 +125,7 @@ def build_edit_tab():
             rel = path.relative_to(Path("outputs"))
             url = f"/outputs/{rel.as_posix()}"
         except ValueError:
-            url = f"/outputs/edit/{path.name}"
+            url = f"/outputs/misc/_tmp/edit/{path.name}"
         src_player.set_source(url)
         src_now_playing.set_text(f"▶  {path.stem}")
         try:
@@ -208,7 +209,7 @@ def build_edit_tab():
                 denoise_strength=_denoise_amt[0],
             )
             _preview[0] = out
-            preview_player.set_source(f"/outputs/edit/{out.name}")
+            preview_player.set_source(output_url(out))
             try:
                 info = audio_info(out)
                 ch = "stereo" if info["channels"] > 1 else "mono"

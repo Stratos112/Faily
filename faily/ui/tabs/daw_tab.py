@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from faily.core.paths import MIX_DIR
 from nicegui import ui, run as ni_run
 from faily.modules.edit import audio_info, mix_tracks
 from faily.core.characters import (
@@ -10,7 +11,7 @@ from faily.ui.components import section_label, show_error
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select —"
-_MIX_DIR = Path("outputs/mix")
+_MIX_DIR = MIX_DIR
 
 # px constants that JS and Python must agree on
 _RH = 20   # ruler height
@@ -208,7 +209,7 @@ def build_daw_tab():
             rel = path.relative_to(Path("outputs"))
             url = f"/outputs/{rel.as_posix()}"
         except ValueError:
-            url = f"/outputs/edit/{path.name}"
+            url = f"/outputs/misc/_tmp/edit/{path.name}"
         try:
             info = audio_info(path)
             dur    = info["duration"]

@@ -5,6 +5,7 @@ settings, or delete it. Registry in faily/core/piper_models.py.
 """
 import time
 from pathlib import Path
+from faily.core.paths import CHARACTERS_DIR
 
 from nicegui import run as ni_run, ui
 
@@ -18,7 +19,6 @@ from faily.ui.components import play_url, show_error
 
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 _VAL = "text-[#aaa] font-mono text-[11px] [overflow-wrap:anywhere]"
-_TRY_DIR = Path("outputs/_model_try")
 _DEFAULT_TRY = "Hello, this is a test of the trained voice."
 _migrated: set[str] = set()      # characters already checked for a pre-registry model this session
 
@@ -56,7 +56,7 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
     # ── actions ──────────────────────────────────────────────────────────
     async def play(m: dict):
         text = (try_input.value or "").strip() or _DEFAULT_TRY
-        out = _TRY_DIR / f"{name}_{m['id']}.wav"
+        out = CHARACTERS_DIR / name / "model_try" / f"{name}_{m['id']}.wav"
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
             await ni_run.io_bound(infer, text, m["onnx"], out)

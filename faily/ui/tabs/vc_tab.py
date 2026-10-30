@@ -1,11 +1,12 @@
 from nicegui import ui, run as ni_run
-from faily.modules.vc import generate as vc_generate, VC_OUTPUT_DIR, BACKENDS, transcribe_ref
+from faily.modules.vc import generate as vc_generate, BACKENDS, transcribe_ref
+from faily.core.paths import UPLOADS_DIR, history_dir
 from faily.core.characters import save_character, list_characters, delete_character
-from faily.ui.components import output_panel, section_label, show_error, model_picker, preview_meter
+from faily.ui.components import output_panel, output_url, section_label, show_error, model_picker, preview_meter
 from pathlib import Path
 from faily.ui.tabs.import_dialog import open_import_dialog
 
-_REFS_DIR = VC_OUTPUT_DIR / "refs"
+_REFS_DIR = UPLOADS_DIR
 _EXTS = {".wav", ".mp3", ".flac", ".ogg"}
 _BTN = "font-mono tracking-widest"
 
@@ -135,7 +136,7 @@ def build_vc_tab(on_characters_changed=lambda: None):
                 char_name=name_input.value.strip() or None,
                 preview_ref=_preview,
             )
-            _out["main_player"].set_source(f"/outputs/vc/{path.name}")
+            _out["main_player"].set_source(output_url(path))
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path, text)
         except Exception as exc:
@@ -306,8 +307,12 @@ def build_vc_tab(on_characters_changed=lambda: None):
                     f"flex-1 {_BTN}"
                 ).props("color=amber unelevated")
 
-        pb, ml, mp, st, _, _, ath, _ = output_panel("vc", get_char_name=lambda: name_input.value.strip() or None)
+        pb, ml, mp, st, _, _, ath, _, rh = output_panel(
+            lambda: history_dir(name_input.value.strip() or None, _ref_path[0]),
+            get_char_name=lambda: name_input.value.strip() or None,
+        )
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
+        name_input.on("blur", lambda _: rh())
 
     with preview_slot:
         _update_preview = preview_meter(_out["main_player"])

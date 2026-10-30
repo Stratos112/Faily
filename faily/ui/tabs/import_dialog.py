@@ -4,6 +4,7 @@ pre-filled, and finally adds the survivors to a new or existing character."""
 import shutil
 import uuid
 from pathlib import Path
+from faily.core.paths import TMP_DIR
 
 import soundfile as sf
 from nicegui import run as ni_run, ui
@@ -15,7 +16,7 @@ from faily.modules.slicer import PRESETS, split_file
 from faily.ui.components import show_error
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 
-_TMP = Path("outputs/vc/_slices_tmp")
+_TMP = TMP_DIR / "slices"
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 
 

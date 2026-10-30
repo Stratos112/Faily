@@ -9,6 +9,7 @@ from faily.ui.tabs.speak_tab import build_speak_tab
 from faily.ui.tabs.edit_tab import build_edit_tab
 from faily.ui.tabs.daw_tab import build_daw_tab
 from faily.ui.tabs.characters_tab import build_characters_tab
+from faily.core.paths import migrate_legacy_layout, ensure_layout
 from faily.ui.components import set_edit_callback, set_daw_callback, set_overlay_host
 
 OUTPUTS = Path("outputs")
@@ -85,8 +86,8 @@ def run():
     _password = os.environ.get("FAILY_PASSWORD", "")
     if _password:
         app.add_middleware(_BasicAuth, user=os.environ.get("FAILY_USER", "faily"), password=_password)
-    for d in [OUTPUTS, OUTPUTS / "tts", OUTPUTS / "sfx", OUTPUTS / "vc", OUTPUTS / "vc" / "refs", OUTPUTS / "characters", OUTPUTS / "speak", OUTPUTS / "edit", OUTPUTS / "mix"]:
-        d.mkdir(parents=True, exist_ok=True)
+    migrate_legacy_layout()         # old vc/ tts/ sfx/ edit/ mix/ … folders -> characters/ foley/ misc/
+    ensure_layout()
     app.add_static_files("/outputs", str(OUTPUTS))
 
     @ui.page("/")

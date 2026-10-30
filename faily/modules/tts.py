@@ -3,6 +3,7 @@ import soundfile as sf
 from datetime import datetime
 from pathlib import Path
 from faily.core.model_manager import manager, TTS_MODELS_DIR
+from faily.core.paths import MISC_DIR
 
 _BUNDLED: dict[str, str] = {
     "MMS-TTS (fast, CPU-friendly)": "facebook/mms-tts-eng",
@@ -10,7 +11,7 @@ _BUNDLED: dict[str, str] = {
     "Bark (high quality)":          "suno/bark",
 }
 
-TTS_OUTPUT_DIR = Path("outputs/tts")
+TTS_OUTPUT_DIR = MISC_DIR
 
 
 def scan_local() -> dict[str, str]:

@@ -1,6 +1,7 @@
 import json
 import shutil
 from pathlib import Path
+from faily.core.paths import TMP_DIR
 from nicegui import ui, run as ni_run
 from faily.core.characters import (
     list_characters, get_character, get_ref_path, delete_character,
@@ -433,7 +434,7 @@ def build_characters_tab(on_speak, on_change):
                         if _upload_mode[0] == "split":
                             _upload_mode[0] = "add"
                             import uuid
-                            keep = Path("outputs/vc/_import_tmp")
+                            keep = TMP_DIR / "import"
                             keep.mkdir(parents=True, exist_ok=True)
                             saved = keep / f"{uuid.uuid4().hex[:8]}_{Path(e.file.name).name}"
                             saved.write_bytes(await e.file.read())

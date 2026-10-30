@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-CHARACTERS_DIR = Path("outputs/characters")
+from faily.core.paths import CHARACTERS_DIR
 
 
 def _cfg(name: str) -> Path:

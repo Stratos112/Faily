@@ -1,7 +1,8 @@
 from nicegui import ui, run as ni_run
 from faily.core.model_manager import manager
 from faily.modules.foley import get_models, generate as foley_generate
-from faily.ui.components import output_panel, section_label, show_error
+from faily.core.paths import FOLEY_DIR
+from faily.ui.components import output_panel, output_url, section_label, show_error
 
 _BTN = "font-mono tracking-widest"
 
@@ -42,7 +43,7 @@ def build_foley_tab():
                 fade=fade_slider.value,
             )
             _prev_id[0] = model_id
-            _out["main_player"].set_source(f"/outputs/sfx/{path.name}")
+            _out["main_player"].set_source(output_url(path))
             _out["status"].set_text(f"✓  {path.name}")
             _out["add_to_history"](path)
         except Exception as exc:
@@ -126,7 +127,7 @@ def build_foley_tab():
                 "color=amber unelevated"
             )
 
-        pb, ml, mp, st, _, _, ath, _ = output_panel("sfx")
+        pb, ml, mp, st, _, _, ath, _, _ = output_panel(lambda: FOLEY_DIR)
         _out.update(progress_bar=pb, model_loader=ml, main_player=mp, status=st, add_to_history=ath)
 
     def _tick():

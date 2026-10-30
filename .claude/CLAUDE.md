@@ -70,9 +70,10 @@ faily/
 
 ## Output dirs
 ```
-outputs/tts/           # TTS generations
-outputs/vc/            # Voice clone generations
-outputs/vc/refs/       # Reference audio samples (legacy)
-outputs/characters/    # Saved characters
-outputs/sfx/           # Foley/SFX
+outputs/characters/<name>/   # everything for one character: config, refs, refs_original, inflated clips,
+                            #   models/, favorites/, history/ (all clips generated for them), model_try/
+outputs/foley/              # SFX (no character connection yet)
+outputs/misc/               # audio tied to no character: uploads/, TTS, mixes/, base_voice_samples/;
+                            #   _tmp/ = scratch (staging, previews), safe to delete
 ```
+Paths live in `faily/core/paths.py`. `history_dir(char_name, ref_path)` picks where a new generation goes: the character's `history/` if it is a saved character (named, or cloned from one of their clips), else `misc/`. `migrate_legacy_layout()` (run at startup) moved the old `vc/ tts/ sfx/ edit/ mix/ …` folders into this layout, assigning loose clips to a character by filename prefix.

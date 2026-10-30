@@ -12,6 +12,7 @@ import html
 import shutil
 import time
 from pathlib import Path
+from faily.core.paths import TMP_DIR
 
 from nicegui import run as ni_run, ui
 
@@ -24,7 +25,7 @@ from faily.ui.waveform import region_picker
 
 _PASSES = ("volume", "trim", "transcript")
 _TITLES = {"volume": "VOLUME", "trim": "TRIM", "transcript": "TRANSCRIPT", "artifacts": "NOISES"}
-_PREVIEW_DIR = Path("outputs/_qualify_preview")
+_PREVIEW_DIR = TMP_DIR / "qualify_preview"
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 _SECTION = "w-full gap-1 rounded border border-[#3a3217] bg-[#14110a] p-3"      # has an issue
 _SECTION_OK = "w-full gap-1 rounded border border-[#1d3a26] bg-[#0d1a12] p-3"   # nothing wrong

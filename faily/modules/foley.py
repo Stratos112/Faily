@@ -3,6 +3,7 @@ import soundfile as sf
 from datetime import datetime
 from pathlib import Path
 from faily.core.model_manager import manager, SFX_MODELS_DIR
+from faily.core.paths import FOLEY_DIR
 
 
 def _patch_model_output():
@@ -42,7 +43,7 @@ _BUNDLED: dict[str, str] = {
 
 _STABLE_AUDIO = {"stabilityai/stable-audio-open-1.0"}
 
-SFX_OUTPUT_DIR = Path("outputs/sfx")
+SFX_OUTPUT_DIR = FOLEY_DIR
 
 
 def scan_local() -> dict[str, str]:

@@ -38,7 +38,7 @@ Everything worth keeping lives in bind-mounted folders next to `docker-compose.y
 
 | Folder | Contents |
 |---|---|
-| `outputs/` | characters, generations, mixes |
+| `outputs/` | `characters/` (everything per character), `foley/`, `misc/` |
 | `models/` | downloaded model weights (HuggingFace cache in `models/hf`, Coqui in `models/vc/coqui`, Seed-VC repo + weights) |
 | `piper_checkpoints/` | Piper base voices for training |
 | `config/` | settings + saved HF token |

@@ -283,16 +283,21 @@ def preview_meter(player: ui.audio):
     return update
 
 
-def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = False):
+def output_panel(get_history_dir, get_char_name=None, tile_output: bool = False):
     """
     Builds the right-hand output column.
+
+    get_history_dir: callable returning the folder whose clips HISTORY lists —
+    the selected character's history/, or misc/ with none (foley: the foley
+    folder). Call the returned reload_history() after the selection changes.
 
     tile_output: when True, CURRENT OUTPUT renders generated candidates as a
     grid of square tiles (with the same per-clip actions as history rows)
     instead of a single wide audio bar. Use set_candidates() to populate it.
 
     Returns (progress_bar, model_loader, main_player, status_label,
-             compare_player, compare_section, add_history_fn, set_candidates_fn).
+             compare_player, compare_section, add_history_fn, set_candidates_fn,
+             reload_history_fn).
     """
     with ui.column().classes("gap-4 p-8 w-full h-full overflow-hidden"):
 
@@ -349,9 +354,6 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
             history_col_el = ui.column().classes("w-full gap-1")
 
     # ── pre-populate from disk ─────────────────────────────────────────────
-    output_dir = Path("outputs") / output_subdir
-    existing: list[Path] = sorted(output_dir.glob("*.wav"), reverse=True) if output_dir.exists() else []
-
     def _open_ref_dialog(path: Path, transcript: str):
         name = get_char_name() if get_char_name else None
         if not name:
@@ -528,10 +530,17 @@ def output_panel(output_subdir: str, get_char_name=None, tile_output: bool = Fal
             for path, transcript in items:
                 _make_tile(path, transcript)
 
-    for p in existing[:30]:
-        _make_row(p)
+    def reload_history():
+        history_col_el.clear()
+        output_dir = get_history_dir()
+        existing = sorted(output_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime, reverse=True) \
+            if output_dir.exists() else []
+        for p in existing[:30]:
+            _make_row(p)
+
+    reload_history()
 
     return (
         progress_bar, model_loader, main_player, status,
-        compare_player, compare_section, add_to_history, set_candidates,
+        compare_player, compare_section, add_to_history, set_candidates, reload_history,
     )

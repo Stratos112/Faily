@@ -12,6 +12,7 @@ from faily.modules.piper import generate_character_ref_sample, SAMPLE_TEXT
 from faily.core.characters import (
     list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio,
 )
+from faily.core.paths import history_dir
 from faily.ui.components import (
     output_panel, section_label, show_error, model_picker, preview_meter,
     prime_audio, play_url, ref_mode_toggle, ref_live_only, ref_counts_text,
@@ -19,7 +20,6 @@ from faily.ui.components import (
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
-_VC_DIR = Path("outputs/vc")
 
 
 def _section_row(text: str, tip: str):
@@ -73,6 +73,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
     def _update_info(name: str, keep: bool = False):
         char_state[0] = name
         _current_char[0] = name
+        if _out.get("reload_history"): _out["reload_history"]()
         if name == _NO_CHAR:
             char_info.set_text("")
             ref_source_select.set_visibility(False)
@@ -340,6 +341,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
     def _update_info(name: str):
         char_state[0] = name
         _current_char[0] = name
+        if _out.get("reload_history"): _out["reload_history"]()
         if name == _NO_CHAR:
             char_info.set_text("")
             piper_params_row.set_visibility(False)
@@ -368,7 +370,8 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
         n = _candidates[0]
         results: list[tuple[Path, str]] = []
         _out["model_loader"].set_visibility(True)
-        _VC_DIR.mkdir(parents=True, exist_ok=True)
+        out_dir = history_dir(char_state[0])
+        out_dir.mkdir(parents=True, exist_ok=True)
         try:
             for i in range(n):
                 _out["status"].set_text(f"generating {i + 1}/{n}…" if n > 1 else "—")
@@ -380,7 +383,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                     # not overwrite (or be mistaken for) each other.
                     mp = Path(char["piper_model"])
                     tag = f"_{mp.parent.name}" if mp.parent.parent.name == "models" else ""
-                    out_path = _VC_DIR / f"piper_{char_state[0]}{tag}_{slug}{suffix}.wav"
+                    out_path = out_dir / f"piper_{char_state[0]}{tag}_{slug}{suffix}.wav"
                     path = await ni_run.io_bound(
                         infer, text, Path(char["piper_model"]), out_path,
                         _length_scale[0], _noise_scale[0], _noise_w[0], _sent_silence[0],
@@ -388,7 +391,7 @@ def _build_character(char_state: list[str], _out: dict, _current_char: list[str]
                 else:
                     from faily.modules.rvc import speak_generate
                     path = await ni_run.io_bound(
-                        speak_generate, text, char["rvc_model"], _VC_DIR,
+                        speak_generate, text, char["rvc_model"], out_dir,
                         char_name=char_state[0],
                     )
                     if n > 1:
@@ -514,6 +517,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
     def _update_info(name: str):
         char_state[0] = name
         _current_char[0] = name
+        if _out.get("reload_history"): _out["reload_history"]()
         if name == _NO_CHAR:
             char_info.set_text(""); return
         chain = get_ref_chain(name)
@@ -710,14 +714,14 @@ def build_speak_tab():
                     r_shot = _build_oneshot(_shot_state, _out, _current_char)
 
         # ── RIGHT: shared output panel ────────────────────────────────────────
-        pb, ml, mp, st, _, _, ath, sc = output_panel(
-            "vc",
+        pb, ml, mp, st, _, _, ath, sc, rh = output_panel(
+            lambda: history_dir(_current_char[0] if _current_char[0] != _NO_CHAR else None),
             get_char_name=lambda: _current_char[0] if _current_char[0] != _NO_CHAR else None,
             tile_output=True,
         )
         _out.update(
             progress_bar=pb, model_loader=ml, main_player=mp, status=st,
-            add_to_history=ath, set_candidates=sc,
+            add_to_history=ath, set_candidates=sc, reload_history=rh,
         )
 
     def refresh_all():

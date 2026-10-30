@@ -80,8 +80,8 @@ if [ "$MODE" != "--live-only" ]; then
     log ""
     log "── Filesystem checks ────────────────────────────────────────"
     # Ensure output dirs exist even without a running server
-    mkdir -p "$ROOT/outputs/tts" "$ROOT/outputs/vc" "$ROOT/outputs/vc/refs" "$ROOT/outputs/characters"
-    for d in outputs/tts outputs/vc outputs/vc/refs outputs/characters scripts; do
+    mkdir -p "$ROOT/outputs/characters" "$ROOT/outputs/foley" "$ROOT/outputs/misc"
+    for d in outputs/characters outputs/foley outputs/misc scripts; do
         [ -d "$ROOT/$d" ] && pass "dir: $d" || fail "dir: $d" "missing"
     done
     [ -f "$ROOT/.claude/CLAUDE.md" ]   && pass "CLAUDE.md exists"     || fail "CLAUDE.md"           "missing"

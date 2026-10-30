@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import scipy.signal as sps
 import soundfile as sf
+from faily.core.paths import MISC_DIR
 
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 PIPER_VENV    = _PROJECT_ROOT / "piper_venv"
@@ -86,7 +87,7 @@ SAMPLE_TEXT = "The quick brown fox jumps over the lazy dog."
 # Relative, like CHARACTERS_DIR etc. — the app always runs with the project
 # root as cwd, and UI code does path.relative_to(Path("outputs")) to build
 # /outputs/... URLs, which requires this to stay relative too.
-_BASE_VOICE_SAMPLES_DIR = Path("outputs/base_voice_samples")
+_BASE_VOICE_SAMPLES_DIR = MISC_DIR / "base_voice_samples"
 
 
 def base_voice_dir(key: str) -> Path:
