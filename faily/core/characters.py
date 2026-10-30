@@ -537,3 +537,126 @@ def migrate_legacy_tags() -> int:
         cfg_path.write_text(json.dumps(cfg, indent=2))
         changed += len(hits)
     return changed
+
+
+# ── library import / export (move characters between machines or over time) ───
+
+def resolve_library(folder: Path) -> Path:
+    """`folder` may be a characters folder itself, or an outputs/ folder that has one."""
+    folder = Path(folder).expanduser()
+    if not folder.is_dir():
+        raise FileNotFoundError(f"Not a folder: {folder}")
+    if not any((d / "config.json").exists() for d in folder.iterdir() if d.is_dir()):
+        if (folder / "characters").is_dir():
+            return folder / "characters"
+    return folder
+
+
+def scan_library(folder: Path) -> list[dict]:
+    """Characters found in another library folder: [{name, parent, has_model, n_refs, here}]."""
+    lib = resolve_library(folder)
+    found = []
+    for d in sorted(lib.iterdir()):
+        p = d / "config.json"
+        if not (d.is_dir() and p.exists() and not d.name.startswith("_")):
+            continue
+        try:
+            cfg = json.loads(p.read_text())
+        except Exception:
+            continue
+        found.append({
+            "name": d.name,
+            "parent": cfg.get("parent"),
+            "has_model": bool(cfg.get("piper_model") or cfg.get("rvc_model")),
+            "n_refs": len(cfg.get("ref_clips", [])) + (1 if cfg.get("ref_audio") else 0),
+            "here": _cfg(d.name).exists(),
+        })
+    return found
+
+
+def _with_ancestors(lib: Path, names: list[str]) -> list[str]:
+    """names plus every parent they depend on, parents first."""
+    ordered: list[str] = []
+
+    def add(n: str):
+        if n in ordered:
+            return
+        try:
+            parent = json.loads((lib / n / "config.json").read_text()).get("parent")
+        except Exception:
+            parent = None
+        if parent and (lib / parent / "config.json").exists():
+            add(parent)
+        ordered.append(n)
+
+    for n in names:
+        add(n)
+    return ordered
+
+
+def _repoint_models(cfg: dict, src_name: str, dest_name: str) -> None:
+    """piper_model / rvc_model are stored as paths that include the character's folder."""
+    for key in ("piper_model", "rvc_model"):
+        val = cfg.get(key)
+        if not val:
+            continue
+        norm = str(val).replace("\\", "/")
+        marker = f"characters/{src_name}/"
+        if marker in norm:
+            rest = norm.split(marker)[-1]
+        elif "/models/" in norm:
+            rest = "models/" + norm.split("/models/")[-1]
+        else:
+            continue
+        cfg[key] = (CHARACTERS_DIR / dest_name / rest).as_posix()
+
+
+def _copy_character(src: Path, dest: Path, include_training: bool) -> None:
+    skip = () if include_training else ("piper_train", "piper_dataset")
+    ignore = shutil.ignore_patterns(*skip) if skip else None
+    shutil.copytree(src, dest, ignore=ignore)
+
+
+def import_characters(folder: Path, names: list[str], overwrite: bool = False,
+                      include_training: bool = True) -> dict:
+    """Copy characters (and the parents they need) from another library into this one.
+    Characters that already exist here are skipped unless overwrite=True.
+    Returns {"imported": [...], "skipped": [...]}."""
+    lib = resolve_library(folder)
+    if lib.resolve() == CHARACTERS_DIR.resolve():
+        raise ValueError("That is this library already")
+    CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
+    imported, skipped = [], []
+    for n in _with_ancestors(lib, names):
+        dest = CHARACTERS_DIR / n
+        if dest.exists():
+            if not overwrite:
+                skipped.append(n)
+                continue
+            shutil.rmtree(dest)
+        _copy_character(lib / n, dest, include_training)
+        cfg = json.loads(_cfg(n).read_text())
+        _repoint_models(cfg, n, n)
+        _cfg(n).write_text(json.dumps(cfg, indent=2))
+        imported.append(n)
+    return {"imported": imported, "skipped": skipped}
+
+
+def export_characters(folder: Path, names: list[str], overwrite: bool = False,
+                      include_training: bool = True) -> dict:
+    """Copy characters (and their parents) from this library into `folder`."""
+    folder = Path(folder).expanduser()
+    if folder.exists() and folder.resolve() == CHARACTERS_DIR.resolve():
+        raise ValueError("That is this library already")
+    folder.mkdir(parents=True, exist_ok=True)
+    exported, skipped = [], []
+    for n in _with_ancestors(CHARACTERS_DIR, names):
+        dest = folder / n
+        if dest.exists():
+            if not overwrite:
+                skipped.append(n)
+                continue
+            shutil.rmtree(dest)
+        _copy_character(CHARACTERS_DIR / n, dest, include_training)
+        exported.append(n)
+    return {"exported": exported, "skipped": skipped}

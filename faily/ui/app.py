@@ -10,6 +10,8 @@ from faily.ui.tabs.edit_tab import build_edit_tab
 from faily.ui.tabs.daw_tab import build_daw_tab
 from faily.ui.tabs.characters_tab import build_characters_tab
 from faily.core.paths import migrate_legacy_layout, ensure_layout
+from faily.ui.tabs.library_dialog import open_library_dialog
+from faily.ui.tabs.cleanup_dialog import open_cleanup_dialog
 from faily.ui.components import set_edit_callback, set_daw_callback, set_overlay_host
 
 OUTPUTS = Path("outputs")
@@ -140,6 +142,25 @@ def run():
                     ui.button("Save Token", on_click=_save_token).props(
                         "flat dense color=amber"
                     ).classes("font-mono text-[10px]")
+
+                ui.separator().classes("opacity-20")
+                ui.label("LIBRARY").classes("text-[#444] font-mono text-[10px] tracking-widest")
+                ui.label(
+                    "Bring characters back from another folder (another machine, an old backup) "
+                    "or save them out; or clear out what you no longer need to free disk space."
+                ).classes("text-[#333] font-mono text-[10px]")
+
+                def _library_changed():
+                    _chars_refresh[0]()
+                    _on_char_change()
+
+                with ui.row().classes("w-full gap-2"):
+                    ui.button("Load / save characters…", icon="folder_open",
+                              on_click=lambda: (dlg.close(), open_library_dialog(_library_changed))
+                              ).props("flat dense color=amber").classes("font-mono text-[10px]")
+                    ui.button("Clean up disk…", icon="delete_sweep",
+                              on_click=lambda: (dlg.close(), open_cleanup_dialog(_library_changed))
+                              ).props("flat dense color=amber").classes("font-mono text-[10px]")
 
                 with ui.row().classes("w-full justify-end gap-2 mt-1"):
                     ui.button("Close", on_click=dlg.close).props("flat dense color=grey")
