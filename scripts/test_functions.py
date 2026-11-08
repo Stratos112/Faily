@@ -661,33 +661,21 @@ class TestSettings(Sandboxed):
     def test_defaults(self):
         self.assertEqual(S.get_piper_epochs(), 1000)
         self.assertEqual(S.get_zero_shot_reference(), "all")
-        self.assertEqual(S.get_piper_train_data(), "mixed")
         self.assertAlmostEqual(S.get_piper_learning_rate(), 5e-5)
 
     def test_roundtrip(self):
         S.set_piper_epochs(42); S.set_piper_learning_rate(1e-4); S.set_zero_shot_reference("live")
-        S.set_default_base_voice("lessac"); S.set_piper_train_data("recordings")
+        S.set_default_base_voice("lessac")
         S.set_piper_match("rhythm", "reference")
         self.assertEqual(S.get_piper_epochs(), 42)
         self.assertAlmostEqual(S.get_piper_learning_rate(), 1e-4)
         self.assertEqual(S.get_zero_shot_reference(), "live")
         self.assertEqual(S.get_default_base_voice(), "lessac")
-        self.assertEqual(S.get_piper_train_data(), "recordings")
         self.assertEqual(S.get_piper_match()["rhythm"], "reference")
 
     def test_corrupt_file_falls_back_to_defaults(self):
         S._SETTINGS_FILE.write_text("{{{")
         self.assertEqual(S.load_settings()["piper_epochs"], 1000)
-
-    @regression(
-        'Settings written before padding became inflated must still load.',
-        'Keep the legacy-key handling in core/settings.load_settings.')
-    def test_legacy_padding_keys_migrate(self):
-        S._SETTINGS_FILE.write_text(json.dumps({"piper_use_padding": False}))
-        s = S.load_settings()
-        self.assertEqual(s["piper_train_data"], "recordings")
-        S._SETTINGS_FILE.write_text(json.dumps({"piper_use_padding": True}))
-        self.assertEqual(S.load_settings()["piper_train_data"], "mixed")
 
     def test_hf_token(self):
         from faily.core import hf_token as H
@@ -787,12 +775,11 @@ class TestPiperHelpers(Sandboxed):
         with self.assertRaises(ValueError):
             p.frozen_modules({a: "base" for a in p.MATCH_ASPECTS})
 
-    def test_filter_training_clips(self):
-        chain = [{"source": ""}, {"source": "inflated"}, {"source": "import"}]
-        f = self.piper.filter_training_clips
-        self.assertEqual(len(f(chain, "mixed")), 3)
-        self.assertEqual(len(f(chain, "recordings")), 2)
-        self.assertEqual([c["source"] for c in f(chain, "inflated")], ["inflated"])
+    def test_training_clips_use_the_active_flag(self):
+        chain = [{"source": "", "active": True}, {"source": "inflated", "active": False}, {"source": "import"}]
+        kept = self.piper.training_clips(chain)
+        self.assertEqual(len(kept), 2)                                  # a clip with no flag counts as active
+        self.assertNotIn({"source": "inflated", "active": False}, kept)
 
     def test_sentences(self):
         self.assertEqual(self.piper._sentences("Hi there. How are you? Fine!\nNext line"),
@@ -2229,6 +2216,488 @@ class TestRegressions(Sandboxed):
             self.assertIn(f"tune:{b}", cases)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+def make_mixed(name: str = "mix") -> dict:
+    """primary + 4 recordings (4 s) + 8 inflated (3 s): plosives/chatterbox x3, nasals/f5_tts x3, plosives/f5_tts x2."""
+    make_char(name, refs=4, seconds=4.0)
+    plan = [("plosives", "chatterbox")] * 3 + [("nasals", "f5_tts")] * 3 + [("plosives", "f5_tts")] * 2
+    for i, (cat, backend) in enumerate(plan):
+        clip = write_wav(SANDBOX / "_fixtures" / f"{name}_inf{i}.wav", speechish(3.0, seed=200 + i))
+        C.add_ref_clip(name, clip, f"{name} inflated {i}.", source="inflated", category=cat, backend=backend, batch="20261101-1200")
+    return C.get_character(name)
+
+
+class TestRefsData(Sandboxed):
+    def setUp(self):
+        super().setUp()
+        from faily.core import refs
+        self.refs = refs
+
+    def test_rows_have_defaults_and_provenance(self):
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        self.assertEqual(len(rows), 13)
+        self.assertTrue(rows[0]["primary"] and rows[0]["key"] == self.refs.PRIMARY)
+        self.assertTrue(all(r["active"] and r["clone"] for r in rows))
+        inf = [r for r in rows if r["origin"] == "inflated"]
+        self.assertEqual(len(inf), 8)
+        self.assertEqual({r["backend"] for r in inf}, {"chatterbox", "f5_tts"})
+        self.assertEqual({r["batch"] for r in inf}, {"20261101-1200"})
+        self.assertTrue(all(r["added"] for r in rows[1:]))                 # add_ref_clip stamps new clips
+        self.assertAlmostEqual(rows[1]["seconds"], 4.0, delta=0.05)
+
+    def test_set_active_and_primary_protection(self):
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        inf_keys = [r["key"] for r in rows if r["origin"] == "inflated"]
+        self.assertEqual(self.refs.set_active("mix", inf_keys + [self.refs.PRIMARY], False), 8)
+        after = {r["key"]: r for r in self.refs.clip_rows("mix")}
+        self.assertTrue(after[self.refs.PRIMARY]["active"], "the primary reference can never be switched off")
+        self.assertFalse(any(after[k]["active"] for k in inf_keys))
+        self.assertEqual(self.refs.set_active("mix", inf_keys, False), 0)      # already off: nothing changed
+        self.refs.set_active("mix", inf_keys, True)
+        cfg = C.get_character("mix")
+        self.assertTrue(all("active" not in rc for rc in cfg["ref_clips"]), "switching back on should leave the config tidy")
+
+    def test_cloning_flag_is_the_excluded_flag(self):
+        make_mixed()
+        keys = [r["key"] for r in self.refs.clip_rows("mix")][1:3]
+        self.assertEqual(self.refs.set_cloning("mix", keys, False), 2)
+        self.assertEqual(len(C.get_ref_chain("mix")), 11)                      # excluded clips leave the chain
+        self.assertEqual(len(C.get_ref_chain("mix", include_excluded=True)), 13)
+        self.assertEqual([r["clone"] for r in self.refs.clip_rows("mix")][1:4], [False, False, True])
+        self.refs.set_cloning("mix", keys, True)
+        self.assertEqual(len(C.get_ref_chain("mix")), 13)
+
+    @regression("Clips switched off must never reach training, and switching one off must not remove it from cloning.",
+                "Keep 'active' on get_ref_chain entries (core/characters.py) and training_clips() filtering on it (modules/piper.py).")
+    def test_inactive_clips_never_reach_training(self):
+        from faily.modules.piper import training_clips
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        off = [r["key"] for r in rows if r["origin"] == "inflated" and r["category"] == "nasals"]
+        self.refs.set_active("mix", off, False)
+        chain = C.get_ref_chain("mix")
+        self.assertEqual(len(chain), 13)                                       # still available for cloning
+        trained = training_clips(chain)
+        self.assertEqual(len(trained), 10)
+        self.assertFalse(any(e["category"] == "nasals" for e in trained))
+        self.assertEqual(len(C.get_ref_chain("mix", live_only=True)), 5)
+
+    @regression("Deleting references used to be permanent, so trying a different mix meant regenerating everything.",
+                "Keep refs.delete_clips moving files to refs_trash/<id>/ with an index entry, and refs.restore_deleted undoing it.")
+    def test_delete_is_recoverable(self):
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        victims = [r for r in rows if r["category"] == "nasals"]
+        keys = [r["key"] for r in victims]
+        self.refs.set_active("mix", keys[:1], False)                            # one of them carries a flag
+        tid = self.refs.delete_clips("mix", keys + [self.refs.PRIMARY])
+        self.assertIsNotNone(tid)
+        self.assertEqual(len(self.refs.clip_rows("mix")), 10)
+        self.assertFalse(any((C.CHARACTERS_DIR / "mix" / k).exists() for k in keys))
+        self.assertEqual(self.refs.last_deleted("mix")["id"], tid)
+        self.assertEqual(self.refs.restore_deleted("mix", tid), 3)
+        back = {r["key"]: r for r in self.refs.clip_rows("mix")}
+        self.assertEqual(len(back), 13)
+        self.assertFalse(back[keys[0]]["active"], "a restored clip keeps its flags")
+        self.assertEqual(back[keys[1]]["category"], "nasals")
+        self.assertIsNone(self.refs.last_deleted("mix"))
+
+    @regression("Two deletions in the same millisecond shared a trash id, so one of them could no longer be restored.",
+                "Keep the uniqueness loop on the trash id in refs.delete_clips.")
+    def test_delete_edge_cases(self):
+        make_mixed()
+        self.assertIsNone(self.refs.delete_clips("mix", [self.refs.PRIMARY]))
+        self.assertIsNone(self.refs.delete_clips("mix", ["refs/ghost.wav"]))
+        self.assertEqual(self.refs.restore_deleted("mix", "nope"), 0)
+        t1 = self.refs.delete_clips("mix", ["refs/ref_001.wav"])
+        t2 = self.refs.delete_clips("mix", ["refs/ref_002.wav"])
+        self.assertNotEqual(t1, t2)
+        self.assertEqual(self.refs.last_deleted("mix")["id"], t2)
+        self.assertEqual(self.refs.restore_deleted("mix", t1), 1)
+        self.assertEqual(len(self.refs.clip_rows("mix")), 12)
+
+    def test_summary_numbers(self):
+        make_mixed()
+        self.refs.set_active("mix", [r["key"] for r in self.refs.clip_rows("mix") if r["category"] == "nasals"], False)
+        s = self.refs.summarize(self.refs.clip_rows("mix"))
+        self.assertEqual((s["all"]["clips"], s["active"]["clips"]), (13, 10))
+        self.assertAlmostEqual(s["all"]["seconds"], 5 * 4 + 8 * 3, delta=0.3)
+        self.assertEqual((s["recordings"]["clips"], s["inflated"]["clips"]), (5, 8))
+        self.assertEqual(s["by_category"]["plosives"]["clips"], 5)
+        self.assertEqual(s["by_backend"]["f5_tts"]["clips"], 5)
+        self.assertEqual(s["active_inflated"]["clips"], 5)
+        self.assertAlmostEqual(s["transcript_share"], 1.0)
+
+    def test_breakdown_dimensions_measures_and_stacking(self):
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        for dim in self.refs.DIMENSIONS:
+            for measure in self.refs.MEASURES:
+                d = self.refs.breakdown(rows, dim, measure, "state" if dim != "state" else None)
+                self.assertTrue(d["categories"] and d["series"], (dim, measure))
+                self.assertTrue(all(len(s["data"]) == len(d["categories"]) for s in d["series"]))
+        d = self.refs.breakdown(rows, "origin", "clips")
+        self.assertEqual(dict(zip(d["categories"], d["series"][0]["data"])), {"inflated": 8.0, "recordings": 5.0})
+        d = self.refs.breakdown(rows, "backend", "minutes")
+        self.assertEqual(d["categories"], ["— (recordings)", "chatterbox", "f5_tts"])
+        self.assertEqual(d["series"][0]["data"][1], round(9 / 60, 2))
+        d = self.refs.breakdown(rows, "length", "clips")
+        self.assertEqual(d["categories"], ["2–4 s", "4–6 s"])                  # buckets keep their natural order, empty ones are dropped
+        with self.assertRaises(ValueError):
+            self.refs.breakdown(rows, "nonsense")
+
+    def test_groups_partition_the_clips(self):
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        gs = self.refs.groups(rows)
+        self.assertEqual(len(gs), 4)
+        self.assertEqual(sorted(k for g in gs for k in g["keys"]), sorted(r["key"] for r in rows))
+        self.assertEqual({(g["origin"], g["category"], g["backend"]): g["clips"] for g in gs}[("inflated", "plosives", "f5_tts")], 2)
+
+    def test_balance_active_hits_the_requested_share(self):
+        make_mixed()
+        res = self.refs.balance_active("mix", 0.0)
+        self.assertEqual(res["active_clips"], 5)
+        self.assertAlmostEqual(res["share"], 0.0)
+        res = self.refs.balance_active("mix", 0.5)                              # 20 s of recordings -> ~20 s inflated
+        self.assertAlmostEqual(res["share"], 0.5, delta=0.1)
+        active_cats = {r["category"] for r in self.refs.clip_rows("mix") if r["origin"] == "inflated" and r["active"]}
+        self.assertGreaterEqual(len(active_cats), 2, "inflated clips should be spread across categories")
+        res = self.refs.balance_active("mix", 0.99)
+        self.assertEqual(res["active_clips"], 13)                               # can't exceed what exists
+        recs_off = [r for r in self.refs.clip_rows("mix") if r["origin"] == "recording" and not r["active"]]
+        self.assertEqual(recs_off, [], "every recording is always switched on by a mix")
+
+    def test_long_clips_are_flagged_relative_to_the_set(self):
+        make_mixed()
+        C.add_ref_clip("mix", write_wav(SANDBOX / "_fixtures" / "huge.wav", speechish(90.0)), "a very long clip.")
+        rows = self.refs.clip_rows("mix")
+        self.assertGreaterEqual(self.refs.long_threshold(rows), self.refs.LONG_FLOOR_SECONDS)
+        s = self.refs.summarize(rows)
+        self.assertEqual(s["long"], 1)
+
+    def test_duration_cache_notices_rewritten_audio(self):
+        p = write_wav(SANDBOX / "d.wav", speechish(2.0))
+        self.assertAlmostEqual(self.refs.clip_seconds(p), 2.0, delta=0.01)
+        write_wav(p, speechish(5.0))
+        os.utime(p, (time.time() + 5, time.time() + 5))
+        self.assertAlmostEqual(self.refs.clip_seconds(p), 5.0, delta=0.01)
+        self.assertEqual(self.refs.clip_seconds(SANDBOX / "missing.wav"), 0.0)
+
+    def test_inherited_rows_are_the_parents(self):
+        make_mixed("parent")
+        make_char("kid", parent="parent")
+        self.assertEqual(self.refs.clip_rows("kid"), [])
+        self.assertEqual(len(self.refs.inherited_rows("kid")), 13)
+        self.assertEqual(self.refs.inherited_rows("parent"), [])
+
+    @regression("Inflated clips lost which engine and run produced them, so Chatterbox and F5 runs could not be compared.",
+                "Carry backend/batch from generate_batch -> InflatedCandidate -> importer.stage_inflated -> commit_stage -> add_ref_clip.")
+    def test_backend_and_batch_survive_staging_and_commit(self):
+        from faily.modules import importer
+        from faily.modules.inflation import InflatedCandidate
+        make_char("alice")
+        wav = write_wav(SANDBOX / "c.wav", speechish(2.0))
+        stage = importer.stage_inflated([InflatedCandidate("neutral", "Hello there.", wav, backend="f5_tts", batch="B1")])
+        importer.commit_stage(stage, "alice", is_new=False)
+        row = self.refs.clip_rows("alice")[-1]
+        self.assertEqual((row["origin"], row["category"], row["backend"], row["batch"]), ("inflated", "neutral", "f5_tts", "B1"))
+
+    def test_overlong_clips_are_left_out_of_a_run_only(self):
+        from faily.modules.piper import drop_overlong_clips
+        make_mixed()
+        C.add_ref_clip("mix", write_wav(SANDBOX / "_fixtures" / "huge2.wav", speechish(120.0)), "far too long.")
+        chain = C.get_ref_chain("mix")
+        kept, dropped = drop_overlong_clips(chain)
+        self.assertEqual(len(dropped), 1)
+        self.assertEqual(len(kept), len(chain) - 1)
+        self.assertEqual(len(self.refs.clip_rows("mix")), 14)                   # nothing was removed or edited
+        self.assertEqual(drop_overlong_clips([])[0], [])
+
+
+class TestProfile(Sandboxed):
+    def setUp(self):
+        super().setUp()
+        from faily.core import refs
+        from faily.modules import profile
+        self.refs, self.profile = refs, profile
+
+    def recs(self, name):
+        return [(r["level"], r["text"], r["action"]) for r in self.profile.character_profile(name)["recommendations"]]
+
+    def texts(self, name):
+        return " | ".join(t for _, t, _ in self.recs(name))
+
+    def cap(self, name, key):
+        return next(c for c in self.profile.character_profile(name)["capabilities"] if c["key"] == key)
+
+    def test_unknown_character(self):
+        self.assertIsNone(self.profile.character_profile("ghost"))
+
+    def test_no_audio_at_all(self):
+        make_char("empty")
+        cfg = C.get_character("empty"); cfg.pop("ref_audio"); C._cfg("empty").write_text(json.dumps(cfg))
+        self.assertIn("No reference audio yet", self.texts("empty"))
+        self.assertEqual(self.cap("empty", "clone")["state"], "missing")
+
+    def test_little_data_is_the_first_warning(self):
+        make_char("small", refs=2, seconds=4.0)                                # 12 s
+        recs = self.recs("small")
+        self.assertEqual(recs[0][0], "warn")
+        self.assertIn("Only 0.2 min", recs[0][1])
+        self.assertEqual(recs[0][2], "references")
+        self.assertEqual(self.cap("small", "data")["state"], "missing")
+        self.assertEqual(self.cap("small", "voice")["state"], "missing")
+        self.assertEqual(self.cap("small", "clone")["state"], "ready")
+
+    def test_mostly_generated_audio_is_called_out(self):
+        make_char("gen", refs=2, seconds=2.0, inflated=0)
+        for i in range(20):
+            C.add_ref_clip("gen", write_wav(SANDBOX / "_fixtures" / f"g{i}.wav", speechish(5.0, seed=i)), f"line {i}.", source="inflated", category="neutral", backend="f5_tts")
+        self.assertIn("is generated", self.texts("gen"))
+
+    def test_missing_transcripts_long_and_inactive_clips(self):
+        make_char("messy", refs=2, seconds=4.0)
+        C.add_ref_clip("messy", write_wav(SANDBOX / "_fixtures" / "nt.wav", speechish(4.0)), "")
+        C.add_ref_clip("messy", write_wav(SANDBOX / "_fixtures" / "lg.wav", speechish(200.0)), "long one.")
+        self.refs.set_active("messy", ["refs/ref_001.wav"], False)
+        text = self.texts("messy")
+        self.assertIn("have no transcript", text)
+        self.assertIn("are over", text)
+        self.assertIn("switched off for training", text)
+        self.assertEqual([r for r in self.recs("messy") if r[1].startswith("1 clip have")][0][2], "qualify")
+
+    def test_recommendations_are_sorted_by_urgency(self):
+        make_char("sorted", refs=1, seconds=3.0)
+        levels = [lvl for lvl, _, _ in self.recs("sorted")]
+        self.assertEqual(levels, sorted(levels, key=["warn", "todo", "info", "ok"].index))
+
+    def _model(self, name, clips_n, accuracy=None):
+        from faily.core import piper_models as PM
+        from faily.modules import pronunciation
+        d = SANDBOX / f"mdl_{name}"
+        d.mkdir(exist_ok=True)
+        (d / "m.onnx").write_text("x")
+        if accuracy is not None:
+            (d / "m.score.json").write_text(json.dumps({"accuracy": accuracy, "words_per_sec": 3.1, "sentences": pronunciation._sentences_hash()}))
+        return PM.save_model(name, onnx=d / "m.onnx", ckpt=None, meta={
+            "epoch": 500, "base_voice_label": "Amy", "clips": {"n": clips_n, "minutes": 12.0}})
+
+    def test_trained_voice_and_capabilities(self):
+        make_char("voiced", refs=3, seconds=4.0)
+        self._model("voiced", clips_n=4, accuracy=0.96)
+        p = self.profile.character_profile("voiced")
+        self.assertEqual(p["model"]["epoch"], 500)
+        self.assertEqual(self.cap("voiced", "voice")["state"], "ready")
+        self.assertEqual(self.cap("voiced", "pronunciation")["state"], "ready")
+        self.assertNotIn("Retrain", self.texts("voiced"))
+
+    def test_retrain_hint_when_the_active_set_moved(self):
+        make_char("moved", refs=3, seconds=4.0)
+        self._model("moved", clips_n=40)
+        self.assertIn("Retrain", self.texts("moved"))
+        self.assertEqual([r for r in self.recs("moved") if "Retrain" in r[1]][0][2], "training")
+
+    def test_weak_pronunciation_is_flagged(self):
+        make_char("mumbly", refs=3, seconds=4.0)
+        self._model("mumbly", clips_n=4, accuracy=0.6)
+        self.assertEqual(self.cap("mumbly", "pronunciation")["state"], "missing")
+        self.assertIn("Pronunciation is weak", self.texts("mumbly"))
+
+    def test_variants_are_listed(self):
+        make_char("base", refs=1)
+        make_char("base-angry", parent="base")
+        p = self.profile.character_profile("base")
+        self.assertEqual(p["variants"], ["base-angry"])
+        self.assertEqual(self.cap("base", "variants")["state"], "ready")
+        self.assertFalse(self.profile.character_profile("base-angry")["is_base"])
+
+
+class TestHubHelpers(Sandboxed):
+    def setUp(self):
+        super().setUp()
+        from faily.core import refs
+        from faily.ui.tabs import refs_hub, training_data_panel
+        self.refs, self.hub, self.panel = refs, refs_hub, training_data_panel
+
+    def test_fmt_minutes(self):
+        self.assertEqual(self.hub.fmt_minutes(45), "45 s")
+        self.assertEqual(self.hub.fmt_minutes(150), "2.5 min")
+
+    def test_grid_rows_flags_and_labels(self):
+        make_mixed()
+        C.add_ref_clip("mix", write_wav(SANDBOX / "_fixtures" / "nt.wav", speechish(30.0)), "")
+        rows = self.refs.clip_rows("mix")
+        out = {r["key"]: r for r in self.hub.grid_rows(rows, long_over=20.0)}
+        self.assertTrue(out[self.refs.PRIMARY]["name"].endswith("★"))
+        self.assertEqual(out["refs/ref_013.wav"]["flags"], "LONG NO TEXT")
+        inf = next(r for r in out.values() if r["origin"] == "inflated")
+        self.assertEqual((inf["category"], inf["backend"], inf["train"], inf["clone"]), ("plosives", "chatterbox", True, True))
+        self.assertTrue(inf["url"].startswith("/outputs/characters/mix/refs/"))
+        C.add_ref_clip("mix", write_wav(SANDBOX / "_fixtures" / "old.wav", speechish(3.0)), "old.", source="inflated", category="neutral")
+        old = self.hub.grid_rows(self.refs.clip_rows("mix"), 20.0)[-1]
+        self.assertEqual(old["backend"], "unknown")                              # inflated before backends were recorded
+
+    def test_chart_options(self):
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        data = self.refs.breakdown(rows, "origin", "minutes", "state")
+        v = self.hub.chart_options(data, horizontal=False, measure="minutes", stack="state")
+        self.assertEqual(v["xAxis"]["type"], "category")
+        self.assertTrue(v["legend"]["show"])
+        self.assertTrue(all(s.get("stack") == "total" for s in v["series"]))
+        self.assertEqual(v["series"][0]["itemStyle"]["color"], "#f59e0b")           # "active" is amber
+        h = self.hub.chart_options(data, horizontal=True, measure="minutes", stack="state")
+        self.assertEqual((h["yAxis"]["type"], h["xAxis"]["type"]), ("category", "value"))
+        plain = self.hub.chart_options(self.refs.breakdown(rows, "origin", "clips"), False, "clips", None)
+        self.assertFalse(plain["legend"]["show"])
+        self.assertNotIn("stack", plain["series"][0])
+
+    def test_treemap_splits_each_group_into_on_and_off(self):
+        make_mixed()
+        self.refs.set_active("mix", [r["key"] for r in self.refs.clip_rows("mix") if r["category"] == "nasals"][:1], False)
+        tiles = self.panel.treemap_data(self.refs.groups(self.refs.clip_rows("mix")))
+        by = {t["name"]: t["children"] for t in tiles}
+        self.assertEqual(set(by), {"recordings", "nasals · f5_tts", "plosives · chatterbox", "plosives · f5_tts"})
+        self.assertEqual(len(by["recordings"]), 1)                                # nothing off: no grey part
+        self.assertEqual(len(by["nasals · f5_tts"]), 2)                           # one clip off: both parts
+        self.assertAlmostEqual(sum(c["value"] for c in by["nasals · f5_tts"]), 9 / 60, places=2)
+        opts = self.panel.treemap_options(self.refs.groups(self.refs.clip_rows("mix")))
+        self.assertEqual(opts["series"][0]["type"], "treemap")
+
+    def test_gauge_colour_follows_the_data_amount(self):
+        low, mid, good = (self.panel.gauge_html(m) for m in (2, 8, 45))
+        self.assertIn("#ef4444", low)
+        self.assertIn("#f59e0b", mid)
+        self.assertIn("#22c55e", good)
+        self.assertIn("10m", good)
+        self.assertIn("width:100.0%", self.panel.gauge_html(500))              # never overflows the track
+
+
+_UI = {}
+
+
+def _ui_client():
+    """A TestClient over a tiny ASGI app serving the real characters tab at /p/<character>."""
+    if "client" not in _UI:
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from nicegui import ui
+        from faily.ui.tabs.characters_tab import build_characters_tab
+        app = FastAPI()
+        _UI["clients"] = []
+
+        @ui.page("/p/{name}")
+        def page(name: str):
+            _UI["clients"].append(ui.context.client)
+            build_characters_tab(lambda n: None, lambda: None, initial=name)
+
+        ui.run_with(app, storage_secret="faily-test")
+        _UI["client"] = TestClient(app)
+    return _UI["client"]
+
+
+class TestHubUi(Sandboxed):
+    """Renders the real tab server-side and presses its buttons (no browser: JS-only parts such as the
+    table's selection toolbar are not exercised)."""
+
+    def setUp(self):
+        super().setUp()
+        from faily.core import refs
+        self.refs = refs
+
+    def render(self, name):
+        resp = _ui_client().get(f"/p/{name}")
+        self.assertEqual(resp.status_code, 200)
+        return resp.text, _UI["clients"][-1]
+
+    def buttons(self, client):
+        from nicegui import ui
+        return [e for e in client.elements.values() if isinstance(e, ui.button)]
+
+    def press(self, client, button):
+        from nicegui import events
+        for listener in list(button._event_listeners.values()):
+            if listener.type == "click":
+                events.handle_event(listener.handler, events.ClickEventArguments(sender=button, client=client))
+
+    def active(self, name):
+        return {r["key"]: r["active"] for r in self.refs.clip_rows(name)}
+
+    @regression("The REFERENCES, ABOUT and TRAINING tabs must build for a base character and for a variant.",
+                "Run the tab server-side and read the traceback in the 500 response; the failing element is in "
+                "ui/tabs/refs_hub.py, about_panel.py, training_data_panel.py or characters_tab.py.")
+    def test_detail_panels_render_for_base_and_variant(self):
+        make_mixed("alice")
+        make_char("alice-calm", parent="alice")
+        html, _ = self.render("alice")
+        for needle in ("WHAT IT CAN DO", "WHERE IT NEEDS WORK", "BREAKDOWN", "GROUPS", "QUALIFY DATA", "INFLATE DATA",
+                       "SELECT SHOWN", "TRAINING DATA", "APPLY MIX", "MANAGE IN REFERENCES"):
+            self.assertIn(needle, html, needle)
+        html, _ = self.render("alice-calm")
+        self.assertIn("from parent", html)
+
+    def test_training_tab_no_longer_has_the_old_controls(self):
+        make_mixed("alice")
+        html, _ = self.render("alice")
+        for gone in ("TRAIN ON", "UNUSUALLY LONG REFERENCE CLIPS", "Optional — inflate the reference data", "Before training — check"):
+            self.assertNotIn(gone, html, gone)
+
+    def test_group_cards_switch_whole_groups(self):
+        make_mixed("alice")
+        _, client = self.render("alice")
+        icon_only = [b for b in self.buttons(client) if not getattr(b, "text", "")]              # the group cards' buttons
+        offs = [b for b in icon_only if b.props.get("icon") == "toggle_off"]
+        ons = [b for b in icon_only if b.props.get("icon") == "toggle_on"]
+        self.assertEqual(len(offs), 4)                                          # recordings + 3 inflated groups
+        self.press(client, offs[-1])                                            # last group = recordings
+        state = self.active("alice")
+        self.assertTrue(state[self.refs.PRIMARY])
+        self.assertEqual(sum(state.values()), 1 + 8)                            # primary + the 8 inflated
+        icon_only = [b for b in self.buttons(client) if not getattr(b, "text", "") and b.props.get("icon") == "toggle_on"]
+        self.assertEqual(len(icon_only), 4)                                      # the cards were re-rendered; press a live button
+        self.press(client, icon_only[-1])
+        self.assertTrue(all(self.active("alice").values()))
+
+    def test_activation_presets_and_mix(self):
+        from nicegui import ui
+        make_mixed("alice")
+        _, client = self.render("alice")
+        by_text = lambda t: next(b for b in self.buttons(client) if getattr(b, "text", "") == t)
+        self.press(client, by_text("RECORDINGS ONLY"))
+        rows = self.refs.clip_rows("alice")
+        self.assertTrue(all(r["active"] == (r["origin"] == "recording") for r in rows))
+        self.press(client, by_text("INFLATED ONLY"))
+        rows = self.refs.clip_rows("alice")
+        self.assertTrue(all(r["active"] for r in rows if r["origin"] == "inflated"))
+        self.assertEqual(sum(1 for r in rows if r["origin"] == "recording" and r["active"]), 1)   # only the primary stays on
+        self.press(client, by_text("EVERYTHING"))
+        self.assertTrue(all(self.active("alice").values()))
+        slider = next(e for e in client.elements.values() if isinstance(e, ui.slider) and e.props.get("max") == 95)
+        slider.value = 30
+        self.press(client, by_text("APPLY MIX"))
+        s = self.refs.summarize(self.refs.clip_rows("alice"))
+        share = s["active_inflated"]["seconds"] / s["active"]["seconds"]
+        self.assertAlmostEqual(share, 0.30, delta=0.12)
+
+    def test_chips_flip_a_group(self):
+        make_mixed("alice")
+        _, client = self.render("alice")
+        chip = next(b for b in self.buttons(client) if getattr(b, "text", "").startswith("nasals · f5_tts"))
+        self.press(client, chip)
+        self.assertEqual(sum(1 for r in self.refs.clip_rows("alice") if r["category"] == "nasals" and r["active"]), 0)
+        chip = next(b for b in self.buttons(client) if getattr(b, "text", "").startswith("nasals · f5_tts"))
+        self.press(client, chip)
+        self.assertEqual(sum(1 for r in self.refs.clip_rows("alice") if r["category"] == "nasals" and r["active"]), 3)
+
+    def test_inflation_wizard_accepts_a_preset(self):
+        import inspect
+        from faily.ui.tabs.inflation_dialog import open_inflation_dialog
+        self.assertIn("preset", inspect.signature(open_inflation_dialog).parameters)
+
+
 class TestRepoHygiene(unittest.TestCase):
     def test_all_python_compiles(self):
         import py_compile
@@ -2245,7 +2714,8 @@ class TestRepoHygiene(unittest.TestCase):
         'Delete the reference named in the failure (or, if it is intentional again, remove it from banned in this test).')
     def test_no_stale_references(self):
         """Things removed from the project must not linger in code, config or docs."""
-        banned = ["speecht5", "SpeechT5", "speechbrain", "outputs/vc", "outputs/tts", "outputs/sfx", "VC_OUTPUT_DIR"]
+        banned = ["speecht5", "SpeechT5", "speechbrain", "outputs/vc", "outputs/tts", "outputs/sfx", "VC_OUTPUT_DIR",
+                  "TRAIN_DATA_CHOICES", "piper_train_data", "filter_training_clips", "_review_long_clips"]
         skip = {"test_functions.py"}
         hits = []
         for f in list((ROOT / "faily").rglob("*.py")) + list((ROOT / "scripts").glob("*")) + [ROOT / "pyproject.toml", ROOT / "README.md"]:

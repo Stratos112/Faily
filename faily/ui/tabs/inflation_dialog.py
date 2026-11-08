@@ -69,9 +69,11 @@ def global_inflation_chip() -> None:
     ui.timer(1.5, _refresh)
 
 
-def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> None:
+def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], preset: dict | None = None) -> None:
     """Open the Data Inflation wizard for char_name. on_committed() fires
-    after Step 4 commits at least one candidate into the reference pool."""
+    after Step 4 commits at least one candidate into the reference pool.
+    preset (optional, for "generate more like this" on the REFERENCES hub):
+    {"category": only draw lines from this category, "backend": start on this engine, "count": clips}."""
     if char_name in _SESSIONS:             # already running / minimized: bring it back, don't start over
         _reopen(char_name)
         return
@@ -98,11 +100,16 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
     has_transcripts = any(c["transcript"].strip() for c in chain)
 
     # ── dialog state ─────────────────────────────────────────────────────
-    _weights: dict[str, list[float]] = {k: [1.0] for k in CATEGORIES}
-    _count: list[int] = [200]
-    _backend: list[str] = ["chatterbox"]
-    _param1: list[float] = [BACKENDS["chatterbox"]["param1"]["default"]]
-    _param2: list[float] = [BACKENDS["chatterbox"]["param2"]["default"]]
+    preset = preset or {}
+    only_cat = preset.get("category") if preset.get("category") in CATEGORIES else None
+    first_backend = preset.get("backend") if preset.get("backend") in BACKENDS else "chatterbox"
+    if first_backend == "f5_tts" and not has_transcripts:
+        first_backend = "chatterbox"
+    _weights: dict[str, list[float]] = {k: [1.0 if (only_cat is None or k == only_cat) else 0.0] for k in CATEGORIES}
+    _count: list[int] = [int(preset.get("count") or 200)]
+    _backend: list[str] = [first_backend]
+    _param1: list[float] = [BACKENDS[first_backend]["param1"]["default"]]
+    _param2: list[float] = [BACKENDS[first_backend]["param2"]["default"]]
     _lines: list[ScriptLine] = []
     _candidates: list[InflatedCandidate] = []
     _cancel: list[bool] = [False]
@@ -147,13 +154,13 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     "the backend — roughly 15-30+ minutes for 200 clips.",
                 )
                 with ui.row().classes("w-full items-center gap-3"):
-                    count_lbl = ui.label("200").classes(
+                    count_lbl = ui.label(str(_count[0])).classes(
                         "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
                     )
                     def _on_count(e):
                         _count[0] = int(e.value)
                         count_lbl.set_text(str(int(e.value)))
-                    ui.slider(min=20, max=2000, step=10, value=200, on_change=_on_count).classes(
+                    ui.slider(min=20, max=2000, step=10, value=_count[0], on_change=_on_count).classes(
                         "flex-grow"
                     ).props("color=amber")
 
@@ -169,14 +176,14 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                 for key, info in CATEGORIES.items():
                     _section_row(info["label"], info["desc"])
                     with ui.row().classes("w-full items-center gap-3"):
-                        w_lbl = ui.label("1.00").classes(
+                        w_lbl = ui.label(f"{_weights[key][0]:.2f}").classes(
                             "font-mono text-[10px] text-amber-400 w-10 shrink-0 text-right"
                         )
                         def _on_weight(e, k=key, lbl=w_lbl):
                             _weights[k][0] = float(e.value)
                             lbl.set_text(f"{e.value:.2f}")
                         ui.slider(
-                            min=0.0, max=2.0, step=0.05, value=1.0, on_change=_on_weight,
+                            min=0.0, max=2.0, step=0.05, value=_weights[key][0], on_change=_on_weight,
                         ).classes("flex-grow").props("color=amber")
 
                 def _go_step2():
@@ -229,7 +236,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None]) -> N
                     _backend[0] = key
                     _rebuild_params()
 
-                model_picker(backend_opts, "chatterbox", _on_backend)
+                model_picker(backend_opts, _backend[0], _on_backend)
                 _rebuild_params()
 
                 with ui.stepper_navigation():

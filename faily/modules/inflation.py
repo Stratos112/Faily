@@ -7,6 +7,7 @@ import math
 import random
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -72,6 +73,8 @@ class InflatedCandidate:
     accepted: bool = True
     verdict: str = ""            # after auto-qualify: "ok" | "review" | "reject"
     note: str = ""               # what auto-qualify did / found
+    backend: str = ""            # which zero-shot engine made it (kept on the clip once committed)
+    batch: str = ""              # the wizard run it came from (a timestamp id)
 
 
 def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
@@ -297,6 +300,7 @@ async def generate_batch(
     """
     staging_dir.mkdir(parents=True, exist_ok=True)
     candidates: list[InflatedCandidate] = []
+    batch = datetime.now().strftime("%Y%m%d-%H%M%S")
     require_transcript = backend == "f5_tts"
     max_duration = F5_REF_SECONDS if backend == "f5_tts" else None
 
@@ -315,6 +319,7 @@ async def generate_batch(
                 issues = clip_quality_issues(path)
                 candidates.append(InflatedCandidate(
                     category=line.category, text=line.text, path=path, issues=issues,
+                    backend=backend, batch=batch,
                 ))
             except Exception as exc:
                 on_error(i, line, exc)

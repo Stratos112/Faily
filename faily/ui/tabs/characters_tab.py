@@ -1,31 +1,29 @@
-import json
 import shutil
 from pathlib import Path
-from faily.core.paths import TMP_DIR
 from nicegui import ui, run as ni_run
 from faily.core.characters import (
     list_characters, get_character, get_ref_path, delete_character,
     update_character_metadata,
     list_character_clips, list_character_favorites, rename_character_file,
     get_ref_chain, remove_ref_clip, set_rvc_model, set_piper_model,
-    rename_ref_audio, update_ref_clip, clip_quality_issues, add_ref_clip,
-    set_ref_clip_excluded, split_long_ref_clip, CHARACTERS_DIR,
+    rename_ref_audio, update_ref_clip, CHARACTERS_DIR,
 )
-from faily.modules.qualify import delete_inflated_clips
 from faily.ui.components import (
     section_label, show_error, send_to_edit, bind_play, prime_audio, play_url,
 )
 from faily.modules.piper import (
-    BASE_VOICES, MATCH_ASPECTS, MATCH_CHOICES, TRAIN_DATA_CHOICES, filter_training_clips, frozen_modules,
+    BASE_VOICES, MATCH_ASPECTS, MATCH_CHOICES, training_clips, frozen_modules,
     base_voice_ready, generate_base_voice_sample, SAMPLE_TEXT,
 )
 from faily.core.model_manager import manager
 from faily.core.settings import (
     get_default_base_voice, set_default_base_voice,
     get_piper_learning_rate, set_piper_learning_rate, get_piper_epochs, set_piper_epochs,
-    get_piper_match, set_piper_match, get_piper_train_data, set_piper_train_data,
+    get_piper_match, set_piper_match,
 )
-from faily.ui.tabs.inflation_dialog import open_inflation_dialog
+from faily.ui.tabs.about_panel import build_about_panel
+from faily.ui.tabs.refs_hub import build_refs_hub
+from faily.ui.tabs.training_data_panel import build_activation_panel
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 from faily.ui.tabs.import_dialog import open_import_dialog
 from faily.ui.tabs.models_panel import build_models_panel
@@ -39,13 +37,14 @@ _BTN = "font-mono tracking-widest"
 _WRAP = "break-words [overflow-wrap:anywhere]"
 
 
-def build_characters_tab(on_speak, on_change):
+def build_characters_tab(on_speak, on_change, initial: str | None = None):
     """
     on_speak(name): navigate to SPEAK tab with this character pre-selected
     on_change():    notify app that characters were deleted (refresh other tabs)
+    initial:        character to have open when the tab is first built (default: none)
     Returns: refresh() callable
     """
-    _selected: list[str | None] = [None]
+    _selected: list[str | None] = [initial]
     # _rebuild_detail() recreates every element, so remember the open sub-tab
     # across rebuilds (the reference list's scroll position is kept in the
     # browser; see below).
@@ -259,79 +258,9 @@ def build_characters_tab(on_speak, on_change):
         is_base = "parent" not in char
         char_dir = CHARACTERS_DIR / name
 
-        # ── shared data — computed once, used by more than one tab ──────────
-        own_refs = []
-        if is_base and "ref_audio" in char:
-            ra = char_dir / char["ref_audio"]
-            if ra.exists():
-                own_refs.append({
-                    "audio": ra, "transcript": char.get("transcript", ""),
-                    "kind": "primary", "file_key": None,
-                })
-        for rc in char.get("ref_clips", []):
-            rp = char_dir / rc["file"]
-            if rp.exists():
-                own_refs.append({
-                    "audio": rp, "transcript": rc.get("transcript", ""),
-                    "kind": "clip", "file_key": rc["file"], "excluded": rc.get("excluded", False),
-                    "source": rc.get("source", ""), "category": rc.get("category", ""),
-                })
-
-        full_chain = get_ref_chain(name)
-        own_paths = {r["audio"] for r in own_refs}
-        inherited = [e for e in full_chain if e["audio"] not in own_paths]
-        all_refs = own_refs + inherited
-        # active_refs = what's actually used to build the VC reference — excludes
-        # opted-out own clips; inherited is already excluded-filtered by get_ref_chain.
-        excluded_count = sum(1 for r in own_refs if r.get("excluded"))
-        n_inflated = sum(1 for r in own_refs if r.get("source") == "inflated")
-
-        def _confirm_delete_inflated(n=name):
-            with ui.dialog() as d, ui.card().classes("bg-[#1a1a1a] border border-[#333] gap-3"):
-                ui.label("DELETE ALL INFLATED CLIPS?").classes("text-white font-mono text-xs tracking-widest")
-                ui.label(
-                    f"Removes all {n_inflated} inflated clips from {n} (your own recordings are not "
-                    "touched). The audio is moved to refs_trash/ in the character's folder, so it can be "
-                    "recovered by hand. Already-trained models are unaffected."
-                ).classes("text-[#888] font-mono text-[11px] max-w-md")
-                with ui.row().classes("w-full justify-end gap-2"):
-                    ui.button("Cancel", on_click=d.close).props("flat dense color=grey")
-
-                    def go():
-                        removed = delete_inflated_clips(n)
-                        d.close()
-                        ui.notify(f"Deleted {removed} inflated clips (kept in refs_trash/)", timeout=4000)
-                        _rebuild_detail()        # last: it deletes the elements this handler runs in
-                    ui.button(f"DELETE {n_inflated}", icon="delete_forever", on_click=go).props(
-                        "color=negative unelevated dense")
-            d.open()
-        active_refs = [r for r in own_refs if not r.get("excluded")] + inherited
-
-        total_dur = 0.0
-        try:
-            import soundfile as _sf
-            for _r in active_refs:
-                try:
-                    total_dur += _sf.info(str(_r["audio"])).duration
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        dur_str = f"{total_dur:.0f}s" if total_dur < 60 else f"{total_dur / 60:.1f}m"
-        transcript_count = sum(1 for r in active_refs if r["transcript"].strip())
-
-        _, children_map = _grouped()
-        children = children_map.get(name, []) if is_base else []
         clips = list_character_clips(name) if is_base else []
         favs = list_character_favorites(name) if is_base else []
         has_model = bool(char.get("piper_model") or char.get("rvc_model"))
-
-        def _meta_row(label: str, value: str):
-            with ui.row().classes("items-start gap-3 w-full"):
-                ui.label(label).classes(
-                    "text-[#444] font-mono text-[10px] tracking-widest w-36 shrink-0 pt-0.5"
-                )
-                ui.label(value).classes("text-[#aaa] font-mono text-[11px] flex-grow break-all")
 
         with right_col:
             # ── header — stays visible no matter which sub-tab is open ──────
@@ -359,307 +288,44 @@ def build_characters_tab(on_speak, on_change):
 
                 # ══ ABOUT ════════════════════════════════════════════════════
                 with ui.tab_panel(tab_about).classes("gap-2 p-0 pt-3"):
-                    created = char.get("created", "—")[:19].replace("T", "  ")
-                    _meta_row("CREATED", created)
-                    if not is_base:
-                        _meta_row("PARENT", char.get("parent", "—"))
-                        if char.get("backend"):
-                            _meta_row("BACKEND", char["backend"])
-                    _meta_row(
-                        "REF CLIPS",
-                        f"{len(active_refs)}" + (
-                            f"  ({len(own_refs) - excluded_count} own + {len(inherited)} inherited)"
-                            if inherited else ""
-                        ) + (f"  ({excluded_count} excluded)" if excluded_count else ""),
+                    def _goto(target: str):
+                        label = {"references": "REFERENCES", "training": "TRAINING"}[target]
+                        _detail_tab[0] = label
+                        detail_tabs.set_value(label)
+
+                    build_about_panel(
+                        name, goto=_goto, open_character=_select,
+                        qualify=lambda n=name: open_qualify_dialog(n, _rebuild_detail),
+                        edit=lambda n=name: _open_edit(n), delete=lambda n=name: _confirm_delete(n),
                     )
-                    _meta_row("REF AUDIO LENGTH", dur_str if active_refs else "—")
-                    _meta_row("TRANSCRIPTS", f"{transcript_count} / {len(active_refs)}")
-                    trained = []
-                    if char.get("piper_model"):
-                        trained.append("Piper")
-                    if char.get("rvc_model"):
-                        trained.append("RVC")
-                    _meta_row("TRAINED MODELS", ", ".join(trained) if trained else "none yet")
-                    if is_base:
-                        _meta_row("PERSONALITY CLIPS", str(len(clips)))
-                        _meta_row("FAVORITES", str(len(favs)))
-
-                    style = char.get("style_prompt", "").strip()
-                    if not is_base and style:
-                        ui.label("STYLE PROMPT").classes(
-                            "text-[#444] font-mono text-[10px] tracking-widest mt-1"
-                        )
-                        ui.label(style).classes(
-                            "text-[#aaa] font-mono text-[11px] leading-relaxed "
-                            "bg-[#1a1a1a] rounded px-3 py-2 w-full"
-                        )
-
-                    if is_base:
-                        ui.separator().classes("my-2 opacity-10")
-                        with ui.row().classes("items-center gap-2"):
-                            ui.label("VARIANTS").classes(
-                                "text-[#444] font-mono text-[10px] tracking-widest"
-                            )
-                            ui.label(str(len(children))).classes(
-                                "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
-                            )
-                        for sub in children:
-                            with ui.row().classes(
-                                "items-center gap-2 px-2 py-0.5 rounded cursor-pointer hover:bg-[#111]"
-                            ).on("click", lambda n=sub["name"]: _select(n)):
-                                ui.icon("person_outline", size="12px").classes("text-[#555]")
-                                ui.label(f"↳ {sub['name']}").classes(
-                                    "text-[#666] font-mono text-[10px] hover:text-amber-400"
-                                )
-
-                    ui.separator().classes("mt-4 mb-3 opacity-20")
-                    with ui.row().classes("gap-2"):
-                        ui.button("EDIT", icon="edit", on_click=lambda n=name: _open_edit(n)).props(
-                            "flat color=grey"
-                        )
-                        ui.button(
-                            "DELETE", icon="delete_outline",
-                            on_click=lambda n=name: _confirm_delete(n),
-                        ).props("flat color=negative")
 
                 # ══ REFERENCES ═══════════════════════════════════════════════
                 with ui.tab_panel(tab_refs).classes("gap-2 p-0 pt-3"):
-                    section_label("ADD REFERENCE")
-
-                    _upload_mode = ["add"]      # "add" = one clip as-is, "split" = slice, check, add
-
-                    async def _on_ref_upload(e, n=name):
-                        import os
-                        import tempfile
-                        if _upload_mode[0] == "split":
-                            _upload_mode[0] = "add"
-                            import uuid
-                            keep = TMP_DIR / "import"
-                            keep.mkdir(parents=True, exist_ok=True)
-                            saved = keep / f"{uuid.uuid4().hex[:8]}_{Path(e.file.name).name}"
-                            saved.write_bytes(await e.file.read())
-                            with dialog_host:
-                                open_import_dialog(
-                                    saved, Path(e.file.name).stem, dialog_host, on_added=_rebuild_detail,
-                                    fixed_target=n, delete_source=True,
-                                )
-                            return
-                        suffix = Path(e.file.name).suffix or ".wav"
-                        fd, tmp_name = tempfile.mkstemp(suffix=suffix)
-                        tmp_path = Path(tmp_name)
-                        try:
-                            with os.fdopen(fd, "wb") as f:
-                                f.write(await e.file.read())
-                            add_ref_clip(n, tmp_path, upload_transcript.value.strip())
-                            ui.notify("Added to reference pool", type="positive", timeout=2000)
-                            _rebuild_detail()
-                        except Exception as exc:
-                            show_error(exc)
-                        finally:
-                            tmp_path.unlink(missing_ok=True)
-
-                    # auto_upload=False stages the file client-side only —
-                    # nothing touches the ref pool until the Upload button
-                    # below fires the actual transfer, so a transcript can be
-                    # typed first.
-                    ref_upload = (
-                        ui.upload(on_upload=_on_ref_upload, multiple=False, auto_upload=False)
-                        .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Select clip'")
-                        .classes("w-full mt-1")
-                    )
-                    upload_transcript = (
-                        ui.input(placeholder="transcript (optional)…")
-                        .props("outlined dark dense")
-                        .classes("w-full mt-2 font-mono text-[11px]")
-                    )
-                    with ui.row().classes("gap-2 mt-1"):
-                        ui.button(
-                            "Upload", icon="cloud_upload",
-                            on_click=lambda: (_upload_mode.__setitem__(0, "add"), ref_upload.run_method("upload")),
-                        ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest")
-                        ui.button(
-                            "Split & qualify…", icon="content_cut",
-                            on_click=lambda: (_upload_mode.__setitem__(0, "split"), ref_upload.run_method("upload")),
-                        ).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest").tooltip(
-                            "Slice the selected recording at its pauses, check each slice (volume, "
-                            "silence, Whisper-suggested transcript) one by one, then add them here. "
-                            "Ignores the transcript box."
-                        )
-
-                    ui.separator().classes("my-3 opacity-20")
-                    with ui.row().classes("items-center gap-2 w-full"):
-                        ui.label("ALL REFERENCES").classes(
-                            "text-[#444] font-mono text-[10px] tracking-widest flex-grow"
-                        )
-                        ui.label(f"{len(active_refs)} clips  ·  {dur_str}").classes(
-                            "text-[#333] font-mono text-[10px] bg-[#1a1a1a] px-1.5 rounded"
-                        )
-
-                    if not all_refs:
-                        ui.label("No reference clips yet — add one above.").classes(
-                            "text-[#444] font-mono text-[10px] py-2"
-                        )
-                    else:
-                        # Plain overflow div, not ui.scroll_area: Quasar's scroll area
-                        # lets wide content push a horizontal scrollbar in.
-                        with ui.element("div").classes("w-full").props("id=faily-ref-list").style(
-                            "height: 380px; overflow-y: auto; overflow-x: hidden"
-                        ):
-                            # Edit/delete/exclude rebuild this whole panel; put the
-                            # list back where it was. The scroll offset lives in
-                            # the browser (window.__failyRefScroll), keyed by character.
-                            ui.run_javascript(
-                                "(function(name){let n=0;(function go(){"
-                                "const el=document.getElementById('faily-ref-list');"
-                                "if(!el){if(n++<40)setTimeout(go,50);return;}"
-                                "const st=window.__failyRefScroll;"
-                                "const want=(st&&st.name===name)?st.top:0;"
-                                "el.scrollTop=want;"
-                                # rows render a beat after the container; retry until the
-                                # list is tall enough to reach the saved offset
-                                "if(Math.abs(el.scrollTop-want)>1&&n++<40){setTimeout(go,50);return;}"
-                                "el.addEventListener('scroll',()=>{"
-                                "window.__failyRefScroll={name:name,top:el.scrollTop};});"
-                                "})();})(" + json.dumps(name) + ")"
-                            )
-                            with ui.column().classes("w-full gap-1"):
-                                def _render_own_ref_row(ref):
-                                    audio = ref["audio"]
-                                    rel = audio.relative_to(Path("outputs"))
-                                    url = f"/outputs/{rel.as_posix()}"
-                                    is_primary = ref["kind"] == "primary"
-                                    is_excluded = ref.get("excluded", False)
-                                    issues = clip_quality_issues(audio)
-
-                                    with ui.row().classes(
-                                        "w-full items-center gap-1 px-2 py-1 rounded flex-nowrap "
-                                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
-                                        + (" opacity-40" if is_excluded else "")
-                                    ):
-                                        play_btn = ui.button(icon="play_arrow").props(
-                                            "flat dense color=amber"
-                                        ).classes("shrink-0")
-                                        ui.icon(
-                                            "star" if is_primary else ("science" if ref.get("source") == "inflated" else "mic"),
-                                            size="12px",
-                                        ).classes(
-                                            ("text-amber-500" if is_primary else "text-[#555]") + " shrink-0"
-                                        )
-                                        if not is_primary:
-                                            def _toggle_excl(fk=ref["file_key"], cur=is_excluded):
-                                                set_ref_clip_excluded(name, fk, not cur)
-                                                _rebuild_detail()
-                                            ui.button(
-                                                icon="visibility_off" if is_excluded else "visibility",
-                                                on_click=_toggle_excl,
-                                            ).props(
-                                                f"flat dense color={'grey' if is_excluded else 'amber'}"
-                                            ).classes("shrink-0").tooltip(
-                                                "Excluded from voice cloning — click to re-include"
-                                                if is_excluded else
-                                                "Used for voice cloning — click to exclude"
-                                            )
-                                        if issues:
-                                            ui.icon("warning", size="12px").classes(
-                                                "text-amber-500 shrink-0"
-                                            ).tooltip(
-                                                f"{', '.join(issues)} — consider re-recording or removing "
-                                                "this clip; low-quality refs drag down cloning and training."
-                                            )
-                                        text_col = ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer")
-                                        bind_play(play_btn, text_col, url=url)
-                                        with text_col:
-                                            ui.label(audio.stem).classes(
-                                                "text-[#aaa] font-mono text-[10px] " + _WRAP
-                                            )
-                                            t = ref["transcript"]
-                                            if t:
-                                                ui.label(f'"{t}"').classes(
-                                                    "text-[#555] font-mono text-[10px] italic leading-tight " + _WRAP
-                                                )
-                                        if ref.get("category"):
-                                            ui.label(ref["category"]).classes(
-                                                "text-[#3a3a3a] font-mono text-[9px] bg-[#161616] px-1.5 "
-                                                "rounded shrink-0"
-                                            )
-                                        with ui.button(icon="tune").props("flat dense color=grey").classes(
-                                            "shrink-0"
-                                        ).tooltip("Work on this clip…"):
-                                            with ui.menu():
-                                                ui.menu_item(
-                                                    "Send to the Edit tab — manual work",
-                                                    on_click=lambda r=ref: send_to_edit(r["audio"], name),
-                                                )
-                                                ui.menu_item(
-                                                    "Split & qualify… — the quality wizard",
-                                                    on_click=lambda r=ref: _split_ref_clip(name, r),
-                                                )
-                                        ui.button(
-                                            icon="edit",
-                                            on_click=lambda r=ref: _open_ref_edit(
-                                                name, r["audio"], r["kind"] == "primary",
-                                                r.get("file_key"), r["transcript"]
-                                            ),
-                                        ).props("flat dense color=grey").classes("shrink-0")
-                                        if not is_primary:
-                                            def _del(fk=ref["file_key"]):
-                                                remove_ref_clip(name, fk)
-                                                _rebuild_detail()
-                                            ui.button(
-                                                icon="close", on_click=_del,
-                                            ).props("flat dense color=grey").classes("shrink-0")
-
-                                inflated_refs = [r for r in own_refs if r.get("source") == "inflated"]
-                                direct_refs = [r for r in own_refs if r.get("source") != "inflated"]
-
-                                for ref in direct_refs:
-                                    _render_own_ref_row(ref)
-
-                                if inflated_refs:
-                                    with ui.row().classes("items-center gap-2 w-full mt-2 mb-1"):
-                                        ui.icon("science", size="12px").classes("text-[#555] shrink-0")
-                                        ui.label("INFLATED CLIPS — ZERO-SHOT").classes(
-                                            "text-[#555] font-mono text-[9px] tracking-widest flex-grow"
-                                        )
-                                        ui.label(str(len(inflated_refs))).classes(
-                                            "text-[#333] font-mono text-[9px] bg-[#1a1a1a] px-1.5 rounded"
-                                        )
-                                        ui.button(
-                                            "DELETE ALL", icon="delete_sweep", on_click=_confirm_delete_inflated,
-                                        ).props("flat dense color=negative").classes("font-mono text-[9px]").tooltip(
-                                            "Remove every inflated clip (kept in refs_trash/)"
-                                        )
-                                    for ref in inflated_refs:
-                                        _render_own_ref_row(ref)
-
-                                for entry in inherited:
-                                    audio = entry["audio"]
-                                    if not audio.exists():
-                                        continue
-                                    rel = audio.relative_to(Path("outputs"))
-                                    url = f"/outputs/{rel.as_posix()}"
-                                    with ui.row().classes(
-                                        "w-full items-center gap-1 px-2 py-1 rounded flex-nowrap "
-                                        "hover:bg-[#1a1a1a] border border-transparent hover:border-[#2a2a2a]"
-                                    ):
-                                        play_btn = ui.button(icon="play_arrow").props(
-                                            "flat dense color=grey"
-                                        ).classes("shrink-0")
-                                        ui.icon("link", size="12px").classes("text-[#333] shrink-0")
-                                        text_col = ui.column().classes("gap-0 flex-grow min-w-0 cursor-pointer")
-                                        bind_play(play_btn, text_col, url=url)
-                                        with text_col:
-                                            ui.label(audio.stem).classes(
-                                                "text-[#555] font-mono text-[10px] " + _WRAP
-                                            )
-                                            if entry.get("transcript"):
-                                                ui.label(f'"{entry["transcript"]}"').classes(
-                                                    "text-[#333] font-mono text-[10px] italic leading-tight " + _WRAP
-                                                )
-                                        ui.label("↑ parent").classes("text-[#333] font-mono text-[9px] shrink-0")
+                    def _ref_hooks():
+                        def as_ref(row):
+                            return {"audio": row["audio"], "file_key": None if row["primary"] else row["key"],
+                                    "kind": "primary" if row["primary"] else "clip"}
+                        return {
+                            "edit": lambda r: _open_ref_edit(name, r["audio"], r["primary"], None if r["primary"] else r["key"], r["transcript"]),
+                            "split": lambda r: _split_ref_clip(name, as_ref(r)),
+                            "to_edit": lambda r: send_to_edit(r["audio"], name),
+                            "open_character": _select,
+                        }
+                    build_refs_hub(name, dialog_host=dialog_host, rebuild=_rebuild_detail, hooks=_ref_hooks())
 
                 # ══ TRAINING ═════════════════════════════════════════════════
                 with ui.tab_panel(tab_train).classes("gap-2 p-0 pt-3"):
+                    with ui.row().classes("items-center gap-1"):
+                        section_label("TRAINING DATA")
+                        ui.icon("info_outline", size="13px").classes("text-[#3a3a3a] cursor-help").tooltip(
+                            "A run learns from the ACTIVE clips only. Switch groups on/off here, or clip by clip "
+                            "on the REFERENCES tab. Switched-off clips are kept, not deleted.")
+                    build_activation_panel(
+                        name, on_change=on_change,
+                        goto_references=lambda: (_detail_tab.__setitem__(0, "REFERENCES"), detail_tabs.set_value("REFERENCES")),
+                    )
+                    ui.separator().classes("my-2 opacity-10")
+
 
                     def _base_voice_opts() -> dict[str, str]:
                         opts = {}
@@ -735,61 +401,6 @@ def build_characters_tab(on_speak, on_change):
                                     MATCH_CHOICES, value=_match[_aspect],
                                     on_change=lambda e, a=_aspect: set_piper_match(a, e.value),
                                 ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
-                    # ── what to train on ─────────────────────────────────────
-                    with ui.row().classes("items-center gap-1"):
-                        section_label("TRAIN ON")
-                        ui.icon("info_outline", size="13px").classes("text-[#3a3a3a] cursor-help").tooltip(
-                            "Recordings only keeps the model closest to the real voice. Recordings + inflated "
-                            "adds the generated clips for coverage and stability. Inflated only trains on the "
-                            "generated clips alone: the steadiest and cleanest data, but the model can never "
-                            "be better than the zero-shot clone it learns from."
-                        )
-                    train_data_sel = ui.toggle(
-                        TRAIN_DATA_CHOICES, value=get_piper_train_data(),
-                    ).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
-                    train_data_info = ui.label("").classes("text-[#555] font-mono text-[10px] leading-snug mb-1")
-
-                    def _train_data_summary(mode: str) -> tuple[str, bool]:
-                        """('120 clips · 14.2 min will be used', warn) for the chosen source."""
-                        import soundfile as _sf2
-                        picked = filter_training_clips(get_ref_chain(name), mode)
-                        mins = 0.0
-                        for c in picked:
-                            try:
-                                mins += _sf2.info(str(c["audio"])).duration
-                            except Exception:
-                                pass
-                        mins /= 60
-                        text = f"{len(picked)} clip{'s' if len(picked) != 1 else ''} · {mins:.1f} min will be used"
-                        warn = False
-                        if mode == "inflated":
-                            if not picked:
-                                text, warn = "no inflated clips yet — use INFLATE DATA first", True
-                            elif mins < 30:
-                                text += " — inflated-only usually needs 30+ min (ideally 60+) to be stable"
-                                warn = True
-                        elif mode == "recordings" and mins < 10:
-                            text += " — fine-tunes usually need 10+ min for a recognizable voice"
-                            warn = True
-                        return text, warn
-
-                    def _on_train_data(e=None):
-                        set_piper_train_data(train_data_sel.value)
-                        text, warn = _train_data_summary(train_data_sel.value)
-                        train_data_info.set_text(text)
-                        train_data_info.classes(
-                            replace=("text-amber-500" if warn else "text-[#555]") + " font-mono text-[10px] leading-snug mb-1")
-                    train_data_sel.on_value_change(_on_train_data)
-                    _on_train_data()
-                    if n_inflated:
-                        with ui.row().classes("items-center gap-2 -mt-1 mb-2"):
-                            ui.label(f"{n_inflated} inflated clips on this character").classes(
-                                "text-[#555] font-mono text-[10px]"
-                            )
-                            ui.button(
-                                "DELETE ALL…", icon="delete_sweep", on_click=_confirm_delete_inflated,
-                            ).props("flat dense color=negative").classes("font-mono text-[10px]")
-
                     # ── learning rate ───────────────────────────────────────
                     def _on_lr_change(e):
                         try:
@@ -867,173 +478,37 @@ def build_characters_tab(on_speak, on_change):
 
                     ui.separator().classes("my-3 opacity-20")
 
-                    async def _review_long_clips(outliers: list[tuple[dict, float]], avg_dur: float) -> bool:
-                        """Modal review for over-long training clips — split each at
-                        detected sentence/silence boundaries, exclude it from this
-                        training run, or leave it as-is. Returns True to continue
-                        training, False if the user cancelled."""
-                        remaining = {id(c): (c, d) for c, d in outliers}
-
-                        with ui.dialog().classes("w-full max-w-2xl") as rdlg, ui.card().classes(
-                            "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
-                        ):
-                            ui.label("UNUSUALLY LONG REFERENCE CLIPS").classes(
-                                "text-amber-400 font-mono text-xs tracking-widest"
-                            )
-                            ui.label(
-                                f"Average clip in this training set is {avg_dur:.1f}s — the clips "
-                                "below are much longer. VITS pads every clip in a batch to the "
-                                "longest member, so an outlier like this can spike memory for "
-                                "whatever batch it lands in and trigger a CUDA out-of-memory error. "
-                                "Split divides the clip into pieces near the average, cutting at "
-                                "detected pauses and dividing the transcript at sentence boundaries."
-                            ).classes("text-[#666] font-mono text-[10px] leading-snug")
-
-                            rows_col = ui.column().classes("w-full gap-1 mt-1")
-
-                            def _rebuild_rows():
-                                rows_col.clear()
-                                with rows_col:
-                                    if not remaining:
-                                        ui.label("All clear — nothing left to review.").classes(
-                                            "text-[#444] font-mono text-[10px] py-2"
-                                        )
-                                        return
-                                    for key, (c, d) in list(remaining.items()):
-                                        with ui.row().classes(
-                                            "w-full items-center gap-2 px-3 py-1.5 rounded "
-                                            "border border-[#1e1e1e]"
-                                        ):
-                                            ui.icon("warning", size="13px").classes("text-amber-500 shrink-0")
-                                            with ui.column().classes("gap-0 flex-grow min-w-0"):
-                                                ui.label(c["audio"].name).classes(
-                                                    "text-[#aaa] font-mono text-[10px] truncate"
-                                                )
-                                                ui.label(f"{d:.1f}s  (avg {avg_dur:.1f}s)").classes(
-                                                    "text-[#555] font-mono text-[9px]"
-                                                )
-                                            ui.button(
-                                                "SPLIT", icon="content_cut",
-                                                on_click=lambda k=key, c=c: _split(k, c),
-                                            ).props("flat dense color=amber").classes(
-                                                "font-mono text-[10px] shrink-0"
-                                            )
-                                            ui.button(
-                                                "EXCLUDE", icon="visibility_off",
-                                                on_click=lambda k=key, c=c: _exclude(k, c),
-                                            ).props("flat dense color=grey").classes(
-                                                "font-mono text-[10px] shrink-0"
-                                            )
-
-                            def _split(key, c):
-                                try:
-                                    n_pieces = split_long_ref_clip(c["owner"], c["file_key"], avg_dur)
-                                except Exception as exc:
-                                    show_error(exc)
-                                    return
-                                if n_pieces:
-                                    ui.notify(f"Split into {n_pieces} clips", type="positive", timeout=2000)
-                                    remaining.pop(key, None)
-                                else:
-                                    ui.notify(
-                                        "Couldn't find a clean place to split this clip (needs "
-                                        "≥2 sentences and a detectable pause) — exclude it "
-                                        "instead if it's a problem.",
-                                        type="warning", timeout=5000,
-                                    )
-                                _rebuild_rows()
-
-                            def _exclude(key, c):
-                                set_ref_clip_excluded(c["owner"], c["file_key"], True)
-                                remaining.pop(key, None)
-                                ui.notify("Excluded from training", timeout=2000)
-                                _rebuild_rows()
-
-                            _rebuild_rows()
-
-                            with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                                ui.button(
-                                    "CANCEL TRAINING", on_click=lambda: rdlg.submit(False),
-                                ).props("flat dense color=grey").classes("font-mono text-[10px] tracking-widest")
-                                ui.button(
-                                    "CONTINUE", on_click=lambda: rdlg.submit(True),
-                                ).props("color=amber unelevated").classes("font-mono text-[10px] tracking-widest")
-
-                        result = await rdlg
-                        return bool(result)
-
                     async def _do_train(n=name, opts: dict | None = None):
-                        """Start training. opts (from the MODELS tab's "train from this") overrides
-                        the settings on this tab: base_voice, learning_rate, match, train_data,
-                        resume_model, replace_id."""
+                        """Start training on the ACTIVE clips. opts (from the MODELS tab's "train from this")
+                        overrides the settings on this tab: base_voice, learning_rate, match, resume_model,
+                        replace_id, epochs."""
                         st = read_training_status(CHARACTERS_DIR / n)
                         if st and st.get("state") in _ACTIVE_STATES:
                             open_training_dialog(n, on_change, _rebuild_detail)
                             return
-                        run_mode = (opts or {}).get("train_data") or get_piper_train_data()
                         full_chain = get_ref_chain(n)
-                        chain = filter_training_clips(full_chain, run_mode)
+                        chain = training_clips(full_chain)
                         if not chain:
                             ui.notify(
-                                "No ref clips — add clips from CLONE or TUNE first" if not full_chain else
-                                f"No clips match “{TRAIN_DATA_CHOICES[run_mode]}” — pick another TRAIN ON option "
-                                "(or use INFLATE DATA first)", type="warning")
+                                "No reference clips — add some on the REFERENCES tab" if not full_chain else
+                                "No clips are switched on for training — activate some above", type="warning")
                             return
 
                         import soundfile as _sf
-
-                        def _durations(chain):
-                            out = []
-                            for c in chain:
-                                try:
-                                    out.append((c, _sf.info(str(c["audio"])).duration))
-                                except Exception:
-                                    pass
-                            return out
-
-                        durations = _durations(chain)
-                        avg_dur = sum(d for _, d in durations) / len(durations) if durations else 0.0
-                        # "Unusually long" relative to this character's own dataset, not a
-                        # fixed number — a 10s clip is unremarkable averaging 8s but a clear
-                        # outlier averaging 2s. Floored so a dataset of already-short clips
-                        # doesn't flag normal variation. Only ref_clips entries (file_key
-                        # set) can be split/excluded in place — a primary ref_audio can't.
-                        outlier_threshold = max(avg_dur * 1.8, 8.0)
-                        outliers = [
-                            (c, d) for c, d in durations
-                            if d > outlier_threshold and c.get("file_key")
-                        ]
-
-                        if outliers:
-                            proceed = await _review_long_clips(outliers, avg_dur)
-                            if not proceed:
-                                return
-                            # Excluding clips in the review dialog can legitimately
-                            # empty out the training set — re-check here instead of
-                            # relying solely on train()'s deeper guard, so that case
-                            # exits cleanly instead of proceeding into GPU-freeing /
-                            # base-voice-download work first.
-                            chain = filter_training_clips(get_ref_chain(n), run_mode)
-                            if not chain:
-                                ui.notify("No reference clips left after review — nothing to train on", type="warning")
-                                return
-                            durations = _durations(chain)
-
-                        # Piper only hard-requires 2 clips with transcripts, but good
-                        # fine-tunes need real coverage of the voice — clip COUNT is a
-                        # weak proxy (twenty 1s clips vs twenty 15s clips are very
-                        # different training sets), so warn on total duration instead.
-                        # ~10 min is a rough floor for a recognizable voice, 30-60+ for
-                        # strong resemblance. Warn below that floor without blocking —
-                        # this is a soft nudge, not a hard requirement.
-                        total_dur = sum(d for _, d in durations)
+                        total_dur = 0.0
+                        for c in chain:
+                            try:
+                                total_dur += _sf.info(str(c["audio"])).duration
+                            except Exception:
+                                pass
+                        # Piper only hard-requires 2 clips with transcripts, but good fine-tunes need real
+                        # coverage of the voice; warn on total duration (clip count is a weak proxy).
+                        # ~10 min is a rough floor for a recognizable voice. A soft nudge, not a requirement.
                         if total_dur < 600:
                             ui.notify(
-                                f"Only {total_dur / 60:.1f} min of reference audio "
-                                f"({len(chain)} clips) — Piper fine-tunes usually need "
-                                "10+ min for a recognizable voice, 30-60+ for strong "
-                                "resemblance. Training will proceed, but timbre may not "
-                                "match well.",
+                                f"Only {total_dur / 60:.1f} min of active audio ({len(chain)} clips) — Piper fine-tunes "
+                                "usually need 10+ min for a recognizable voice, 30-60+ for strong resemblance. "
+                                "Training will proceed, but timbre may not match well.",
                                 type="warning", timeout=6000,
                             )
 
@@ -1052,52 +527,19 @@ def build_characters_tab(on_speak, on_change):
                         except ValueError as exc:
                             ui.notify(str(exc), type="warning", timeout=7000)
                             return
-                        train_chain = chain          # already limited to the chosen TRAIN ON source
+                        train_chain = chain          # the active clips
                         if len(train_chain) < 2:
-                            ui.notify(
-                                f"Not enough clips to train on with “{TRAIN_DATA_CHOICES[run_mode]}” — pick another "
-                                "TRAIN ON option or add more clips",
-                                type="warning", timeout=6000,
-                            )
+                            ui.notify("Not enough active clips to train on — switch more on above or add clips",
+                                      type="warning", timeout=6000)
                             return
                         if len(train_chain) < len(full_chain):
-                            ui.notify(
-                                f"Training on {len(train_chain)} of {len(full_chain)} clips "
-                                f"({TRAIN_DATA_CHOICES[run_mode].lower()})", timeout=4000,
-                            )
+                            ui.notify(f"Training on the {len(train_chain)} active of {len(full_chain)} clips", timeout=4000)
                         if start_training(
                             n, train_chain, chosen_voice, run_lr, run_match,
                             resume_model=(opts or {}).get("resume_model"), replace_id=(opts or {}).get("replace_id"),
                             max_epochs=run_epochs,
                         ):
                             open_training_dialog(n, on_change, _rebuild_detail)
-
-                    ui.separator().classes("my-2 opacity-10")
-                    ui.label(
-                        "Before training — check the reference clips for volume, stray "
-                        "silence/noise and wrong transcripts"
-                    ).classes("text-[#444] font-mono text-[9px] tracking-widest")
-                    ui.button(
-                        "QUALIFY DATA", icon="cleaning_services",
-                        on_click=lambda n=name: open_qualify_dialog(n, _rebuild_detail),
-                    ).props("flat dense color=amber").classes(f"{_BTN} mb-1").tooltip(
-                        "Whisper-assisted review: fix volume/clipping, trim silence and noise, "
-                        "correct transcripts — or delete bad clips. Originals are kept."
-                    )
-                    ui.separator().classes("my-2 opacity-10")
-                    ui.label(
-                        "Optional — inflate the reference data before training"
-                    ).classes("text-[#444] font-mono text-[9px] tracking-widest")
-                    ui.button(
-                        "+ INFLATE DATA", icon="dynamic_form",
-                        on_click=lambda n=name: open_inflation_dialog(n, _rebuild_detail),
-                    ).props("flat dense color=grey").classes(
-                        f"{_BTN} mb-1"
-                    ).tooltip(
-                        "Bulk-generate zero-shot clips of this character's own voice, "
-                        "across a diverse script bank, to grow the reference pool "
-                        "before training."
-                    )
 
                     train_label = "RETRAIN VOICE" if has_model else "TRAIN VOICE"
                     with ui.row().classes("gap-2 flex-wrap mt-1"):

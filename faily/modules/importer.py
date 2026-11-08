@@ -69,6 +69,7 @@ def stage_inflated(candidates: list, name_hint: str = "") -> str:
         clips.append({
             "file": f"refs/{dest.name}", "transcript": " ".join(cand.text.split()),
             "source": "inflated", "category": cand.category,
+            "backend": getattr(cand, "backend", ""), "batch": getattr(cand, "batch", ""),
         })
     (d / "config.json").write_text(json.dumps({
         "name": name, "created": datetime.now().isoformat(), "ref_clips": clips,
@@ -110,7 +111,7 @@ def commit_stage(stage: str, target: str, is_new: bool) -> dict:
 
     clips = own_clips(stage)
     # inflated clips staged by stage_inflated() stay inflated (source/category); imports are "import"
-    tags = {e["audio"]: (e.get("source") or "import", e.get("category", ""))
+    tags = {e["audio"]: (e.get("source") or "import", e.get("category", ""), e.get("backend", ""), e.get("batch", ""))
             for e in C.get_ref_chain(stage) if e["owner"] == stage}
     if not clips:
         discard_stage(stage)
@@ -125,8 +126,8 @@ def commit_stage(stage: str, target: str, is_new: bool) -> dict:
             raise FileNotFoundError(f"Character '{target}' not found")
         rest = clips
     for c in rest:
-        source, category = tags.get(c.audio, ("import", ""))
-        C.add_ref_clip(target, c.audio, c.transcript, source=source, category=category)
+        source, category, backend, batch = tags.get(c.audio, ("import", "", "", ""))
+        C.add_ref_clip(target, c.audio, c.transcript, source=source, category=category, backend=backend, batch=batch)
     result = {"added": len(clips), "no_transcript": sum(1 for c in clips if not c.transcript.strip())}
     discard_stage(stage)
     return result

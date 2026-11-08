@@ -917,21 +917,21 @@ def list_candidates(char_dir: Path) -> list[tuple[int, Path]]:
     return sorted(out)
 
 
-TRAIN_DATA_CHOICES = {
-    "recordings": "Recordings only",
-    "mixed": "Recordings + inflated",
-    "inflated": "Inflated only",
-}
+def training_clips(chain: list[dict]) -> list[dict]:
+    """The ref-chain entries a run trains on: the ones switched ON (active) on the REFERENCES hub."""
+    return [c for c in chain if c.get("active", True)]
 
 
-def filter_training_clips(chain: list[dict], mode: str) -> list[dict]:
-    """The ref-chain entries a run trains on: the real recordings, the inflated (generated)
-    clips, or both."""
-    if mode == "inflated":
-        return [c for c in chain if c.get("source") == "inflated"]
-    if mode == "recordings":
-        return [c for c in chain if c.get("source") != "inflated"]
-    return list(chain)
+def drop_overlong_clips(clips: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(kept, dropped). VITS pads every clip in a batch to its longest member, so a rare very long
+    clip can spike memory for whatever batch it lands in and crash the run with CUDA out-of-memory.
+    Clips over max(20 s, 3x this set's average) are left out of the RUN (not deactivated or edited);
+    the REFERENCES hub flags them and can split them."""
+    from faily.core import refs
+    secs = [(c, refs.clip_seconds(Path(c["audio"]))) for c in clips]
+    limit = refs.long_threshold([{"seconds": s} for _, s in secs])
+    kept = [c for c, s in secs if s <= limit]
+    return kept, [c for c, s in secs if s > limit]
 
 
 async def train(
@@ -1047,6 +1047,11 @@ async def _train(
 
     usable = [c for c in clips if c.get("transcript", "").strip()]
     log_cb(f"Usable clips (with transcript): {len(usable)}/{len(clips)}")
+    usable, overlong = drop_overlong_clips(usable)
+    if overlong:
+        log_cb(f"Left {len(overlong)} over-long clip(s) out of this run (they risk an out-of-memory crash): "
+               + ", ".join(Path(c["audio"]).name for c in overlong[:8]) + (" …" if len(overlong) > 8 else "")
+               + " — split them from the REFERENCES tab")
     if len(usable) < 2:
         raise ValueError(
             f"Need ≥2 clips with transcripts (have {len(usable)}/{len(clips)}). "
@@ -1225,7 +1230,7 @@ async def _train(
         "frozen": frozen_modules(match),
         "max_epochs": max_epochs, "target_epoch": target_epochs,
         "batch": f"{_MICRO_BATCH} x {_ACCUMULATE}", "validation_split": round(validation_split, 4),
-        "train_data": "inflated" if (n_inflated and n_inflated == len(usable)) else ("mixed" if n_inflated else "recordings"),
+        "skipped_long": len(overlong),
         "clips": {"n": len(usable), "n_real": len(usable) - n_inflated, "n_inflated": n_inflated,
                   "minutes": round(sum(_dur(c) for c in usable) / 60, 1)},
     })
@@ -1343,7 +1348,7 @@ def promote_candidate(char_dir: Path, onnx: Path, activate: bool = True) -> dict
         "base_epoch": run.get("base_epoch"), "epoch": epoch,
         "epochs_trained": (epoch - start) if start is not None else None,
         "epochs_since_base": (epoch - run["base_epoch"]) if run.get("base_epoch") is not None else None,
-        "learning_rate": run.get("learning_rate"), "max_epochs": run.get("max_epochs"), "train_data": run.get("train_data"), "match": run.get("match"), "frozen": run.get("frozen"),
+        "learning_rate": run.get("learning_rate"), "max_epochs": run.get("max_epochs"), "match": run.get("match"), "frozen": run.get("frozen"),
         "batch": run.get("batch"), "validation_split": run.get("validation_split"),
         "clips": run.get("clips"), "parent": run.get("resumed_from"),
         "trained_seconds": round(time.time() - st["started"]) if st.get("started") else None,

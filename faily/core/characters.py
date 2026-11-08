@@ -63,7 +63,7 @@ def get_ref_chain(name: str, include_excluded: bool = False, live_only: bool = F
             audio = CHARACTERS_DIR / node / char["ref_audio"]
             if audio.exists():
                 chain.append({"audio": audio, "transcript": char.get("transcript", ""), "owner": node, "file_key": None,
-                          "source": "", "category": ""})
+                          "source": "", "category": "", "backend": "", "batch": "", "active": True})
         for rc in char.get("ref_clips", []):
             if rc.get("excluded") and not include_excluded:
                 continue
@@ -72,7 +72,9 @@ def get_ref_chain(name: str, include_excluded: bool = False, live_only: bool = F
             audio = CHARACTERS_DIR / node / rc["file"]
             if audio.exists():
                 chain.append({"audio": audio, "transcript": rc.get("transcript", ""), "owner": node, "file_key": rc["file"],
-                              "source": rc.get("source", ""), "category": rc.get("category", "")})
+                              "source": rc.get("source", ""), "category": rc.get("category", ""),
+                              "backend": rc.get("backend", ""), "batch": rc.get("batch", ""),
+                              "active": rc.get("active", True)})
     return chain
 
 
@@ -382,13 +384,15 @@ def clip_quality_issues(path: Path) -> list[str]:
     return issues
 
 
-def add_ref_clip(name: str, clip_path: Path, transcript: str = "", source: str = "", category: str = "") -> Path:
+def add_ref_clip(name: str, clip_path: Path, transcript: str = "", source: str = "", category: str = "",
+                 backend: str = "", batch: str = "") -> Path:
     """Copy a generated clip into the character's ref pool and register it in config.
 
-    source/category are optional provenance tags (e.g. source="inflated" for zero-shot
-    inflated clips from the data inflation wizard) — they persist permanently on the
-    ref_clips entry so downstream code (get_ref_chain, training) doesn't need to
-    regenerate or re-derive them, and the UI can group clips by source.
+    source/category/backend/batch are optional provenance tags (e.g. source="inflated" for
+    zero-shot inflated clips from the data inflation wizard, backend="chatterbox", batch=the
+    wizard run) — they persist permanently on the ref_clips entry so downstream code
+    (get_ref_chain, training) doesn't need to re-derive them, and the REFERENCES hub can group,
+    compare and manage clips by them.
     """
     char_dir = CHARACTERS_DIR / name
     if not (char_dir / "config.json").exists():
@@ -403,11 +407,10 @@ def add_ref_clip(name: str, clip_path: Path, transcript: str = "", source: str =
         i += 1
     shutil.copy2(str(clip_path), str(dest))
     cfg = json.loads(_cfg(name).read_text())
-    entry = {"file": f"refs/{dest.name}", "transcript": transcript}
-    if source:
-        entry["source"] = source
-    if category:
-        entry["category"] = category
+    entry = {"file": f"refs/{dest.name}", "transcript": transcript, "added": datetime.now().isoformat(timespec="seconds")}
+    for key, value in (("source", source), ("category", category), ("backend", backend), ("batch", batch)):
+        if value:
+            entry[key] = value
     cfg.setdefault("ref_clips", []).append(entry)
     _cfg(name).write_text(json.dumps(cfg, indent=2))
     return dest

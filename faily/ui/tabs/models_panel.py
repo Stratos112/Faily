@@ -10,9 +10,9 @@ from faily.core.paths import CHARACTERS_DIR
 from nicegui import run as ni_run, ui
 
 from faily.core import piper_models as PM
-from faily.core.settings import get_piper_epochs, get_piper_learning_rate, get_piper_match, get_piper_train_data
+from faily.core.settings import get_piper_epochs, get_piper_learning_rate, get_piper_match
 from faily.modules.piper import (
-    DEFAULT_MATCH, MATCH_ASPECTS, MATCH_CHOICES, TRAIN_DATA_CHOICES, infer,
+    DEFAULT_MATCH, MATCH_ASPECTS, MATCH_CHOICES, infer,
 )
 from faily.modules.pronunciation import cached_score, score_model
 from faily.ui.components import play_url, show_error
@@ -134,8 +134,6 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                     f"{MATCH_ASPECTS[a]['label']}: {MATCH_CHOICES.get(match.get(a), match.get(a))}"
                     for a in MATCH_ASPECTS))
                 row("FROZEN PARTS", m.get("frozen") or "none")
-            if m.get("train_data") in TRAIN_DATA_CHOICES:
-                row("TRAINED ON", TRAIN_DATA_CHOICES[m["train_data"]])
             if clips:
                 row("TRAINING CLIPS", f"{clips.get('n')} ({clips.get('n_real')} recordings + "
                     f"{clips.get('n_inflated', clips.get('n_padding', 0))} inflated) · {clips.get('minutes')} min of audio")
@@ -224,13 +222,7 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                     toggles[a] = ui.toggle(MATCH_CHOICES, value=match0[a]).props(
                         "dense no-caps unelevated toggle-color=amber text-color=grey-6"
                     )
-            ui.label("TRAIN ON").classes(_LBL)
-            n_inf0 = clips.get("n_inflated", clips.get("n_padding", 0)) if clips else None
-            mode0 = (m.get("train_data") or (
-                ("inflated" if clips.get("n_real", 1) == 0 else "mixed") if n_inf0 else "recordings")
-            ) if clips else get_piper_train_data()
-            pad = ui.toggle(TRAIN_DATA_CHOICES, value=mode0).props(
-                "dense no-caps unelevated toggle-color=amber text-color=grey-6")
+            ui.label("Trains on the clips currently switched ON in REFERENCES.").classes("text-[#555] font-mono text-[10px]")
             with ui.row().classes("w-full justify-end gap-2 mt-2"):
                 ui.button("Cancel", on_click=d.close).props("flat dense color=grey")
 
@@ -242,7 +234,6 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                         "learning_rate": lr.value or None,
                         "epochs": int(epochs.value or get_piper_epochs()),
                         "match": {a: t.value for a, t in toggles.items()},
-                        "train_data": pad.value,
                         "resume_model": m if mode.value == "continue" else None,
                         "replace_id": m["id"] if save_as.value == "replace" else None,
                     }
