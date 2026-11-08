@@ -61,7 +61,11 @@ def find_slices(
     if n < 10:
         return []
     floor, top = float(np.percentile(db, 10)), float(np.percentile(db, 95))
-    active = db > max(floor + 10.0, top - 30.0)
+    if top < -60.0:                              # digital silence / nothing but noise floor
+        return []
+    # Never let the threshold climb above the speech itself: with under ~10% quiet frames the
+    # percentile "floor" is really speech, and floor + 10 would sit over every frame.
+    active = db > min(max(floor + 10.0, top - 30.0), top - 10.0)
     # a few frames of closing: stop-consonant gaps inside words aren't pauses
     for s, e in _runs(~active):
         if e - s < 6 and s > 0 and e < n:

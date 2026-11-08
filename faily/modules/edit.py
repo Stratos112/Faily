@@ -162,8 +162,8 @@ def apply_edits(
 
     # trim silence via amplitude threshold
     if trim_silence and len(data) > 0:
-        mono = data if data.ndim == 1 else data.mean(axis=1)
-        mask = np.abs(mono) > 0.02
+        level = data if data.ndim == 1 else data.mean(axis=1)
+        mask = np.abs(level) > 0.02
         if mask.any():
             first = int(np.argmax(mask))
             last = int(len(mask) - np.argmax(mask[::-1]))
@@ -177,10 +177,10 @@ def apply_edits(
     if abs(speed - 1.0) > 0.001 and len(data) > 0:
         import torch
         import torchaudio.functional as F
-        mono = data.ndim == 1
-        t = torch.from_numpy(data[np.newaxis] if mono else data.T.copy())
+        single = data.ndim == 1
+        t = torch.from_numpy(data[np.newaxis] if single else data.T.copy())
         t = F.resample(t, int(sr * speed), sr)
-        data = t.squeeze(0).numpy() if mono else t.T.numpy()
+        data = t.squeeze(0).numpy() if single else t.T.numpy()
 
     # pitch shift — independent of speed, preserves duration
     if pitch_semitones != 0 and len(data) > 0:

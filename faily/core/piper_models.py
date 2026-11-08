@@ -61,7 +61,7 @@ def list_models(name: str) -> list[dict]:
     active = active_model_id(name, out)
     for m in out:
         m["active"] = m["id"] == active
-    return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
+    return sorted(out, key=lambda m: (m.get("created", ""), m["id"]), reverse=True)
 
 
 def get_model(name: str, model_id: str) -> dict | None:

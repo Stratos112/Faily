@@ -120,6 +120,11 @@ def _spoken_number(s: str, year_style: bool) -> str:
     return _num(n)
 
 
+def _last_punct(trail: str) -> str:
+    """The sentence punctuation in a token's trailing characters: the `!` of `go!"`, not the quote."""
+    return next((c for c in reversed(trail) if c in ".,;:!?…"), "")
+
+
 def spoken_tokens(script: str, year_style: bool = True) -> list[tuple[str, str]]:
     """The script as [(spoken text, trailing punctuation of the original token)]. Each entry
     is one original whitespace token written out as words ("$63.47," -> "sixty three dollars
@@ -131,7 +136,7 @@ def spoken_tokens(script: str, year_style: bool = True) -> list[tuple[str, str]]
         raw = toks[i]
         m = re.match(r"^([\"'(\[“‘]*)(.*?)([\"')\]”’.,;:!?…]*)$", raw)
         core, trail = m.group(2), m.group(3)
-        punct = trail[-1:] if trail else ""
+        punct = _last_punct(trail)
         # keep a period that belongs to an abbreviation (Dr., a.m.)
         key = core.lower().rstrip(".")
         nxt = toks[i + 1].lower().strip(".,;:!?") if i + 1 < len(toks) else ""
@@ -140,14 +145,14 @@ def spoken_tokens(script: str, year_style: bool = True) -> list[tuple[str, str]]
             words = _ABBR[key]
             if key in ("a.m", "p.m", "u.s") and trail.startswith("."):
                 trail = trail[1:] or ""
-                punct = trail[-1:] if trail else ""
+                punct = _last_punct(trail)
         elif re.fullmatch(r"\$[\d,]+(\.\d+)?", core):
             amt = core[1:].replace(",", "")
             if nxt in _MAGNITUDE:
                 words = f"{_spoken_number(amt, False)} {nxt} dollars"
                 i += 1
                 trail = toks[i].lstrip("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-                punct = trail[-1:] if trail else ""
+                punct = _last_punct(trail)
             elif "." in amt:
                 d, c = amt.split(".", 1)
                 c = (c + "0")[:2]
@@ -179,6 +184,9 @@ def spoken_tokens(script: str, year_style: bool = True) -> list[tuple[str, str]]
         elif re.fullmatch(r"-?[\d,]+(\.\d+)?", core):
             neg = core.startswith("-")
             words = ("minus " if neg else "") + _spoken_number(core.lstrip("-"), year_style and not neg)
+        elif re.fullmatch(r"[A-Za-z]\d{1,3}|\d{1,3}[A-Za-z]", core):         # seat 14C, gate B12, room 101B
+            words = " ".join(_spoken_number(r, False) if r.isdigit() else r
+                             for r in re.findall(r"\d+|[A-Za-z]", core))
         else:
             parts = re.split(r"(?<=\D)-(?=\D)|-(?=\d)|(?<=\d)-(?=\D)", core) if "-" in core else [core]
             sub = []
