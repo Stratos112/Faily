@@ -84,7 +84,6 @@ Phase 3c/3d results (2026-09-29; synthetic MMS reference voice; times include fi
 | case | result | time | peak VRAM |
 |---|---|---|---|
 | MMS-TTS | OK | 6s | 0.2G |
-| SpeechT5 | OK | 55s | 0.7G |
 | XTTS v2 | OK (cached in models/vc/coqui, no TOS prompt) | 152s | 1.8G |
 | F5-TTS | OK | 84s | 1.9G |
 | transcribe_ref (Whisper) | OK after fix | 10s | 1.7G |

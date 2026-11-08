@@ -6,6 +6,7 @@ import soundfile as sf
 import torchaudio
 from pathlib import Path
 from faily.core.model_manager import manager, VC_MODELS_DIR
+from faily.core.paths import history_dir
 from faily.modules.edit import ensure_stereo
 
 
@@ -42,8 +43,6 @@ def _patch_ffmpeg_read():
     au.ffmpeg_read = _sf_read
     au._faily_patched = True
 
-from faily.core.paths import history_dir
-
 
 def _make_clip_name(char_name: str | None, style: str, text: str, output_dir: Path) -> str:
     """Build a human-readable clip filename: {char}_{style_word}_{text_word}_{NNN}.wav"""
@@ -75,19 +74,7 @@ def _make_clip_name(char_name: str | None, style: str, text: str, output_dir: Pa
             return f"{stem}.wav"
     return f"{base}_9999.wav"
 
-_TTS_ID = "microsoft/speecht5_tts"
-_VOC_ID = "microsoft/speecht5_hifigan"
-_SPK_ID = "speechbrain/spkrec-xvect-voxceleb"
-
 BACKENDS = {
-    "speecht5": {
-        "label": "SpeechT5",
-        "desc": "Microsoft · X-vector speaker embedding. Fast and lightweight. Good for quick previews. Less natural than neural approaches and struggles to maintain speaker identity on longer outputs.",
-        "text_hint": "Ideal: one short sentence, under ~200 characters. No length control on the decoder — longer text tends to trail off, repeat, or cut out early.",
-        "split_chars": 110,
-        "param1": {"label": "VOICE STRENGTH", "tooltip": "Scales the speaker embedding. Below 1.0 is more neutral, above 1.0 exaggerates the voice's character.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
-        "param2": {"label": "THRESHOLD", "tooltip": "Mel spectrogram stopping criterion. Lower = crisper and shorter output. Higher = smoother but may trail off.", "min": 0.1, "max": 0.9, "step": 0.05, "default": 0.5},
-    },
     "xtts_v2": {
         "label": "XTTS v2",
         "desc": "Coqui AI · Zero-shot cross-attention conditioning. Best all-rounder for voice cloning. Natural prosody on short-to-medium clips. Slow initial load; can clip or cut off on very long inputs.",
@@ -142,79 +129,6 @@ EXPRESSION_ENGINES = {
     #     "desc": "Alibaba · natural-language style instructions + zero-shot cloning in one pass",
     # },
 }
-
-
-def _load_tts():
-    from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
-    from faily.core.hf_token import get_hf_token
-    token = get_hf_token()
-    p   = SpeechT5Processor.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR), token=token)
-    m   = SpeechT5ForTextToSpeech.from_pretrained(_TTS_ID, cache_dir=str(VC_MODELS_DIR), token=token).to(manager.device)
-    voc = SpeechT5HifiGan.from_pretrained(_VOC_ID, cache_dir=str(VC_MODELS_DIR), token=token).to(manager.device)
-    return p, m, voc
-
-
-def _patch_speechbrain_lazy_modules():
-    from speechbrain.utils import importutils
-    _orig = importutils.LazyModule.__getattr__
-    def _safe(self, attr):
-        if attr.startswith("__"):
-            raise AttributeError(attr)
-        return _orig(self, attr)
-    importutils.LazyModule.__getattr__ = _safe
-
-
-def _load_spk_enc():
-    _patch_speechbrain_lazy_modules()
-    from speechbrain.inference.classifiers import EncoderClassifier
-    from speechbrain.utils.fetching import LocalStrategy
-    return EncoderClassifier.from_hparams(
-        source=_SPK_ID,
-        savedir=str(VC_MODELS_DIR / "spkrec-xvect"),
-        local_strategy=LocalStrategy.COPY,
-        run_opts={"device": "cpu"},
-    )
-
-
-def _speaker_embedding(ref_path: Path):
-    import torch
-    clf = manager.load(_SPK_ID, _load_spk_enc)
-    data, sr = sf.read(str(ref_path), dtype="float32", always_2d=True)
-    waveform = torch.from_numpy(data.T)
-    if sr != 16000:
-        waveform = torchaudio.functional.resample(waveform, sr, 16000)
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(0, keepdim=True)
-    # SpeechT5 wants the x-vector of ONE short, clean utterance (measured on a real
-    # character: mean WER 0.08). An x-vector of a long concatenation, or an average of
-    # several, falls off the distribution it was trained on (WER 0.4-0.6), so use the
-    # first ~6 s of the reference — the start of the chain, i.e. one real clip.
-    waveform = waveform[:, : 6 * 16000]
-    with torch.no_grad():
-        emb = clf.encode_batch(waveform)
-    return emb.squeeze().unsqueeze(0)
-
-
-def _speecht5_generate(text, ref_path, out, emb_scale, threshold):
-    import torch
-    processor, model, vocoder = manager.load(_TTS_ID, _load_tts)
-    # SpeechT5 was trained on L2-normalised x-vectors; a raw SpeechBrain embedding is far
-    # off that scale (quiet, garbled output). VOICE STRENGTH then scales the unit vector.
-    spk_emb = torch.nn.functional.normalize(_speaker_embedding(ref_path), dim=-1).to(manager.device) * emb_scale
-    inputs = processor(text=text, return_tensors="pt").to(manager.device)
-    with torch.no_grad():
-        speech = model.generate_speech(
-            inputs["input_ids"],
-            speaker_embeddings=spk_emb,
-            vocoder=vocoder,
-            threshold=threshold,
-        )
-    wav = speech.cpu().numpy()
-    rms = float((wav ** 2).mean() ** 0.5) if wav.size else 0.0
-    peak = float(abs(wav).max()) if wav.size else 0.0
-    if rms > 0:                             # the vocoder's output is quiet: bring it to ~-20 dBFS RMS
-        wav = wav * min(0.1 / rms, 0.95 / peak)
-    sf.write(str(out), wav, 16000)
 
 
 def _patch_xtts_transformers():
@@ -847,9 +761,7 @@ def _seedvc_convert(source_wav: Path, target_wav: Path, out: Path,
 
 
 def _dispatch_generate(backend: str, text: str, ref_path: Path | None, out: Path, p1: float, p2: float, ref_text: str) -> None:
-    if backend == "speecht5":
-        _speecht5_generate(text, ref_path, out, emb_scale=p1, threshold=p2)
-    elif backend == "xtts_v2":
+    if backend == "xtts_v2":
         _xtts_generate(text, ref_path, out, temperature=p1, speed=p2)
     elif backend == "f5_tts":
         _f5_generate(text, ref_path, out, steps=p1, speed=p2, ref_text=ref_text)

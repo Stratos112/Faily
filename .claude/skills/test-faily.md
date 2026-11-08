@@ -35,7 +35,7 @@ The script:
 |---|---|
 | HTTP 200 on `/` | Server starts and NiceGUI renders |
 | `characters` module | `faily/core/characters.py` importable |
-| `vc BACKENDS >= 4` | SpeechT5, XTTS v2, F5-TTS, Chatterbox all registered |
+| `vc BACKENDS >= 3` | XTTS v2, F5-TTS, Chatterbox all registered |
 | `tune_tab` importable | TUNE tab wired correctly |
 | static assets | NiceGUI's versioned `/_nicegui/<ver>/static` route |
 | `outputs/` dirs | All output subdirs created on startup |

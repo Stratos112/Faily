@@ -6,7 +6,6 @@ character's reference clip and check the result:
   - it generated at all (no exception)
   - the file is real audio: finite, not silent, plausible duration
   - Whisper hears the script (word error rate under a limit)
-  - the voice moved toward the reference (speaker similarity, informational)
 
 Each case runs in its own subprocess so a CUDA/native crash in one backend is
 reported as a failure instead of taking the suite down.
@@ -37,8 +36,8 @@ MIN_SEC, MAX_SEC = 1.5, 45.0
 def _cases():
     sys.path.insert(0, str(ROOT))
     # BACKENDS lives in a heavy module; keep the names static so listing is cheap
-    return ["speecht5", "xtts_v2", "f5_tts", "chatterbox",
-            "long:speecht5", "long:xtts_v2", "long:f5_tts", "long:chatterbox",
+    return ["xtts_v2", "f5_tts", "chatterbox",
+            "long:xtts_v2", "long:f5_tts", "long:chatterbox",
             "parler", "tune:freevc", "tune:openvoice", "tune:seedvc",
             "vc:freevc", "vc:openvoice", "vc:seedvc"]
 
@@ -89,10 +88,6 @@ def worker(case: str, char: str, out_dir: Path) -> dict:
             path = generate(text, ref, None, out_dir, backend=base, ref_text=ref_text)
         res["gen_seconds"] = round(time.time() - t0, 1)
         res["path"] = str(path)
-        try:                                       # the reference is a temp file: compare inside the with
-            res["speaker_sim"] = round(_speaker_sim(Path(ref), path), 3)
-        except Exception as exc:                   # informational only
-            res["speaker_sim_error"] = f"{type(exc).__name__}: {exc}"
 
     data, sr = sf.read(str(path), always_2d=False)
     mono = data.mean(axis=1) if data.ndim > 1 else data
@@ -124,31 +119,6 @@ def _wer(ref: str, hyp: str) -> float:
             d[j] = min(d[j] + 1, d[j - 1] + 1, prev + (r[i - 1] != h[j - 1]))
             prev = cur
     return d[len(h)] / max(len(r), 1)
-
-
-def _speaker_sim(a: Path, b: Path) -> float:
-    import numpy as np
-    import soundfile as sf
-    import torch
-    from faily.core.model_manager import VC_MODELS_DIR
-    from speechbrain.inference.speaker import EncoderClassifier
-    import scipy.signal as sps
-
-    clf = EncoderClassifier.from_hparams(source="speechbrain/spkrec-xvect-voxceleb",
-                                         savedir=str(VC_MODELS_DIR / "spkrec-xvect"),
-                                         run_opts={"device": "cpu"})
-
-    def emb(p):
-        x, sr = sf.read(str(p))
-        x = x.mean(axis=1) if x.ndim > 1 else x
-        if sr != 16000:
-            g = np.gcd(sr, 16000)
-            x = sps.resample_poly(x, 16000 // g, sr // g)
-        with torch.no_grad():
-            e = clf.encode_batch(torch.tensor(x, dtype=torch.float32).unsqueeze(0)).squeeze()
-        return e / e.norm()
-
-    return float(emb(a) @ emb(b))
 
 
 def check(r: dict) -> list[str]:
@@ -210,7 +180,7 @@ def main():
             tag = f" (run {run + 1}/{a.repeat})" if a.repeat > 1 else ""
             if a.repeat == 1 or why:
                 print(("FAIL  " if why else "PASS  ") + case + tag)
-                for k in ("gen_seconds", "duration", "rms_db", "wer", "speaker_sim", "speaker_sim_error", "heard"):
+                for k in ("gen_seconds", "duration", "rms_db", "wer", "heard"):
                     if k in r:
                         print(f"      {k}: {r[k]}")
                 for w in why:

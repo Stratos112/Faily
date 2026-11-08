@@ -80,7 +80,7 @@ def get_ref_chain(name: str, include_excluded: bool = False, live_only: bool = F
 # transcript's tail gets spoken in the output. Keep the reference safely under that.
 F5_REF_SECONDS = 11.0
 # Every backend conditions on well under a minute of reference (XTTS ~30 s, Chatterbox ~10 s,
-# SpeechT5 6 s, the voice converters a few seconds), but they LOAD the whole file first.
+# the voice converters a few seconds), but they LOAD the whole file first.
 # A character with thousands of clips concatenates to hours of audio, which XTTS tries to
 # read and resample in RAM: the OOM killer then takes the whole server down.
 DEFAULT_REF_SECONDS = 30.0

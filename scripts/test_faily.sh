@@ -99,7 +99,7 @@ from faily.core.characters import list_characters, save_character, get_ref_path,
 print('CHARACTERS_DIR:', CHARACTERS_DIR)
 "
 
-    check_py "BACKENDS dict has >= 4 entries" "
+    check_py "BACKENDS dict has >= 3 entries" "
 import sys, unittest.mock, types
 mk = unittest.mock.MagicMock
 for mod in ['torch', 'torchaudio', 'torchaudio.functional', 'soundfile']:
@@ -117,7 +117,7 @@ mm = types.ModuleType('faily.core.model_manager')
 mm.manager = mk(); mm.manager.device = 'cpu'; mm.VC_MODELS_DIR = mk()
 sys.modules['faily.core.model_manager'] = mm
 from faily.modules.vc import BACKENDS
-assert len(BACKENDS) >= 4, f'only {len(BACKENDS)}: {list(BACKENDS.keys())}'
+assert len(BACKENDS) >= 3, f'only {len(BACKENDS)}: {list(BACKENDS.keys())}'
 print(list(BACKENDS.keys()))
 "
 
