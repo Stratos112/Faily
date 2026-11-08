@@ -1,4 +1,5 @@
 import re
+import time
 import shutil
 import tempfile
 import soundfile as sf
@@ -83,7 +84,7 @@ BACKENDS = {
         "label": "SpeechT5",
         "desc": "Microsoft · X-vector speaker embedding. Fast and lightweight. Good for quick previews. Less natural than neural approaches and struggles to maintain speaker identity on longer outputs.",
         "text_hint": "Ideal: one short sentence, under ~200 characters. No length control on the decoder — longer text tends to trail off, repeat, or cut out early.",
-        "split_chars": 200,
+        "split_chars": 110,
         "param1": {"label": "VOICE STRENGTH", "tooltip": "Scales the speaker embedding. Below 1.0 is more neutral, above 1.0 exaggerates the voice's character.", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
         "param2": {"label": "THRESHOLD", "tooltip": "Mel spectrogram stopping criterion. Lower = crisper and shorter output. Higher = smoother but may trail off.", "min": 0.1, "max": 0.9, "step": 0.05, "default": 0.5},
     },
@@ -184,6 +185,11 @@ def _speaker_embedding(ref_path: Path):
         waveform = torchaudio.functional.resample(waveform, sr, 16000)
     if waveform.shape[0] > 1:
         waveform = waveform.mean(0, keepdim=True)
+    # SpeechT5 wants the x-vector of ONE short, clean utterance (measured on a real
+    # character: mean WER 0.08). An x-vector of a long concatenation, or an average of
+    # several, falls off the distribution it was trained on (WER 0.4-0.6), so use the
+    # first ~6 s of the reference — the start of the chain, i.e. one real clip.
+    waveform = waveform[:, : 6 * 16000]
     with torch.no_grad():
         emb = clf.encode_batch(waveform)
     return emb.squeeze().unsqueeze(0)
@@ -192,7 +198,9 @@ def _speaker_embedding(ref_path: Path):
 def _speecht5_generate(text, ref_path, out, emb_scale, threshold):
     import torch
     processor, model, vocoder = manager.load(_TTS_ID, _load_tts)
-    spk_emb = _speaker_embedding(ref_path).to(manager.device) * emb_scale
+    # SpeechT5 was trained on L2-normalised x-vectors; a raw SpeechBrain embedding is far
+    # off that scale (quiet, garbled output). VOICE STRENGTH then scales the unit vector.
+    spk_emb = torch.nn.functional.normalize(_speaker_embedding(ref_path), dim=-1).to(manager.device) * emb_scale
     inputs = processor(text=text, return_tensors="pt").to(manager.device)
     with torch.no_grad():
         speech = model.generate_speech(
@@ -201,7 +209,12 @@ def _speecht5_generate(text, ref_path, out, emb_scale, threshold):
             vocoder=vocoder,
             threshold=threshold,
         )
-    sf.write(str(out), speech.cpu().numpy(), 16000)
+    wav = speech.cpu().numpy()
+    rms = float((wav ** 2).mean() ** 0.5) if wav.size else 0.0
+    peak = float(abs(wav).max()) if wav.size else 0.0
+    if rms > 0:                             # the vocoder's output is quiet: bring it to ~-20 dBFS RMS
+        wav = wav * min(0.1 / rms, 0.95 / peak)
+    sf.write(str(out), wav, 16000)
 
 
 def _patch_xtts_transformers():
@@ -435,16 +448,28 @@ def _parler_generate(text: str, out: Path, style_prompt: str, max_new_tokens: in
     attention_mask = torch.ones_like(input_ids)
     prompt_attention_mask = torch.ones_like(prompt_input_ids)
     device_type = "cuda" if str(manager.device).startswith("cuda") else "cpu"
-    with torch.no_grad(), torch.autocast(device_type=device_type, dtype=torch.float16):
-        gen = model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            prompt_input_ids=prompt_input_ids,
-            prompt_attention_mask=prompt_attention_mask,
-            max_new_tokens=max_new_tokens,
-            use_cache=False,
-        )
-    sf.write(str(out), gen.cpu().float().numpy().squeeze(), model.config.sampling_rate)
+    # Parler's codec runs at 86 frames/s, so 500 tokens is only ~5.8 s of speech: scale the
+    # budget with the line (~13 chars/s, +40% slack) so longer lines aren't cut off.
+    budget = max(max_new_tokens, min(2600, int(len(text) / 13 * 86 * 1.4)))
+    expected = len(text) / 15.0                     # seconds of speech this line needs, roughly
+    for attempt in range(3):
+        with torch.no_grad(), torch.autocast(device_type=device_type, dtype=torch.float16):
+            gen = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                prompt_input_ids=prompt_input_ids,
+                prompt_attention_mask=prompt_attention_mask,
+                max_new_tokens=budget,
+                use_cache=False,
+                # transformers 4.x silently sampled with top_k=50; 5.x samples the whole code
+                # distribution unless told otherwise, which turns the speech to mush (WER ~0.5 -> ~0.1).
+                top_k=50,
+            )
+        wav = gen.cpu().float().numpy().squeeze()
+        # sampling occasionally emits end-of-speech almost at once, leaving a fragment of the line
+        if len(wav) / model.config.sampling_rate >= 0.5 * expected or attempt == 2:
+            break
+    sf.write(str(out), wav, model.config.sampling_rate)
 
 
 def _xtts_generate(text, ref_path, out, temperature, speed):
@@ -459,7 +484,39 @@ def _xtts_generate(text, ref_path, out, temperature, speed):
     )
 
 
+def _f5_short_reference(ref_path: Path, ref_text: str, limit: float = 12.0):
+    """F5 itself clips a reference over 12 s but leaves the transcript whole, so the text
+    that no longer has audio gets spoken in the output. When a long reference gets through
+    anyway, cut it at its quietest moment under the limit and re-transcribe what is left.
+    Returns (path, text, temp_path_to_delete_or_None)."""
+    import numpy as np
+    data, sr = sf.read(str(ref_path), dtype="float32", always_2d=False)
+    mono = data.mean(axis=1) if data.ndim > 1 else data
+    if len(mono) / sr <= limit:
+        return ref_path, ref_text, None
+    lo, hi = int((limit - 4.0) * sr), int((limit - 0.5) * sr)
+    win = int(0.05 * sr)
+    energy = [float(np.mean(mono[i:i + win] ** 2)) for i in range(lo, hi, win)]
+    cut = lo + int(np.argmin(energy)) * win
+    clipped = mono[:cut]
+    from faily.modules.asr import transcribe
+    text = transcribe(clipped, sr).strip()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
+        tmp = Path(f.name)
+    sf.write(str(tmp), clipped, sr)
+    return tmp, text, tmp
+
+
 def _f5_generate(text, ref_path, out, steps, speed, ref_text=""):
+    ref_path, ref_text, tmp = _f5_short_reference(Path(ref_path), ref_text)
+    try:
+        _f5_infer(text, ref_path, out, steps, speed, ref_text)
+    finally:
+        if tmp is not None and tmp.exists():
+            tmp.unlink()
+
+
+def _f5_infer(text, ref_path, out, steps, speed, ref_text=""):
     tts = manager.load("f5_tts", _load_f5)
     wav, sr, _ = tts.infer(
         ref_file=str(ref_path),
@@ -506,9 +563,39 @@ def _load_openvoice_converter():
     return conv
 
 
+_FREEVC_SPK_URL = "https://github.com/coqui-ai/TTS/releases/download/v0.13.0_models/speaker_encoder.pt"
+
+
+def _freevc_speaker_encoder() -> str:
+    """Local copy of FreeVC's speaker encoder. Coqui hands the GitHub release URL to
+    fsspec, whose exists() check fails on GitHub's signed redirect (FileNotFoundError
+    even though the file downloads fine), so fetch it ourselves once and load by path."""
+    import urllib.request
+    dest = VC_MODELS_DIR / "coqui" / "freevc_speaker_encoder.pt"
+    if not dest.exists() or dest.stat().st_size < 1_000_000:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".part")
+        for attempt in range(4):
+            try:
+                urllib.request.urlretrieve(_FREEVC_SPK_URL, tmp)
+                break
+            except OSError:                       # flaky DNS/network: back off and retry
+                if attempt == 3:
+                    raise
+                time.sleep(2 * (attempt + 1))
+        tmp.replace(dest)
+    return str(dest.resolve())
+
+
 def _load_freevc():
     _patch_xtts_transformers()
     _coqui_env()
+    from TTS.vc.models import freevc as _fv
+    if not getattr(_fv.FreeVC, "_faily_patched", False):
+        def _load_spk(self):
+            self.enc_spk_ex = _fv.SpeakerEncoderEx(_freevc_speaker_encoder())
+        _fv.FreeVC.load_pretrained_speaker_encoder = _load_spk
+        _fv.FreeVC._faily_patched = True
     from TTS.api import TTS
     gpu = str(manager.device).startswith("cuda")
     return TTS("voice_conversion_models/multilingual/vctk/freevc24", gpu=gpu)

@@ -76,6 +76,11 @@ def get_ref_chain(name: str, include_excluded: bool = False, live_only: bool = F
     return chain
 
 
+# F5-TTS clips any reference over 12 s itself but keeps the whole transcript, so the
+# transcript's tail gets spoken in the output. Keep the reference safely under that.
+F5_REF_SECONDS = 11.0
+
+
 @contextmanager
 def build_ref_audio(name: str, require_transcript: bool = False, max_duration: float | None = None,
                     live_only: bool = False):
@@ -86,7 +91,8 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
     require_transcript=True: drop clips without transcripts so audio/text stay aligned (F5-TTS).
     max_duration: stop accumulating clips once this total duration (seconds) would be exceeded.
       F5-TTS generates [ref]+[gen] as one sequence and trims by duration — optimal ref is
-      5–15 s; longer refs break the trim and cause the ref speech to bleed into output.
+      5–11 s (F5_REF_SECONDS); longer refs break the trim and cause the ref speech to bleed
+      into output. Clips longer than the cap are skipped.
     live_only: use the real recordings only, leaving out inflated clips.
     """
     chain = get_ref_chain(name, live_only=live_only)
@@ -97,11 +103,13 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
         capped, total = [], 0.0
         for node in chain:
             dur = _sf.info(str(node["audio"])).duration
+            if dur > max_duration:
+                continue                          # a single over-long clip can't be used as-is
             if capped and total + dur > max_duration:
                 break
             capped.append(node)
             total += dur
-        chain = capped
+        chain = capped or chain[:1]               # nothing fits: the first clip, trimmed by the backend
     if not chain:
         yield None, ""
         return

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from faily.core.characters import build_ref_audio, clip_quality_issues, get_character
+from faily.core.characters import build_ref_audio, F5_REF_SECONDS, clip_quality_issues, get_character
 from faily.modules.vc import generate
 
 _SCRIPT_BANK_PATH = Path("faily/data/inflation_scripts.txt")
@@ -298,7 +298,7 @@ async def generate_batch(
     staging_dir.mkdir(parents=True, exist_ok=True)
     candidates: list[InflatedCandidate] = []
     require_transcript = backend == "f5_tts"
-    max_duration = 15.0 if backend == "f5_tts" else None
+    max_duration = F5_REF_SECONDS if backend == "f5_tts" else None
 
     # Clone from the real recordings only: cloning inflated clips would compound their drift.
     with build_ref_audio(char_name, require_transcript=require_transcript, max_duration=max_duration,

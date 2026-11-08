@@ -10,7 +10,7 @@ from faily.modules.vc import (
 from faily.modules.edit import ensure_stereo
 from faily.modules.piper import generate_character_ref_sample, SAMPLE_TEXT
 from faily.core.characters import (
-    list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio,
+    list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio, F5_REF_SECONDS,
 )
 from faily.core.paths import history_dir
 from faily.ui.components import (
@@ -563,7 +563,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         _out["model_loader"].set_visibility(True)
         _poll.active = True
         _is_f5 = _backend[0] == "f5_tts"
-        with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=15.0 if _is_f5 else None,
+        with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=F5_REF_SECONDS if _is_f5 else None,
                              live_only=ref_live_only()) as (ref, chain_transcript):
             try:
                 for i in range(n):
@@ -627,7 +627,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
                 .classes("w-full").props("outlined dark")
             )
             ui.label(
-                "⚠  F5-TTS works best with 5–15 s of reference audio — the character's "
+                "⚠  F5-TTS works best with 5–11 s of reference audio — the character's "
                 "ref chain is automatically capped to this."
             ).classes("text-[#444] font-mono text-[10px] leading-snug")
         ref_text_row.set_visibility(False)

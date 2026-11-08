@@ -68,6 +68,8 @@ faily/
 - Seed-VC vendors its own BigVGAN; `_load_seedvc` shims its `_from_pretrained` to default proxies/resume_download (no site-packages patching)
 - `FAILY_NATIVE` env var must stay unset in the container — that path launches a pywebview native window, which has no display to attach to in a headless container. Server mode (the default) is what serves the browser UI at `:7842`
 
+- Zero-shot test suite: `.venv/bin/python scripts/test_zero_shot.py [cases] [--repeat N] [--keep]` generates a line per backend (speecht5, xtts_v2, f5_tts, chatterbox, `long:*` for the chunked path, `parler`, `tune:*` two-stage, `vc:*` converters alone on a clean source) and checks finite/non-silent/duration plus Whisper WER; each case runs in its own subprocess. The models sample, so judge by `--repeat 3`, not one draw. Fixed with it: FreeVC's speaker encoder is downloaded by us (`_freevc_speaker_encoder`; fsspec's exists() fails on GitHub's signed redirect); Parler must be sampled with explicit `top_k=50` (transformers 5 dropped the 4.x default → mush) and gets a length-scaled token budget plus a retry when the clip is a fragment; SpeechT5 needs an L2-normalised x-vector from ONE short clip (first 6 s of the reference; averages/long concatenations → WER 0.4-0.6) and shorter chunks (110 chars); F5 references are kept under `F5_REF_SECONDS` (11 s) because F5 itself clips at 12 s but keeps the whole transcript, so the transcript tail got spoken (`_f5_short_reference` is the backstop)
+
 ## Output dirs
 ```
 outputs/characters/<name>/   # everything for one character: config, refs, refs_original, inflated clips,
