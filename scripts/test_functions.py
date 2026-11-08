@@ -10,20 +10,28 @@ no-stale-references guard. Model-backed behaviour lives in test_zero_shot.py.
 Everything runs in a temporary working directory, so the real outputs/, models/ and config/
 are never touched.
 
+Regression tests (tagged @regression) guard problems that were found and fixed once. This
+suite NEVER fixes anything: when one fails it prints what it protects, what failed, and a
+PROPOSED FIX for a person (or Claude) to apply. Add --report FILE to also write that report
+as markdown.
+
   .venv/bin/python scripts/test_functions.py            # all
   .venv/bin/python scripts/test_functions.py -v         # one line per test
   .venv/bin/python scripts/test_functions.py TestPaths TestLibrary
   .venv/bin/python scripts/test_functions.py -k split   # name filter
+  .venv/bin/python scripts/test_functions.py --report test_report.md
 Exit status is non-zero if anything fails.
 """
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -38,6 +46,7 @@ sys.path.insert(0, str(ROOT))
 (SANDBOX / "faily" / "data").symlink_to(ROOT / "faily" / "data")      # the script bank is read relative to cwd
 os.chdir(SANDBOX)
 
+import logging                                        # noqa: E402
 import numpy as np                                    # noqa: E402
 import soundfile as sf                                # noqa: E402
 
@@ -47,6 +56,8 @@ from faily.core import cleanup as CL                  # noqa: E402
 from faily.core import paths as P                     # noqa: E402
 from faily.core import piper_models as PM             # noqa: E402
 from faily.core import settings as S                  # noqa: E402
+
+logging.getLogger("faily").setLevel(logging.ERROR)     # expected warnings (OOM retry tests) stay out of the output
 
 SR = 16000
 OUT = Path("outputs")
@@ -100,6 +111,74 @@ def make_char(name: str, *, refs: int = 0, seconds: float = 3.0, inflated: int =
     return C.get_character(name) or cfg
 
 
+# ── regression tagging and reporting (read-only: the suite never edits the project) ──
+
+def regression(issue: str, fix: str):
+    """Tag a test as guarding a previously fixed problem. `issue` = what broke and why it
+    mattered; `fix` = what to do if it breaks again (shown in the report, never applied)."""
+    def deco(fn):
+        fn._regression = (issue, fix)
+        return fn
+    return deco
+
+
+class ReportingResult(unittest.TextTestResult):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.findings: list[tuple[unittest.TestCase, str]] = []
+
+    def _note(self, test, err):
+        last = [ln for ln in self._exc_info_to_string(err, test).strip().splitlines() if ln.strip()][-1]
+        self.findings.append((test, last.strip()))
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        self._note(test, err)
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        self._note(test, err)
+
+
+def _report_text(result) -> str:
+    regs, others = [], []
+    for test, what in result.findings:
+        meta = getattr(getattr(test, test._testMethodName, None), "_regression", None)
+        (regs if meta else others).append((test, what, meta))
+    if not regs and not others:
+        return ""
+    out = ["", "=" * 72, "FINDINGS  (nothing was changed — these are proposals for you to act on)", "=" * 72]
+    if regs:
+        out.append(f"\nREGRESSIONS — {len(regs)} previously fixed problem(s) came back:")
+        for test, what, (issue, fix) in regs:
+            out += [f"\n  ✗ {test.id().split('.', 1)[-1]}", f"    Protects : {issue}",
+                    f"    Failed   : {what}", f"    Proposed : {fix}"]
+    if others:
+        out.append(f"\nOTHER FAILURES — {len(others)} (no canned proposal; see the traceback above):")
+        for test, what, _ in others:
+            out += [f"\n  ✗ {test.id().split('.', 1)[-1]}", f"    Failed   : {what}"]
+    return "\n".join(out) + "\n"
+
+
+class ReportingRunner(unittest.TextTestRunner):
+    report_path: str | None = None
+
+    def __init__(self, *a, **kw):
+        kw.setdefault("resultclass", ReportingResult)
+        super().__init__(*a, **kw)
+
+    def run(self, test):
+        result = super().run(test)
+        text = _report_text(result)
+        if text:
+            print(text, file=self.stream)
+        if self.report_path:
+            body = text or "\nAll tests passed — no findings.\n"
+            Path(self.report_path).write_text(
+                f"# Faily function-test report\n\nRan {result.testsRun} tests.\n```\n{body}\n```\n", encoding="utf-8")
+        return result
+
+
 class Sandboxed(unittest.TestCase):
     def setUp(self):
         reset_outputs()
@@ -143,6 +222,9 @@ class TestPaths(Sandboxed):
         self.assertEqual(P._owner_from_filename("speak_e-girl_line", names), "e-girl")
         self.assertIsNone(P._owner_from_filename("random_clip_001", names))
 
+    @regression(
+        'Old outputs/vc, tts, sfx, edit, mix folders must fold into characters/foley/misc, and a second run must do nothing.',
+        'Review core/paths.migrate_legacy_layout against the failing path.')
     def test_migrate_legacy_layout_and_idempotent(self):
         make_char("e-girl")
         for rel in ["vc/e_girl_dark_can_001.wav", "vc/piper_e-girl_Hello.wav", "vc/other_clip_001.wav",
@@ -167,6 +249,9 @@ class TestPaths(Sandboxed):
         self.assertEqual(sorted(p.name for p in OUT.iterdir()), ["characters", "foley", "misc"])
         self.assertEqual(P.migrate_legacy_layout(), 0)
 
+    @regression(
+        'Moving legacy output files must never overwrite a file that is already in the new layout.',
+        'Keep the numbering loop in core/paths._move.')
     def test_migrate_never_overwrites(self):
         make_char("alice")
         hist = P.CHARACTERS_DIR / "alice" / "history"
@@ -345,6 +430,9 @@ class TestBuildRefAudio(Sandboxed):
             tmp = ref
         self.assertFalse(tmp.exists())
 
+    @regression(
+        'Reference audio length must be bounded by default for every backend.',
+        'Check DEFAULT_REF_SECONDS handling at the top of core/characters.build_ref_audio.')
     def test_default_cap_bounds_total_duration(self):
         make_char("alice", refs=30, seconds=4.0)                  # 124 s of audio
         with C.build_ref_audio("alice") as (ref, _):
@@ -356,6 +444,9 @@ class TestBuildRefAudio(Sandboxed):
         with C.build_ref_audio("alice", max_duration=C.F5_REF_SECONDS) as (ref, _):
             self.assertLessEqual(sf.info(str(ref)).duration, C.F5_REF_SECONDS + 0.2)
 
+    @regression(
+        'The first chain clip (18 s) was always included even over the cap, so F5 got audio longer than the part its transcript described.',
+        'In core/characters.build_ref_audio skip clips longer than max_duration; fall back to chain[:1] only if none fit.')
     def test_overlong_clips_are_skipped_not_truncated(self):
         make_char("alice", seconds=18.0)                          # primary is 18 s: over an 11 s cap
         for i in range(3):
@@ -364,6 +455,9 @@ class TestBuildRefAudio(Sandboxed):
             self.assertLessEqual(sf.info(str(ref)).duration, 11.2)
             self.assertNotIn("primary", text)                     # transcript matches the audio actually used
 
+    @regression(
+        'A character whose only usable clip is huge still loaded the whole file.',
+        'Keep the single-clip branch in build_ref_audio that reads only max_duration seconds and returns an empty transcript.')
     def test_single_enormous_clip_is_trimmed_and_transcript_dropped(self):
         make_char("alice", seconds=200.0)
         with C.build_ref_audio("alice", max_duration=11.0) as (ref, text):
@@ -431,6 +525,9 @@ class TestLibrary(Sandboxed):
         make_char("bob")
         self.assertTrue({c["name"]: c for c in C.scan_library(self.other)}["bob"]["here"])
 
+    @regression(
+        'Imported characters need their parents, and piper_model paths must be rewritten to the new library.',
+        'Check core/characters._with_ancestors and _repoint_models.')
     def test_import_brings_ancestors_and_repoints_models(self):
         res = C.import_characters(self.other, ["alice-angry"])
         self.assertEqual(res["imported"], ["alice", "alice-angry"])
@@ -524,6 +621,9 @@ class TestCleanup(Sandboxed):
         self.assertTrue((d / "refs" / "ref_001.wav").exists())
         self.assertGreater(res["freed"], 0)
 
+    @regression(
+        "Unused saved models must always keep each character's active model.",
+        'Check core/cleanup._unused_models matching against config piper_model.')
     def test_unused_models_never_removes_active(self):
         self._populate()
         CL.clean(OUT, ["old_models"])
@@ -531,6 +631,9 @@ class TestCleanup(Sandboxed):
         self.assertTrue((d / "m002").exists())
         self.assertFalse((d / "m001").exists())
 
+    @regression(
+        'Cleanup must not delete the workspace of a character that is training right now.',
+        'Keep skip_training=True on the training, candidates and old-model finders in core/cleanup.')
     def test_active_training_is_protected(self):
         self._populate()
         from faily.modules import piper
@@ -576,6 +679,9 @@ class TestSettings(Sandboxed):
         S._SETTINGS_FILE.write_text("{{{")
         self.assertEqual(S.load_settings()["piper_epochs"], 1000)
 
+    @regression(
+        'Settings written before padding became inflated must still load.',
+        'Keep the legacy-key handling in core/settings.load_settings.')
     def test_legacy_padding_keys_migrate(self):
         S._SETTINGS_FILE.write_text(json.dumps({"piper_use_padding": False}))
         s = S.load_settings()
@@ -601,6 +707,9 @@ class TestPiperModels(Sandboxed):
         (d / "m.ckpt").write_text("ckpt" + tag)
         return d / "m.onnx", d / "m.ckpt"
 
+    @regression(
+        'Models saved within the same second listed oldest-first (sorted only by a 1 s timestamp).',
+        'Sort by (created, id) descending in core/piper_models.list_models.')
     def test_save_activate_list(self):
         make_char("alice")
         onnx, ckpt = self._fake_model("1")
@@ -886,6 +995,9 @@ class TestSlicerAndEdit(Sandboxed):
         self.assertGreaterEqual(len(sl), 3)
         self.assertTrue(all(s.duration <= 12.5 for s in sl))
 
+    @regression(
+        'find_slices returned nothing for recordings with under ~10% silence, so Split and Import silently produced no clips.',
+        'In modules/slicer.find_slices cap the activity threshold at top-10 dB: min(max(floor+10, top-30), top-10), keeping the digital-silence guard.')
     def test_dense_speech_with_almost_no_silence_still_slices(self):
         from faily.modules import slicer
         sl = slicer.find_slices(speechish(30.0), SR, max_len=12.0)         # flat and continuous: no quiet frames at all
@@ -938,6 +1050,20 @@ class TestSlicerAndEdit(Sandboxed):
         edit.apply_edits(src, out, highpass=True, highpass_hz=200.0)
         self.assertTrue(np.isfinite(sf.read(str(out))[0]).all())
 
+    @regression(
+        'apply_edits reused the name mono for locals, so trim-silence crashed and speed/denoise silently cancelled the mono downmix.',
+        'Never reuse parameter names for locals in modules/edit.apply_edits (use names like level / single).')
+    def test_apply_edits_mono_flag_survives_other_edits(self):
+        from faily.modules import edit
+        stereo = write_wav(SANDBOX / "st.wav", np.stack([speechish(2.0), speechish(2.0, seed=5)], axis=1))
+        out = SANDBOX / "ost.wav"
+        for extra in ({"speed": 1.25}, {"trim_silence": True}, {"denoise": True, "denoise_strength": 0.3}):
+            edit.apply_edits(stereo, out, mono=True, **extra)
+            self.assertEqual(sf.info(str(out)).channels, 1, f"mono=True lost when combined with {extra}")
+
+    @regression(
+        'apply_edits crashed (truth value of an array is ambiguous) whenever trim-silence was on, because a local variable overwrote the mono parameter.',
+        'In modules/edit.apply_edits rename the local mono used for silence detection and speed to a different name.')
     def test_apply_edits_pitch_silence_denoise_run(self):
         from faily.modules import edit
         padded = np.concatenate([np.zeros(SR, "float32"), speechish(1.0), np.zeros(SR, "float32")])
@@ -1010,6 +1136,9 @@ class TestImporter(Sandboxed):
         with self.assertRaises(FileNotFoundError):
             self.I.commit_stage(stage2, "ghost", is_new=False)
 
+    @regression(
+        'Inflated clips lost their source and category tags when committed from staging.',
+        "Check importer.stage_inflated tags and commit_stage's use of get_ref_chain tags.")
     def test_inflated_clips_stay_inflated_after_commit(self):
         from faily.modules.inflation import InflatedCandidate
         make_char("alice")
@@ -1176,6 +1305,9 @@ class TestSpokenForm(unittest.TestCase):
         self.assertEqual(self.spoken("Dr. Smith"), "doctor Smith")
         self.assertEqual(self.spoken("rock & roll"), "rock and roll")
 
+    @regression(
+        'spoken_tokens returned the closing quote instead of the sentence punctuation before it (a quoted exclamation), so end-of-sentence tail sizing missed.',
+        'Use _last_punct(trail) in modules/autoqualify.spoken_tokens for every punct assignment.')
     def test_punctuation_is_carried_per_token(self):
         toks = self.aq.spoken_tokens('He said, "go!"')
         self.assertEqual([w for w, _ in toks], ["He", "said", "go"])
@@ -1185,6 +1317,9 @@ class TestSpokenForm(unittest.TestCase):
         self.assertEqual(self.spoken("555-0142"), "five five five oh one four two")
         self.assertEqual(self.spoken("well-known"), "well known")
 
+    @regression(
+        'Script-bank tokens like B12, 14C, 101B kept raw digits, which the aligner cannot use.',
+        'Keep the letter+digit branch in modules/autoqualify.spoken_tokens, or reword the offending bank lines.')
     def test_every_bank_line_tokenizes(self):
         from faily.modules.inflation import load_script_bank
         os.chdir(ROOT)
@@ -1280,6 +1415,9 @@ class TestVCHelpers(Sandboxed):
         with self.assertRaises(ValueError):
             self.vc._dispatch_generate("nope", "t", None, SANDBOX / "o.wav", 1, 1, "")
 
+    @regression(
+        "Generated clips must be filed under the saved character's history (or misc when there is none), including when the reference came from a character.",
+        'Use paths.history_dir(char_name, ref_path) when output_dir is None in modules/vc.generate and tune_generate.')
     def test_generate_routes_output_by_character(self):
         make_char("alice", refs=1)
         ref = C.get_ref_path("alice")
@@ -1308,6 +1446,9 @@ class TestVCHelpers(Sandboxed):
         self.assertGreater(sf.info(str(out)).duration, len(calls) * 0.8)
         self.assertEqual(list((SANDBOX / "chunked").glob("_*")), [])              # chunk scratch files cleaned up
 
+    @regression(
+        'F5 references over 12 s must be trimmed with a matching transcript.',
+        'See modules/vc._f5_short_reference.')
     def test_f5_short_reference_trims_long_audio(self):
         long_ref = write_wav(SANDBOX / "long_ref.wav", speechish(18.0, pauses=[(10.0, 10.4)]))
         with mock.patch("faily.modules.asr.transcribe", return_value="trimmed words"):
@@ -1318,6 +1459,9 @@ class TestVCHelpers(Sandboxed):
         short = write_wav(SANDBOX / "short_ref.wav", speechish(6.0))
         self.assertEqual(self.vc._f5_short_reference(short, "keep")[1:], ("keep", None))
 
+    @regression(
+        "FreeVC's speaker encoder is cached locally; a present file must never trigger a download.",
+        'In modules/vc._freevc_speaker_encoder return the cached file when it exists and is over 1 MB.')
     def test_freevc_speaker_encoder_uses_local_copy_without_network(self):
         dest = self.vc.VC_MODELS_DIR / "coqui" / "freevc_speaker_encoder.pt"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1325,6 +1469,9 @@ class TestVCHelpers(Sandboxed):
         with mock.patch("urllib.request.urlretrieve", side_effect=AssertionError("must not download")):
             self.assertEqual(self.vc._freevc_speaker_encoder(), str(dest.resolve()))
 
+    @regression(
+        'Transient DNS failures during the one-time FreeVC encoder download killed the run.',
+        'Keep the 4-attempt retry with back-off in modules/vc._freevc_speaker_encoder.')
     def test_freevc_speaker_encoder_retries_flaky_network(self):
         dest = self.vc.VC_MODELS_DIR / "coqui" / "freevc_speaker_encoder.pt"
         dest.unlink(missing_ok=True)
@@ -1381,6 +1528,9 @@ class TestModelManager(unittest.TestCase):
         self.assertIn("a", self.mm.loaded)
         self.assertIn("c", self.mm.loaded)
 
+    @regression(
+        'A CUDA OOM during a model load must drop other models and retry once.',
+        'Keep the OutOfMemoryError handler in ModelManager.load.')
     def test_oom_retries_once_after_unloading_everything(self):
         import torch
         self.mm.load("old", object)
@@ -1484,6 +1634,422 @@ class TestAppPieces(Sandboxed):
         self.assertEqual(tts.TTS_OUTPUT_DIR, P.MISC_DIR)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+class TestRegressions(Sandboxed):
+    """One test per problem that bit us and was fixed. Each failure message says what to do."""
+
+    def setUp(self):
+        super().setUp()
+        from faily.modules import vc
+        self.vc = vc
+
+    # ── server crash: giant reference chains ────────────────────────────────
+    @regression(
+        "Zero-shot (XTTS) on a character with thousands of clips built a multi-hour reference file; XTTS loaded and "
+        "resampled all of it in RAM and the OOM killer took the whole server down (exit 137).",
+        "Make sure build_ref_audio() applies DEFAULT_REF_SECONDS whenever max_duration is None (core/characters.py), "
+        "and that no caller disables the cap. Never concatenate the whole chain.")
+    def test_huge_chain_is_capped_and_cheap(self):
+        make_char("big")
+        d = SANDBOX / "many"
+        for i in range(400):
+            write_wav(d / f"c{i}.wav", speechish(0.5, seed=i))
+            C.add_ref_clip("big", d / f"c{i}.wav", f"clip {i}.")
+        self.assertEqual(len(C.get_ref_chain("big")), 401)                  # ~200 s of audio on offer
+        t0 = time.time()
+        with C.build_ref_audio("big") as (ref, text):
+            took = time.time() - t0
+            self.assertLessEqual(sf.info(str(ref)).duration, C.DEFAULT_REF_SECONDS + 0.2)
+            self.assertLess(os.path.getsize(ref), 2_000_000)
+        self.assertLess(took, 5.0, "building the reference should not scale with the chain length")
+
+    @regression(
+        "A refactor could drop the cap by passing max_duration=0 (which disables it) from a UI or generation path.",
+        "Remove the max_duration=0 argument at the call site named in the failure; 0 is only for tests.")
+    def test_no_caller_disables_the_reference_cap(self):
+        offenders = []
+        for f in (ROOT / "faily").rglob("*.py"):
+            if re.search(r"build_ref_audio\([^)]*max_duration\s*=\s*0\b", f.read_text()):
+                offenders.append(str(f.relative_to(ROOT)))
+        self.assertEqual(offenders, [])
+
+    # ── F5-TTS speaking the reference transcript ───────────────────────────
+    @regression(
+        "F5-TTS clips any reference over 12 s itself but keeps the full transcript, so the transcript's tail was "
+        "spoken into every output.",
+        "Keep F5_REF_SECONDS under 12 (core/characters.py) and make the F5 call sites (ui/tabs/speak_tab.py, "
+        "modules/inflation.py) pass max_duration=F5_REF_SECONDS.")
+    def test_f5_reference_budget_is_wired_everywhere(self):
+        self.assertLess(C.F5_REF_SECONDS, 12.0)
+        for rel in ("faily/ui/tabs/speak_tab.py", "faily/modules/inflation.py"):
+            src = (ROOT / rel).read_text()
+            self.assertIn("F5_REF_SECONDS", src, f"{rel} no longer applies the F5 reference cap")
+
+    @regression(
+        "If a long reference still reaches F5, the audio must be cut and its transcript regenerated to match, "
+        "otherwise text without audio gets spoken.",
+        "Restore _f5_generate -> _f5_short_reference (modules/vc.py): trim at the quietest point under 12 s, "
+        "re-transcribe the kept audio, and delete the temp file afterwards.")
+    def test_f5_backstop_trims_and_retranscribes(self):
+        ref = write_wav(SANDBOX / "r.wav", speechish(18.0, pauses=[(10.0, 10.4)]))
+        seen = {}
+
+        def fake_infer(text, ref_path, out, steps, speed, ref_text=""):
+            seen.update(path=Path(ref_path), dur=sf.info(str(ref_path)).duration, text=ref_text)
+
+        with mock.patch.object(self.vc, "_f5_infer", fake_infer), \
+             mock.patch("faily.modules.asr.transcribe", return_value="what was kept"):
+            self.vc._f5_generate("hello", ref, SANDBOX / "o.wav", 32, 1.0, "the long original transcript")
+        self.assertLessEqual(seen["dur"], 12.0)
+        self.assertEqual(seen["text"], "what was kept")
+        self.assertFalse(seen["path"].exists(), "temporary trimmed reference was left behind")
+
+    # ── FreeVC download failure ────────────────────────────────────────────
+    @regression(
+        "FreeVC crashed on first use: Coqui hands a GitHub release URL to fsspec, whose exists() check fails on "
+        "GitHub's signed redirect, so the speaker encoder never downloaded.",
+        "Keep _load_freevc patching FreeVC.load_pretrained_speaker_encoder to load our locally downloaded copy "
+        "(_freevc_speaker_encoder). If Coqui renamed that method, patch its new equivalent.")
+    def test_freevc_is_patched_to_use_local_encoder(self):
+        import inspect
+        src = inspect.getsource(self.vc._load_freevc)
+        self.assertIn("_freevc_speaker_encoder", src)
+        self.assertIn("load_pretrained_speaker_encoder", src)
+        self.vc._patch_xtts_transformers()                       # coqui can't even import without this shim
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")                  # coqui's import is noisy
+                from TTS.vc.models import freevc as fv
+        except Exception as exc:                                  # noqa: BLE001
+            self.skipTest(f"coqui TTS not importable here: {exc}")
+        self.assertTrue(hasattr(fv.FreeVC, "load_pretrained_speaker_encoder"),
+                        "coqui renamed FreeVC.load_pretrained_speaker_encoder: update the patch in _load_freevc")
+        self.assertTrue(hasattr(fv, "SpeakerEncoderEx"), "coqui renamed SpeakerEncoderEx: update _load_freevc")
+
+    # ── Parler sampling / budget / fragments ───────────────────────────────
+    def _fake_parler(self, durations):
+        import torch
+        from types import SimpleNamespace
+
+        class Model:
+            config = SimpleNamespace(sampling_rate=44100)
+
+            def __init__(self):
+                self.calls = []
+
+            def generate(self, **kw):
+                self.calls.append(kw)
+                dur = durations[min(len(self.calls) - 1, len(durations) - 1)]
+                return torch.zeros(1, 1, int(dur * 44100))
+
+        class Tok:
+            def __call__(self, s, return_tensors=None):
+                return SimpleNamespace(input_ids=torch.ones(1, max(len(s.split()), 1), dtype=torch.long))
+
+        model = Model()
+        fake_manager = SimpleNamespace(load=lambda key, loader: (model, Tok()), device="cpu")
+        return model, mock.patch.object(self.vc, "manager", fake_manager)
+
+    @regression(
+        "Parler speech came out mushy (WER ~0.5): transformers 5 no longer defaults to top_k=50 when sampling "
+        "audio codes.",
+        "Pass top_k=50 explicitly in _parler_generate's model.generate(...) call (modules/vc.py).")
+    def test_parler_samples_with_top_k(self):
+        model, patch = self._fake_parler([6.0])
+        with patch:
+            self.vc._parler_generate("A short line of text.", SANDBOX / "p.wav", "a calm voice")
+        self.assertEqual(model.calls[0].get("top_k"), 50)
+
+    @regression(
+        "Parler's default 500-token budget is only ~5.8 s of speech, so longer lines were silently cut off.",
+        "In _parler_generate keep max_new_tokens = max(user value, chars/13*86*1.4) clamped to 2600.")
+    def test_parler_token_budget_scales_with_text(self):
+        model, patch = self._fake_parler([30.0])
+        long_text = "word " * 120
+        with patch:
+            self.vc._parler_generate(long_text, SANDBOX / "p.wav", "voice", max_new_tokens=500)
+        self.assertGreater(model.calls[0]["max_new_tokens"], 1500)
+        self.assertLessEqual(model.calls[0]["max_new_tokens"], 2600)
+        model2, patch2 = self._fake_parler([2.0])
+        with patch2:
+            self.vc._parler_generate("Hi.", SANDBOX / "p2.wav", "voice", max_new_tokens=500)
+        self.assertEqual(model2.calls[0]["max_new_tokens"], 500)
+
+    @regression(
+        "Parler occasionally stopped after a fraction of the line (e.g. 'the quick brown fog'), failing the whole "
+        "two-stage clip.",
+        "Keep the retry loop in _parler_generate: regenerate (max 3 attempts) when the clip is under half the "
+        "expected length (len(text)/15 s).")
+    def test_parler_retries_fragments_but_gives_up(self):
+        text = "x" * 150                                              # expects ~10 s
+        model, patch = self._fake_parler([1.0, 9.0])
+        with patch:
+            self.vc._parler_generate(text, SANDBOX / "a.wav", "voice")
+        self.assertEqual(len(model.calls), 2)
+        self.assertGreater(sf.info(str(SANDBOX / "a.wav")).duration, 8.0)
+        model, patch = self._fake_parler([1.0])
+        with patch:
+            self.vc._parler_generate(text, SANDBOX / "b.wav", "voice")
+        self.assertEqual(len(model.calls), 3)                          # bounded: never loops forever
+        model, patch = self._fake_parler([9.0])
+        with patch:
+            self.vc._parler_generate(text, SANDBOX / "c.wav", "voice")
+        self.assertEqual(len(model.calls), 1)
+
+    # ── two-stage pipeline wiring ───────────────────────────────────────────
+    @regression(
+        "TUNE/EXPRESSION runs stage-1 Parler then a voice converter; each converter must be reachable, the scratch "
+        "file removed, and the result filed under the character.",
+        "Check tune_generate's stage-2 if/elif chain against STAGE2_BACKENDS (modules/vc.py) and keep the "
+        "try/finally that deletes the _s1_ file.")
+    def test_tune_generate_routes_every_stage2_backend(self):
+        make_char("alice", refs=1)
+        ref = C.get_ref_path("alice")
+        targets = {"freevc": "_freevc_convert", "openvoice": "_openvoice_convert", "seedvc": "_seedvc_convert"}
+        self.assertEqual(set(targets), set(self.vc.STAGE2_BACKENDS), "a stage-2 backend was added/removed")
+        stage1_paths = []
+
+        def fake_parler(text, out, style_prompt, max_new_tokens=500):
+            stage1_paths.append(Path(out))
+            write_wav(Path(out), speechish(1.5))
+
+        for key in targets:
+            called = []
+
+            def good(src, tgt, out, *a, _k=key, **k):
+                called.append(_k)
+                shutil.copy(src, out)
+
+            def bad(*a, _k=key, **k):
+                self.fail(f"wrong converter called while testing {_k}")
+
+            with mock.patch.object(self.vc, "_parler_generate", fake_parler), \
+                 mock.patch.multiple(self.vc, **{fn: (good if k == key else bad) for k, fn in targets.items()}):
+                out = self.vc.tune_generate("Hello there.", "calm", "parler", ref, None, None,
+                                            char_name="alice", stage2_backend=key)
+            self.assertEqual(called, [key])
+            self.assertEqual(out.parent, P.CHARACTERS_DIR / "alice" / "history")
+            self.assertEqual(sf.info(str(out)).channels, 2)
+            self.assertFalse(stage1_paths[-1].exists(), "stage-1 scratch file not removed")
+
+    @regression("A failing converter must not leave the stage-1 scratch clip in the character's history.",
+                "Keep the try/finally around stage 2 in tune_generate (modules/vc.py).")
+    def test_tune_generate_cleans_up_when_stage2_fails(self):
+        make_char("alice", refs=1)
+        made = []
+
+        def fake_parler(t, o, **k):
+            made.append(Path(o))
+            write_wav(Path(o), speechish(1.0))
+
+        with mock.patch.object(self.vc, "_parler_generate", fake_parler), \
+             mock.patch.object(self.vc, "_freevc_convert", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                self.vc.tune_generate("Hi.", "calm", "parler", C.get_ref_path("alice"), None, None, char_name="alice")
+        self.assertFalse(made[0].exists())
+        with mock.patch.object(self.vc, "_parler_generate", fake_parler):
+            with self.assertRaises(ValueError):
+                self.vc.tune_generate("Hi.", "calm", "parler", C.get_ref_path("alice"), None, None,
+                                      char_name="alice", stage2_backend="nope")
+        self.assertFalse(made[-1].exists())
+
+    # ── glued long-text pauses ───────────────────────────────────────────────
+    @regression("Long lines generated in chunks must be joined with punctuation-sized pauses, not run together.",
+                "Check _pause_after / _PAUSE_AFTER and the gap insertion in _generate_chunked (modules/vc.py).")
+    def test_chunked_output_has_pauses_between_chunks(self):
+        def fake(backend, text, ref_path, out, *a):
+            pad = np.zeros(int(0.2 * SR), "float32")
+            write_wav(out, np.concatenate([pad, speechish(1.0), pad]))
+
+        text = " ".join(f"Sentence number {i} is a fairly ordinary line of text." for i in range(12))
+        with mock.patch.object(self.vc, "_dispatch_generate", fake):
+            out = self.vc.generate(text, SANDBOX / "r.wav", None, SANDBOX / "ch", "xtts_v2")
+        n_chunks = len(self.vc._split_text_for_generation(text, self.vc.BACKENDS["xtts_v2"]["split_chars"]))
+        self.assertGreaterEqual(n_chunks, 2)
+        # each chunk is 1.4 s with 0.2 s edge silence that gets trimmed; pauses (>= 0.25 s) are re-added between chunks
+        self.assertGreater(sf.info(str(out)).duration, n_chunks * 1.0 + (n_chunks - 1) * 0.25)
+
+    # ── compatibility shims for the transformers/torchaudio stack ───────────
+    @regression("torchcodec is unreliable here, so torchaudio.load is replaced with a soundfile loader at import.",
+                "Re-run _patch_torchaudio() (modules/vc.py) at import; check torchaudio didn't change load()'s "
+                "(waveform, sample_rate) return shape.")
+    def test_torchaudio_load_uses_soundfile(self):
+        import torchaudio
+        wav = write_wav(SANDBOX / "t.wav", speechish(0.5))
+        data, sr = torchaudio.load(str(wav))
+        self.assertEqual((data.shape[0], sr), (1, SR))
+        self.assertEqual(data.shape[1], int(0.5 * SR))
+        self.assertTrue(getattr(torchaudio, "_faily_patched", False))
+
+    @regression("transformers' ASR pipeline decodes audio via ffmpeg_read, which needs ffmpeg/torchcodec; we swap in soundfile.",
+                "Keep _patch_ffmpeg_read() (modules/vc.py); check transformers.pipelines.audio_utils.ffmpeg_read still exists.")
+    def test_ffmpeg_read_patch_decodes_wav_bytes(self):
+        import io
+        import transformers.pipelines.audio_utils as au
+        self.vc._patch_ffmpeg_read()
+        buf = io.BytesIO()
+        sf.write(buf, speechish(1.0, sr=22050), 22050, format="WAV")
+        out = au.ffmpeg_read(buf.getvalue(), 16000)
+        self.assertAlmostEqual(len(out) / 16000, 1.0, delta=0.02)
+
+    @regression("coqui-tts imports pytorch_utils.isin_mps_friendly, which transformers 5 removed.",
+                "Keep _patch_xtts_transformers() (modules/vc.py) restoring pytorch_utils.isin_mps_friendly before TTS loads.")
+    def test_transformers_isin_shim(self):
+        import transformers.pytorch_utils as pu
+        saved = getattr(pu, "isin_mps_friendly", None)
+        if hasattr(pu, "isin_mps_friendly"):
+            del pu.isin_mps_friendly
+        try:
+            self.vc._patch_xtts_transformers()
+            self.assertTrue(hasattr(pu, "isin_mps_friendly"))
+        finally:
+            if saved is not None:
+                pu.isin_mps_friendly = saved
+
+    # ── inflation / data generation ─────────────────────────────────────────
+    @regression("Inflated clips must be cloned from the real recordings only; cloning inflated clips compounds drift.",
+                "In modules/inflation.generate_batch keep build_ref_audio(..., live_only=True).")
+    def test_inflation_clones_from_live_recordings_only(self):
+        from contextlib import contextmanager
+        from faily.modules import inflation
+        make_char("alice", refs=1)
+        seen = []
+
+        @contextmanager
+        def fake_build(name, **kw):
+            seen.append(kw)
+            yield (C.get_ref_path(name), "text")
+
+        gen = lambda text, ref, progress, out_dir, *a: write_wav(Path(out_dir) / "x.wav", speechish(1.5))
+        for backend, expect_cap in (("xtts_v2", None), ("f5_tts", C.F5_REF_SECONDS)):
+            with mock.patch.object(inflation, "build_ref_audio", fake_build), mock.patch.object(inflation, "generate", gen):
+                asyncio.run(inflation.generate_batch("alice", [inflation.ScriptLine("neutral", "hi")], backend, 1, 1,
+                                                     SANDBOX / "s", [False], lambda *a: None, lambda *a: None))
+            self.assertTrue(seen[-1]["live_only"] is True)
+            self.assertEqual(seen[-1]["max_duration"], expect_cap)
+
+    # ── cleanup safety ──────────────────────────────────────────────────────
+    @regression("Cleanup must never follow a symlink out of the library and delete someone else's files.",
+                "In core/cleanup.clean, delete symlinks with unlink() and only rmtree real directories; "
+                "_size() must use lstat and os.walk(followlinks=False).")
+    def test_cleanup_does_not_follow_symlinks(self):
+        make_char("alice")
+        outside = SANDBOX / "precious"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("irreplaceable")
+        (C.CHARACTERS_DIR / "alice" / "history").symlink_to(outside, target_is_directory=True)
+        by = {c["key"]: c for c in CL.scan(OUT)}
+        self.assertLess(by["history"]["bytes"], 1000)                  # the link, not the target
+        CL.clean(OUT, ["history"])
+        self.assertEqual((outside / "keep.txt").read_text(), "irreplaceable")
+
+    @regression("Cleanup offered to delete references, favorites, configs and the active model; it must not.",
+                "Remove the offending category from cleanup.CATEGORIES (core/cleanup.py) or fix its finder.")
+    def test_cleanup_never_touches_protected_data(self):
+        make_char("alice", refs=2, inflated=1)
+        d = C.CHARACTERS_DIR / "alice"
+        write_wav(d / "favorites" / "f.wav", speechish(0.5))
+        (d / "models" / "m001").mkdir(parents=True)
+        (d / "models" / "m001" / "model.onnx").write_text("x")
+        C.set_piper_model("alice", str(d / "models" / "m001" / "model.onnx"))
+        before = sorted(str(p.relative_to(d)) for p in d.rglob("*") if p.is_file())
+        CL.clean(OUT, [c[0] for c in CL.CATEGORIES])                  # tick EVERYTHING
+        after = sorted(str(p.relative_to(d)) for p in d.rglob("*") if p.is_file())
+        for keep in ("config.json", "ref.wav", "refs/ref_001.wav", "refs/ref_002.wav", "refs/ref_003.wav",
+                     "favorites/f.wav", "models/m001/model.onnx"):
+            self.assertIn(keep, after, f"cleanup deleted {keep}")
+        self.assertTrue(set(after) <= set(before))
+
+    # ── library import/export ────────────────────────────────────────────────
+    @regression("Importing from another library must only read it; and an export/import round trip must be lossless.",
+                "In core/characters.import_characters/export_characters copy with copytree and never write into the source.")
+    def test_library_import_is_read_only_and_lossless(self):
+        src = SANDBOX / "src_lib" / "characters"
+        src.mkdir(parents=True)
+        with mock.patch.object(C, "CHARACTERS_DIR", src):
+            make_char("zed", refs=2, inflated=1)
+        snap = lambda root: {str(p.relative_to(root)): p.stat().st_size for p in root.rglob("*") if p.is_file()}
+        before = snap(src / "zed")
+        C.import_characters(src, ["zed"])
+        self.assertEqual(snap(src / "zed"), before)
+        self.assertEqual(snap(C.CHARACTERS_DIR / "zed"), before)
+        back = SANDBOX / "roundtrip"
+        C.export_characters(back, ["zed"])
+        self.assertEqual(snap(back / "zed"), before)
+
+    # ── output layout stays at three folders ────────────────────────────────
+    @regression("outputs/ should only ever contain characters/, foley/ and misc/ — old per-feature folders must not be recreated.",
+                "In ui/app.py run() call migrate_legacy_layout() then ensure_layout(), and don't mkdir vc/tts/sfx/edit/mix/speak.")
+    def test_app_startup_keeps_three_folder_layout(self):
+        src = (ROOT / "faily/ui/app.py").read_text()
+        self.assertIn("migrate_legacy_layout()", src)
+        self.assertIn("ensure_layout()", src)
+        self.assertLess(src.index("migrate_legacy_layout()"), src.index("ensure_layout()"))
+        self.assertIsNone(re.search(r'OUTPUTS\s*/\s*"(vc|tts|sfx|edit|mix|speak)"', src))
+
+    @regression("Generation modules route files through core/paths.py so nothing lands in a stray folder.",
+                "Use paths.history_dir()/MISC_DIR/FOLEY_DIR/TMP_DIR instead of a literal outputs/<subfolder> path.")
+    def test_no_literal_output_subfolder_paths_outside_paths_module(self):
+        offenders = []
+        for f in (ROOT / "faily").rglob("*.py"):
+            if f.name == "paths.py":
+                continue
+            for n, line in enumerate(f.read_text().splitlines(), 1):
+                if re.search(r'Path\("outputs/', line.split("#")[0]):
+                    offenders.append(f"{f.relative_to(ROOT)}:{n}: {line.strip()[:80]}")
+        self.assertEqual(offenders, [])
+
+    # ── convert-to-wav fix keeps config consistent ─────────────────────────
+    @regression("Fixing a non-WAV clip writes a WAV and must repoint the character's config at it (and keep a backup).",
+                "Keep the non-wav branch of qualify.apply_audio_fix: write .wav, update ref_audio/ref_clips, unlink the original.")
+    def test_apply_audio_fix_converts_mp3_and_repoints_config(self):
+        make_char("alice")
+        mp3 = SANDBOX / "c.mp3"
+        try:
+            sf.write(str(mp3), speechish(2.0), SR, format="MP3")
+        except Exception as exc:                                    # noqa: BLE001
+            self.skipTest(f"this libsndfile can't write MP3: {exc}")
+        C.add_ref_clip("alice", mp3, "mp3 clip.")
+        from faily.modules import qualify
+        clip = qualify.own_clips("alice")[1]
+        self.assertEqual(clip.audio.suffix, ".mp3")
+        new = qualify.apply_audio_fix("alice", clip, gain_db=-3.0)
+        self.assertEqual(new.audio.suffix, ".wav")
+        self.assertFalse(clip.audio.exists())
+        self.assertEqual(C.get_character("alice")["ref_clips"][0]["file"], new.key)
+        self.assertTrue((C.CHARACTERS_DIR / "alice" / "refs_original" / clip.audio.name).exists())
+
+    # ── manager / test harness drift ────────────────────────────────────────
+    @regression("A model loader may itself load a sub-model; the manager lock must be reentrant.",
+                "Keep ModelManager._lock an RLock (core/model_manager.py).")
+    def test_manager_loader_can_load_submodel(self):
+        from faily.core.model_manager import ModelManager
+        mm = ModelManager()
+        mm.device = "cpu"
+        self.assertEqual(mm.load("outer", lambda: mm.load("inner", lambda: "sub") + "+main"), "sub+main")
+        self.assertEqual(sorted(mm.loaded), ["inner", "outer"])
+
+    @regression("The zero-shot suite's case list drifted out of step with the real backends (e.g. after removing one).",
+                "Update _cases() in scripts/test_zero_shot.py to match vc.BACKENDS / STAGE2_BACKENDS.")
+    def test_zero_shot_suite_cases_match_backends(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("zs", ROOT / "scripts" / "test_zero_shot.py")
+        zs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(zs)
+        cases = zs._cases()
+        for c in cases:
+            base = c.split(":", 1)[1] if ":" in c else c
+            if c.startswith(("tune:", "vc:")):
+                self.assertIn(base, self.vc.STAGE2_BACKENDS, c)
+            elif c != "parler":
+                self.assertIn(base, self.vc.BACKENDS, c)
+        for b in self.vc.BACKENDS:
+            self.assertIn(b, cases, f"backend {b} has no zero-shot test case")
+        for b in self.vc.STAGE2_BACKENDS:
+            self.assertIn(f"vc:{b}", cases)
+            self.assertIn(f"tune:{b}", cases)
+
+
 class TestRepoHygiene(unittest.TestCase):
     def test_all_python_compiles(self):
         import py_compile
@@ -1495,13 +2061,16 @@ class TestRepoHygiene(unittest.TestCase):
                 bad.append(str(exc))
         self.assertEqual(bad, [])
 
+    @regression(
+        'SpeechT5/speechbrain and the old per-feature output folders were removed on purpose.',
+        'Delete the reference named in the failure (or, if it is intentional again, remove it from banned in this test).')
     def test_no_stale_references(self):
         """Things removed from the project must not linger in code, config or docs."""
         banned = ["speecht5", "SpeechT5", "speechbrain", "outputs/vc", "outputs/tts", "outputs/sfx", "VC_OUTPUT_DIR"]
         skip = {"test_functions.py"}
         hits = []
         for f in list((ROOT / "faily").rglob("*.py")) + list((ROOT / "scripts").glob("*")) + [ROOT / "pyproject.toml", ROOT / "README.md"]:
-            if f.suffix not in (".py", ".sh", ".toml", ".md") or f.name in skip:
+            if f.suffix not in (".py", ".sh", ".toml", ".md") or f.name in skip or not f.is_file():
                 continue
             text = f.read_text(errors="ignore")
             hits += [f"{f.relative_to(ROOT)}: {b}" for b in banned if b in text]
@@ -1521,8 +2090,14 @@ class TestRepoHygiene(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    argv = sys.argv[1:]
+    if "--report" in argv:
+        i = argv.index("--report")
+        ReportingRunner.report_path = str(Path(os.environ.get("FAILY_TEST_CWD", ROOT)) / argv[i + 1]) \
+            if not Path(argv[i + 1]).is_absolute() else argv[i + 1]
+        del argv[i:i + 2]
     try:
-        unittest.main(verbosity=1, argv=[sys.argv[0]] + sys.argv[1:])
+        unittest.main(testRunner=ReportingRunner, verbosity=1, argv=[sys.argv[0]] + argv)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(SANDBOX, ignore_errors=True)
