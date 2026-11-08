@@ -79,6 +79,11 @@ def get_ref_chain(name: str, include_excluded: bool = False, live_only: bool = F
 # F5-TTS clips any reference over 12 s itself but keeps the whole transcript, so the
 # transcript's tail gets spoken in the output. Keep the reference safely under that.
 F5_REF_SECONDS = 11.0
+# Every backend conditions on well under a minute of reference (XTTS ~30 s, Chatterbox ~10 s,
+# SpeechT5 6 s, the voice converters a few seconds), but they LOAD the whole file first.
+# A character with thousands of clips concatenates to hours of audio, which XTTS tries to
+# read and resample in RAM: the OOM killer then takes the whole server down.
+DEFAULT_REF_SECONDS = 30.0
 
 
 @contextmanager
@@ -89,7 +94,8 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
     Single-entry chains return the existing file directly (no copy).
     Multi-entry chains are concatenated into a temp file that is deleted on exit.
     require_transcript=True: drop clips without transcripts so audio/text stay aligned (F5-TTS).
-    max_duration: stop accumulating clips once this total duration (seconds) would be exceeded.
+    max_duration: stop accumulating clips once this total duration (seconds) would be exceeded
+      (None = DEFAULT_REF_SECONDS; the whole chain is never loaded).
       F5-TTS generates [ref]+[gen] as one sequence and trims by duration — optimal ref is
       5–11 s (F5_REF_SECONDS); longer refs break the trim and cause the ref speech to bleed
       into output. Clips longer than the cap are skipped.
@@ -98,7 +104,9 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
     chain = get_ref_chain(name, live_only=live_only)
     if require_transcript:
         chain = [n for n in chain if n["transcript"].strip()]
-    if max_duration is not None:
+    if max_duration is None:
+        max_duration = DEFAULT_REF_SECONDS
+    if max_duration:
         import soundfile as _sf
         capped, total = [], 0.0
         for node in chain:
@@ -115,6 +123,22 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
         return
     transcript = " ".join(n["transcript"] for n in chain if n["transcript"]).strip()
     if len(chain) == 1:
+        import soundfile as sf
+        info = sf.info(str(chain[0]["audio"]))
+        if max_duration and info.duration > max_duration * 1.5:
+            # one enormous clip and nothing shorter to use: take its start; the transcript no
+            # longer matches, so drop it (F5 then transcribes the clipped audio itself)
+            head, sr = sf.read(str(chain[0]["audio"]), frames=int(max_duration * info.samplerate),
+                               dtype="float32", always_2d=False)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
+                tmp = Path(f.name)
+            try:
+                sf.write(str(tmp), head, sr)
+                yield tmp, ""
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
+            return
         yield chain[0]["audio"], transcript
         return
     import numpy as np
