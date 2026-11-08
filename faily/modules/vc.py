@@ -181,11 +181,32 @@ def _load_chatterbox():
 _PARLER_ID = "parler-tts/parler-tts-mini-v1.1"
 
 
+def _patch_parler_cache():
+    """parler-tts builds its KV cache with EncoderDecoderCache.from_legacy_cache, which
+    transformers 5 removed, so use_cache=True crashed and we ran without a cache (~1.7x
+    slower, same quality). Provide the two legacy-cache helpers it relies on."""
+    import transformers.cache_utils as cu
+    if not hasattr(cu.EncoderDecoderCache, "from_legacy_cache"):
+        def _from_legacy(cls, past=None):
+            if past is None:
+                return cls(cu.DynamicCache(), cu.DynamicCache())
+            self_attn, cross_attn = cu.DynamicCache(), cu.DynamicCache()
+            for i, layer in enumerate(past):
+                self_attn.update(layer[0], layer[1], i)
+                if len(layer) > 2:
+                    cross_attn.update(layer[2], layer[3], i)
+            return cls(self_attn, cross_attn)
+        cu.EncoderDecoderCache.from_legacy_cache = classmethod(_from_legacy)
+    if not hasattr(cu.EncoderDecoderCache, "to_legacy_cache"):
+        cu.EncoderDecoderCache.to_legacy_cache = lambda self: self
+
+
 def _load_parler():
     import sys, torch, inspect
     import transformers.cache_utils as _cu
     import transformers.pytorch_utils as _pu
 
+    _patch_parler_cache()
     # 1. SlidingWindowCache removed in transformers 5.x
     if not hasattr(_cu, "SlidingWindowCache"):
         _cu.SlidingWindowCache = getattr(_cu, "SlidingWindowStaticCache", _cu.StaticCache)
@@ -374,7 +395,7 @@ def _parler_generate(text: str, out: Path, style_prompt: str, max_new_tokens: in
                 prompt_input_ids=prompt_input_ids,
                 prompt_attention_mask=prompt_attention_mask,
                 max_new_tokens=budget,
-                use_cache=False,
+                use_cache=True,
                 # transformers 4.x silently sampled with top_k=50; 5.x samples the whole code
                 # distribution unless told otherwise, which turns the speech to mush (WER ~0.5 -> ~0.1).
                 top_k=50,
@@ -384,6 +405,39 @@ def _parler_generate(text: str, out: Path, style_prompt: str, max_new_tokens: in
         if len(wav) / model.config.sampling_rate >= 0.5 * expected or attempt == 2:
             break
     sf.write(str(out), wav, model.config.sampling_rate)
+
+
+PARLER_TRIES = 3
+PARLER_MAX_WER = 0.20
+
+
+def _parler_generate_checked(text: str, out: Path, style_prompt: str, max_new_tokens: int = 500,
+                             tries: int = PARLER_TRIES, max_wer: float = PARLER_MAX_WER) -> float:
+    """Parler samples, so some takes drop or garble words, and the voice converter then
+    faithfully converts the garbage. Generate up to `tries` takes, let Whisper check each
+    against the script, stop at the first good one and keep the best otherwise.
+    Returns the kept take's word error rate."""
+    from faily.modules.asr import transcribe
+    from faily.modules.qualify import normalize_words, word_error_rate
+
+    want = normalize_words(text)
+    best: Path | None = None
+    best_wer = float("inf")
+    for attempt in range(tries):
+        take = out.with_name(f"_take{attempt}_{out.name}")
+        _parler_generate(text, take, style_prompt, max_new_tokens)
+        audio, sr = sf.read(str(take), dtype="float32", always_2d=False)
+        wer = word_error_rate(want, normalize_words(transcribe(audio.mean(axis=1) if audio.ndim > 1 else audio, sr)))
+        if wer < best_wer:
+            if best is not None:
+                best.unlink(missing_ok=True)
+            best, best_wer = take, wer
+        else:
+            take.unlink(missing_ok=True)
+        if best_wer <= max_wer:
+            break
+    best.replace(out)
+    return best_wer
 
 
 def _xtts_generate(text, ref_path, out, temperature, speed):
@@ -540,8 +594,11 @@ def tune_generate(
     ov_tau: float = 0.3,
     svc_steps: int = 10,
     svc_cfg: float = 0.7,
+    verify_stage1: bool = True,
 ) -> Path:
-    """Two-stage TUNE pipeline: expression engine → voice conversion."""
+    """Two-stage TUNE pipeline: expression engine → voice conversion.
+    verify_stage1: have Whisper check the expression take against the script and redo bad
+    ones (up to PARLER_TRIES takes) before converting."""
     if output_dir is None:
         output_dir = history_dir(char_name, ref_path)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -555,7 +612,10 @@ def tune_generate(
 
     # Stage 1: expression engine → expressive intermediate audio
     if engine == "parler":
-        _parler_generate(text, stage1, style_prompt=expression, max_new_tokens=max_new_tokens)
+        if verify_stage1:
+            _parler_generate_checked(text, stage1, expression, max_new_tokens)
+        else:
+            _parler_generate(text, stage1, style_prompt=expression, max_new_tokens=max_new_tokens)
     else:
         raise ValueError(f"Unknown expression engine: {engine!r}")
 

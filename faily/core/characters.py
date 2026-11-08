@@ -85,6 +85,106 @@ F5_REF_SECONDS = 11.0
 # read and resample in RAM: the OOM killer then takes the whole server down.
 DEFAULT_REF_SECONDS = 30.0
 
+# ── choosing which clips become the reference ────────────────────────────────
+# Taking the first clips in file order clones from the same early (and not necessarily best)
+# recordings every time. When there are more clips than fit, rank a spread of them by cheap
+# audio measures and fill the budget best-first. Scores are cached per character.
+_REF_SCORES_FILE = "ref_scores.json"
+_REF_SAMPLE = 60                     # clips scored per call (evenly spaced through the chain, so stable)
+_REF_RANK_MIN_CHAIN = 6              # shorter chains: nothing to choose between
+_LTAS_BINS = 64
+
+
+def _clip_features(path: Path) -> dict | None:
+    """Cheap, model-free facts about a clip: length, SNR, clipping, and its long-term average
+    spectrum (the voice's overall timbre, used to find clips typical of the character)."""
+    import numpy as np
+    import soundfile as sf
+
+    x, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    if x.ndim > 1:
+        x = x.mean(axis=1)
+    if len(x) < sr // 2:
+        return None
+    win, hop = int(0.025 * sr), int(0.010 * sr)
+    n = 1 + (len(x) - win) // hop
+    idx = np.arange(win)[None, :] + hop * np.arange(n)[:, None]
+    frames = x[idx]
+    db = 20 * np.log10(np.sqrt((frames ** 2).mean(axis=1)) + 1e-9)
+    floor, speech = float(np.percentile(db, 10)), float(np.percentile(db, 90))
+    active = db > max(floor + 10.0, speech - 25.0)
+    if active.sum() < 5:
+        return None
+    spec = np.abs(np.fft.rfft(frames[active] * np.hanning(win), n=1024, axis=1)) ** 2
+    ltas = np.log(spec.mean(axis=0) + 1e-12)[: 1024 // 2]
+    ltas = ltas[: len(ltas) // _LTAS_BINS * _LTAS_BINS].reshape(_LTAS_BINS, -1).mean(axis=1)
+    return {
+        "dur": round(len(x) / sr, 2), "snr": round(speech - floor, 1),
+        "clip": round(float((np.abs(x) >= 0.99).mean()), 5),
+        "ltas": [round(float(v), 2) for v in ltas - ltas.mean()],
+    }
+
+
+def _rank_reference_clips(chain: list[dict]) -> list[dict]:
+    """`chain` reordered best-reference-first. Clips that were not scored keep their order after
+    the scored ones. Any failure falls back to the original order."""
+    import json as _json
+    import numpy as np
+
+    try:
+        pool = [e for e in chain if e.get("audio")]
+        picks = [pool[int(i)] for i in np.unique(np.linspace(0, len(pool) - 1, min(_REF_SAMPLE, len(pool))).astype(int))]
+        caches: dict[Path, dict] = {}
+        dirty: set[Path] = set()
+        feats: dict[int, dict] = {}
+        for e in picks:
+            audio = Path(e["audio"])
+            cache_path = CHARACTERS_DIR / e["owner"] / _REF_SCORES_FILE
+            if cache_path not in caches:
+                try:
+                    caches[cache_path] = _json.loads(cache_path.read_text())
+                except (OSError, ValueError):
+                    caches[cache_path] = {}
+            st = audio.stat()
+            key = f"{audio.relative_to(CHARACTERS_DIR / e['owner']).as_posix()}|{st.st_size}|{st.st_mtime_ns}"
+            f = caches[cache_path].get(key)
+            if f is None:
+                f = _clip_features(audio) or {"bad": True}
+                caches[cache_path][key] = f
+                dirty.add(cache_path)
+            if not f.get("bad"):
+                feats[id(e)] = f
+        for cache_path in dirty:
+            tmp = cache_path.with_suffix(".tmp")
+            tmp.write_text(_json.dumps(caches[cache_path]))
+            tmp.replace(cache_path)
+        if len(feats) < 3:
+            return chain
+
+        mat = np.array([f["ltas"] for f in feats.values()], dtype="float32")
+        centre = mat.mean(axis=0)
+        centre /= np.linalg.norm(centre) + 1e-9
+
+        def score(f: dict, transcript: str) -> float:
+            v = np.array(f["ltas"], dtype="float32")
+            typical = float(v @ centre / (np.linalg.norm(v) + 1e-9))            # -1..1: how like the rest of the voice
+            clean = min(max(f["snr"], 10.0), 40.0) / 40.0
+            d = f["dur"]
+            length = 1.0 if 4.0 <= d <= 10.0 else 0.6 if (2.5 <= d < 4.0 or 10.0 < d <= 15.0) else 0.2
+            # Does the transcript plausibly describe this audio? Normal speech is ~9-22 characters per
+            # second. A clip that is mostly silence (or whose text belongs to different audio) misleads
+            # F5-TTS, which sizes its output from the reference's duration-to-text ratio.
+            cps = len(transcript.strip()) / max(d, 0.1)
+            fit = 0.0 if not transcript.strip() else (0.8 if 9.0 <= cps <= 22.0 else -2.0)
+            return clean + 1.5 * (typical + 1) / 2 + length + fit - (1.0 if f["clip"] > 0.001 else 0.0)
+
+        ranked = sorted((e for e in picks if id(e) in feats),
+                        key=lambda e: score(feats[id(e)], e.get("transcript", "")), reverse=True)
+        taken = {id(e) for e in ranked}
+        return ranked + [e for e in chain if id(e) not in taken]
+    except Exception:                                   # noqa: BLE001  scoring is an optimisation, never a failure
+        return chain
+
 
 @contextmanager
 def build_ref_audio(name: str, require_transcript: bool = False, max_duration: float | None = None,
@@ -95,7 +195,8 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
     Multi-entry chains are concatenated into a temp file that is deleted on exit.
     require_transcript=True: drop clips without transcripts so audio/text stay aligned (F5-TTS).
     max_duration: stop accumulating clips once this total duration (seconds) would be exceeded
-      (None = DEFAULT_REF_SECONDS; the whole chain is never loaded).
+      (None = DEFAULT_REF_SECONDS; the whole chain is never loaded). With more clips than fit,
+      the best ones are chosen (clean, typical of the voice, 4-10 s), not the first in file order.
       F5-TTS generates [ref]+[gen] as one sequence and trims by duration — optimal ref is
       5–11 s (F5_REF_SECONDS); longer refs break the trim and cause the ref speech to bleed
       into output. Clips longer than the cap are skipped.
@@ -108,13 +209,17 @@ def build_ref_audio(name: str, require_transcript: bool = False, max_duration: f
         max_duration = DEFAULT_REF_SECONDS
     if max_duration:
         import soundfile as _sf
+        if len(chain) > _REF_RANK_MIN_CHAIN:
+            chain = _rank_reference_clips(chain)
         capped, total = [], 0.0
         for node in chain:
+            if max_duration - total < 1.0:
+                break                             # budget used up
             dur = _sf.info(str(node["audio"])).duration
             if dur > max_duration:
                 continue                          # a single over-long clip can't be used as-is
             if capped and total + dur > max_duration:
-                break
+                continue                          # doesn't fit; a shorter one further down might
             capped.append(node)
             total += dur
         chain = capped or chain[:1]               # nothing fits: the first clip, trimmed by the backend

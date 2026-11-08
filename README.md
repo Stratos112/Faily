@@ -77,6 +77,7 @@ Set these under `environment:` in `docker-compose.yml`, for example:
 
 ## TODO
 
+- **Real speaker-similarity scoring for generated clips** — gate and rank generated/inflated clips by how close they sound to the real recordings (WavLM-SV or ECAPA embeddings against the centroid of the character's live clips, threshold calibrated on those clips). Use it to reject drifted clips and to pick the best of several takes. Deferred as too large for now; the old x-vector check was dropped because it scored every clip 0.93–0.97.
 - **Expressive Piper output** — Piper has no style/emotion conditioning. Research a backend with native style conditioning (e.g. StyleTTS2) compatible with the torch 2.11+cu128/Blackwell stack, as an alternative to Piper for CHARACTER training.
 - **New FOLEY backends** — before adding one, confirm it installs via `scripts/setup_linux.sh` on the cu128 stack and actually run a generation with it. Tango 2 and AudioGen were already tried and dropped for failing this.
 - **Promote-to-ref-pool prominence** — saving a good generation back into a character's reference pool already works from any clip; surface it more (e.g. auto-suggest after favoriting).

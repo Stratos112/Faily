@@ -185,7 +185,8 @@ def spoken_tokens(script: str, year_style: bool = True) -> list[tuple[str, str]]
             neg = core.startswith("-")
             words = ("minus " if neg else "") + _spoken_number(core.lstrip("-"), year_style and not neg)
         elif re.fullmatch(r"[A-Za-z]\d{1,3}|\d{1,3}[A-Za-z]", core):         # seat 14C, gate B12, room 101B
-            words = " ".join(_spoken_number(r, False) if r.isdigit() else r
+            # room/seat/gate labels: 101B is "one oh one B", 14C "fourteen C", B12 "B twelve"
+            words = " ".join((_digits(r) if len(r) == 3 else _spoken_number(r, False)) if r.isdigit() else r
                              for r in re.findall(r"\d+|[A-Za-z]", core))
         else:
             parts = re.split(r"(?<=\D)-(?=\D)|-(?=\d)|(?<=\d)-(?=\D)", core) if "-" in core else [core]

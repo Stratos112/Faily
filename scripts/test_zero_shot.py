@@ -62,9 +62,9 @@ def worker(case: str, char: str, out_dir: Path) -> dict:
     with build_ref_audio(char, require_transcript=is_f5, max_duration=F5_REF_SECONDS if is_f5 else None,
                          live_only=True) as (ref, ref_text):
         if case == "parler":
-            from faily.modules.vc import _parler_generate
+            from faily.modules.vc import _parler_generate_checked    # the path the app uses: takes are Whisper-checked
             path = out_dir / "parler.wav"
-            _parler_generate(text, path, style_prompt="a calm young woman speaking clearly")
+            _parler_generate_checked(text, path, "a calm young woman speaking clearly")
         elif case.startswith("vc:"):
             # converter alone, on a clean known source (a Piper base-voice sample): what Whisper
             # hears in the output must match what it hears in the source

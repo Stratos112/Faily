@@ -1313,6 +1313,12 @@ class TestSpokenForm(unittest.TestCase):
         self.assertEqual([w for w, _ in toks], ["He", "said", "go"])
         self.assertEqual([p for _, p in toks], ["", ",", "!"])
 
+    def test_room_seat_gate_labels(self):
+        self.assertEqual(self.spoken("room 101B."), "room one oh one B")     # 3 digits: read as digits
+        self.assertEqual(self.spoken("Seat 14C"), "Seat fourteen C")
+        self.assertEqual(self.spoken("gate B12"), "gate B twelve")
+        self.assertEqual(self.spoken("B207"), "B two oh seven")
+
     def test_phone_digits_and_hyphens(self):
         self.assertEqual(self.spoken("555-0142"), "five five five oh one four two")
         self.assertEqual(self.spoken("well-known"), "well known")
@@ -1826,7 +1832,7 @@ class TestRegressions(Sandboxed):
             with mock.patch.object(self.vc, "_parler_generate", fake_parler), \
                  mock.patch.multiple(self.vc, **{fn: (good if k == key else bad) for k, fn in targets.items()}):
                 out = self.vc.tune_generate("Hello there.", "calm", "parler", ref, None, None,
-                                            char_name="alice", stage2_backend=key)
+                                            char_name="alice", stage2_backend=key, verify_stage1=False)
             self.assertEqual(called, [key])
             self.assertEqual(out.parent, P.CHARACTERS_DIR / "alice" / "history")
             self.assertEqual(sf.info(str(out)).channels, 2)
@@ -1845,12 +1851,13 @@ class TestRegressions(Sandboxed):
         with mock.patch.object(self.vc, "_parler_generate", fake_parler), \
              mock.patch.object(self.vc, "_freevc_convert", side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
-                self.vc.tune_generate("Hi.", "calm", "parler", C.get_ref_path("alice"), None, None, char_name="alice")
+                self.vc.tune_generate("Hi.", "calm", "parler", C.get_ref_path("alice"), None, None,
+                                      char_name="alice", verify_stage1=False)
         self.assertFalse(made[0].exists())
         with mock.patch.object(self.vc, "_parler_generate", fake_parler):
             with self.assertRaises(ValueError):
                 self.vc.tune_generate("Hi.", "calm", "parler", C.get_ref_path("alice"), None, None,
-                                      char_name="alice", stage2_backend="nope")
+                                      char_name="alice", stage2_backend="nope", verify_stage1=False)
         self.assertFalse(made[-1].exists())
 
     # ── glued long-text pauses ───────────────────────────────────────────────
@@ -2028,6 +2035,178 @@ class TestRegressions(Sandboxed):
         mm.device = "cpu"
         self.assertEqual(mm.load("outer", lambda: mm.load("inner", lambda: "sub") + "+main"), "sub+main")
         self.assertEqual(sorted(mm.loaded), ["inner", "outer"])
+
+    # ── stage-1 verification, Parler cache, reference ranking, launcher ─────
+    @regression("Parler takes are random; a bad take (dropped or garbled words) was converted faithfully and shipped.",
+                "Keep tune_generate calling _parler_generate_checked (modules/vc.py): up to PARLER_TRIES takes, "
+                "stop at the first with WER <= PARLER_MAX_WER, otherwise keep the best.")
+    def test_stage1_is_checked_and_best_take_kept(self):
+        take_no = []
+
+        def fake_parler(text, out, style_prompt, max_new_tokens=500):
+            take_no.append(Path(out))
+            write_wav(Path(out), speechish(1.0 + 0.1 * len(take_no)))      # length tells us which take survived
+
+        heard = iter(["a slow red dog", "hello there friend", "hello"])      # take 2 is the best of the three
+        with mock.patch.object(self.vc, "_parler_generate", fake_parler), \
+             mock.patch("faily.modules.asr.transcribe", lambda a, sr: next(heard)):
+            out = SANDBOX / "stage1.wav"
+            # a perfect take would stop early, so demand more than a perfect take can give
+            wer = self.vc._parler_generate_checked("hello there friend", out, "calm", max_wer=-1.0)
+        self.assertEqual(len(take_no), 3)
+        self.assertEqual(wer, 0.0)
+        self.assertAlmostEqual(sf.info(str(out)).duration, 1.2, delta=0.02)      # the 2nd take
+        self.assertEqual([p for p in take_no if p.exists()], [], "rejected takes were left behind")
+
+    def test_stage1_stops_at_first_good_take(self):
+        calls = []
+
+        def fake(t, o, s_, n=500):
+            calls.append(1)
+            write_wav(Path(o), speechish(1.0))
+
+        with mock.patch.object(self.vc, "_parler_generate", fake), \
+             mock.patch("faily.modules.asr.transcribe", return_value="hello there friend"):
+            self.vc._parler_generate_checked("Hello there, friend!", SANDBOX / "ok.wav", "calm")
+        self.assertEqual(len(calls), 1)
+
+    def test_tune_generate_verifies_by_default_and_can_skip(self):
+        make_char("alice", refs=1)
+        ref = C.get_ref_path("alice")
+        checked = []
+
+        def fake_checked(text, out, style, n=500, **k):
+            checked.append(1)
+            write_wav(Path(out), speechish(1.0))
+            return 0.0
+
+        copy = lambda src, tgt, out, *a, **k: shutil.copy(src, out)
+        with mock.patch.object(self.vc, "_parler_generate_checked", fake_checked), \
+             mock.patch.object(self.vc, "_parler_generate", lambda t, o, **k: write_wav(Path(o), speechish(1.0))), \
+             mock.patch.object(self.vc, "_freevc_convert", copy):
+            self.vc.tune_generate("Hi.", "calm", "parler", ref, None, None, char_name="alice")
+            self.assertEqual(len(checked), 1)
+            self.vc.tune_generate("Hi.", "calm", "parler", ref, None, None, char_name="alice", verify_stage1=False)
+            self.assertEqual(len(checked), 1)
+
+    @regression("Parler ran without a KV cache (about 1.7x slower) because transformers 5 removed "
+                "EncoderDecoderCache.from_legacy_cache.",
+                "Keep _patch_parler_cache() (called from _load_parler) and use_cache=True in _parler_generate.")
+    def test_parler_cache_enabled_with_shim(self):
+        import transformers.cache_utils as cu
+        model, patch = self._fake_parler([6.0])
+        with patch:
+            self.vc._parler_generate("A short line of text.", SANDBOX / "p.wav", "voice")
+        self.assertTrue(model.calls[0]["use_cache"])
+        saved = cu.EncoderDecoderCache.__dict__.get("from_legacy_cache")
+        if saved is not None:
+            delattr(cu.EncoderDecoderCache, "from_legacy_cache")
+        try:
+            self.vc._patch_parler_cache()
+            cache = cu.EncoderDecoderCache.from_legacy_cache(None)
+            self.assertIsInstance(cache, cu.EncoderDecoderCache)
+        finally:
+            if saved is not None:
+                cu.EncoderDecoderCache.from_legacy_cache = saved
+
+    # reference selection ---------------------------------------------------
+    def _ranked_char(self, name="ranked"):
+        """A primary + 4 clean, 4 noisy and 3 very short clips."""
+        make_char(name, seconds=5.0)
+        rng = np.random.default_rng(1)
+        d = SANDBOX / f"{name}_clips"
+        for i in range(4):
+            C.add_ref_clip(name, write_wav(d / f"clean{i}.wav", speechish(5.0, pauses=[(2.0, 2.4)], seed=10 + i)), f"clean {i}.")
+        for i in range(4):
+            noisy = speechish(5.0, pauses=[(2.0, 2.4)], seed=20 + i) + 0.08 * rng.standard_normal(5 * SR).astype("float32")
+            C.add_ref_clip(name, write_wav(d / f"noisy{i}.wav", noisy), f"noisy {i}.")
+        for i in range(3):
+            C.add_ref_clip(name, write_wav(d / f"short{i}.wav", speechish(1.0, seed=30 + i)), f"short {i}.")
+
+    @regression("The reference was always the first clips in file order (cloning from the same early recordings), "
+                "regardless of quality.",
+                "In core/characters.build_ref_audio call _rank_reference_clips() when the chain is longer than "
+                "_REF_RANK_MIN_CHAIN, before filling the duration budget.")
+    def test_reference_prefers_clean_clips_over_noisy_and_short(self):
+        self._ranked_char()
+        with C.build_ref_audio("ranked", max_duration=15.0) as (ref, text):
+            self.assertNotIn("noisy", text)
+            self.assertNotIn("short", text)
+            self.assertIn("clean", text)
+            self.assertLessEqual(sf.info(str(ref)).duration, 15.2)
+
+    @regression("A reference whose transcript does not fit its audio (mostly silence, or text from other audio) made "
+                "F5-TTS size its output wrongly: 59 s outputs with the reference text spoken inside.",
+                "Keep the characters-per-second plausibility term (fit) in core/characters._rank_reference_clips; "
+                "normal speech is about 9-22 characters per second.")
+    def test_reference_skips_clips_whose_transcript_does_not_fit_the_audio(self):
+        self._ranked_char()
+        d = SANDBOX / "ranked_clips"
+        for i in range(3):          # pristine 8 s audio, but the transcript is one word: ~0.5 chars/s
+            C.add_ref_clip("ranked", write_wav(d / f"sparse{i}.wav", speechish(8.0, pauses=[(3.0, 3.4)], seed=50 + i)), "Hi.")
+        with C.build_ref_audio("ranked", max_duration=15.0) as (_, text):
+            self.assertNotIn("Hi.", text)
+            self.assertIn("clean", text)
+        with C.build_ref_audio("ranked", require_transcript=True, max_duration=C.F5_REF_SECONDS) as (_, text):
+            self.assertNotIn("Hi.", text)
+
+    def test_reference_choice_is_stable_and_cached(self):
+        self._ranked_char()
+        with C.build_ref_audio("ranked", max_duration=15.0) as (_, first):
+            pass
+        cache = C.CHARACTERS_DIR / "ranked" / C._REF_SCORES_FILE
+        self.assertTrue(cache.exists())
+        with mock.patch.object(C, "_clip_features", side_effect=AssertionError("scores should come from the cache")):
+            with C.build_ref_audio("ranked", max_duration=15.0) as (_, second):
+                pass
+        self.assertEqual(first, second)
+        # editing a clip invalidates only its own cache entry
+        write_wav(C.CHARACTERS_DIR / "ranked" / "refs" / "ref_001.wav", speechish(5.0, seed=99))
+        calls = []
+        real = C._clip_features
+        with mock.patch.object(C, "_clip_features", lambda p: (calls.append(Path(p).name), real(p))[1]):
+            C._rank_reference_clips(C.get_ref_chain("ranked"))
+        self.assertEqual(calls, ["ref_001.wav"])
+
+    def test_reference_ranking_failure_falls_back_to_file_order(self):
+        self._ranked_char()
+        with mock.patch.object(C, "_clip_features", side_effect=RuntimeError("broken")):
+            with C.build_ref_audio("ranked", max_duration=15.0) as (ref, text):
+                self.assertTrue(text.startswith("ranked primary line."))
+                self.assertLessEqual(sf.info(str(ref)).duration, 15.2)
+
+    def test_short_chains_are_not_ranked(self):
+        make_char("small", refs=3)
+        with mock.patch.object(C, "_rank_reference_clips", side_effect=AssertionError("should not rank")):
+            with C.build_ref_audio("small") as (_, text):
+                self.assertIn("primary", text)
+
+    # launcher --------------------------------------------------------------
+    @regression("`python3 main.py` from a plain shell used the system Python, which has none of the dependencies.",
+                "Keep _use_project_python() at the top of main.py: outside any virtualenv, os.execv into .venv/bin/python.")
+    def test_main_relaunches_under_project_venv(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("faily_main", ROOT / "main.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        fake_root = SANDBOX / "proj"
+        (fake_root / ".venv" / "bin").mkdir(parents=True)
+        (fake_root / ".venv" / "bin" / "python").write_text("")
+        self.assertEqual(m._project_python(fake_root), fake_root / ".venv" / "bin" / "python")
+        self.assertIsNone(m._project_python(SANDBOX / "no_venv_here"))
+        with mock.patch.object(m, "_project_python", return_value=Path("/x/.venv/bin/python")), \
+             mock.patch.object(m.os, "execv") as execv:
+            with mock.patch.object(m.sys, "prefix", "/usr"), mock.patch.object(m.sys, "base_prefix", "/usr"):
+                m._use_project_python()
+                execv.assert_called_once()
+                self.assertEqual(execv.call_args[0][0], "/x/.venv/bin/python")
+            execv.reset_mock()
+            with mock.patch.object(m.sys, "prefix", "/proj/.venv"), mock.patch.object(m.sys, "base_prefix", "/usr"):
+                m._use_project_python()                                  # already in a venv
+            with mock.patch.dict(m.os.environ, {"FAILY_NO_REEXEC": "1"}), \
+                 mock.patch.object(m.sys, "prefix", "/usr"), mock.patch.object(m.sys, "base_prefix", "/usr"):
+                m._use_project_python()                                  # explicitly disabled
+            execv.assert_not_called()
 
     @regression("The zero-shot suite's case list drifted out of step with the real backends (e.g. after removing one).",
                 "Update _cases() in scripts/test_zero_shot.py to match vc.BACKENDS / STAGE2_BACKENDS.")
