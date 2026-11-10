@@ -101,6 +101,7 @@ CATEGORIES: list[tuple[str, str, str, Callable[[Library], list[Path]], bool]] = 
     ("misc",      "Misc generations & uploads",  "Clips and uploads that belong to no character, TTS, mixes",    lambda lib: _misc("uploads", "mixes", "base_voice_samples", "_experiments")(lib) + _misc_loose(lib), False),
     ("foley",     "Foley / sound effects",       "Everything in the foley folder",                               _foley, False),
     ("old_models", "Unused saved models",        "Saved Piper models other than each character's active one",    _unused_models, False),
+    ("inflation_session", "Unfinished inflation runs", "A saved Data Inflation run that was never added or discarded (the clips it generated)", _per_char("inflation_session"), False),
     ("stale",     "Unfinished imports",          "Half-finished split & qualify staging characters",             _stale_imports, False),
     ("training",  "Piper training workspace",    "Training dataset and checkpoints — training can no longer be resumed", _per_char("piper_train", "piper_dataset", skip_training=True), False),
     ("originals", "Original reference backups",  "Pre-qualify copies of reference clips (refs_original)",        _per_char("refs_original"), False),

@@ -13,10 +13,6 @@ GOOD_PRONUNCIATION = 0.90
 OK_PRONUNCIATION = 0.75
 
 
-def _cap(key: str, label: str, state: str, detail: str) -> dict:
-    return {"key": key, "label": label, "state": state, "detail": detail}      # state: ready | partial | missing
-
-
 def _rec(level: str, text: str, action: str | None = None) -> dict:
     return {"level": level, "text": text, "action": action}                   # level: warn | todo | info | ok
 
@@ -42,7 +38,23 @@ def _model_summary(name: str) -> dict | None:
         "epoch": active.get("epoch"), "base_voice": active.get("base_voice_label") or active.get("base_voice", ""),
         "clips": clips.get("n"), "minutes": clips.get("minutes"),
         "accuracy": (score or {}).get("accuracy"), "words_per_sec": (score or {}).get("words_per_sec"),
-        "count": len(models),
+        "trained_seconds": active.get("trained_seconds"), "count": len(models),
+    }
+
+
+def _details(rows: list[dict], inherited: list[dict], stats: dict) -> dict:
+    """General facts about the character's audio, for the ABOUT page."""
+    secs = sorted(r["seconds"] for r in rows if r["seconds"] > 0)
+    median = secs[len(secs) // 2] if secs else 0.0
+    return {
+        "clips": stats["all"]["clips"], "minutes": _minutes(stats["all"]["seconds"]),
+        "active_clips": stats["active"]["clips"], "active_minutes": _minutes(stats["active"]["seconds"]),
+        "median_clip": median, "longest_clip": secs[-1] if secs else 0.0,
+        "transcript_share": stats["transcript_share"],
+        "no_cloning": sum(1 for r in rows if not r["clone"]),
+        "inflated_by_backend": {k: v["clips"] for k, v in stats["by_backend"].items()},
+        "inflated_by_category": {k: v["clips"] for k, v in stats["by_category"].items()},
+        "inherited_clips": len(inherited),
     }
 
 
@@ -59,27 +71,6 @@ def character_profile(name: str) -> dict | None:
 
     act_min = _minutes(stats["active"]["seconds"])
     act_inf_share = (stats["active_inflated"]["seconds"] / stats["active"]["seconds"]) if stats["active"]["seconds"] else 0.0
-    clone_secs = sum(r["seconds"] for r in rows if r["clone"]) + sum(r["seconds"] for r in inherited)
-
-    # ── capabilities ────────────────────────────────────────────────────────
-    caps = [
-        _cap("clone", "Zero-shot cloning",
-             "ready" if clone_secs >= 6 else ("partial" if clone_secs > 0 else "missing"),
-             f"{clone_secs:.0f} s of reference audio available" if clone_secs else "no reference audio"),
-        _cap("data", "Training data",
-             "ready" if act_min >= MIN_RECOGNIZABLE_MIN else ("partial" if act_min >= 3 else "missing"),
-             f"{act_min:.1f} min active ({MIN_RECOGNIZABLE_MIN:.0f}+ for a recognizable voice, {MIN_STRONG_MIN:.0f}+ for a strong one)"),
-        _cap("voice", "Trained voice (Piper)", "ready" if model else "missing",
-             f"{model['name']} · epoch {model['epoch']}" if model else "not trained yet"),
-    ]
-    if model and model["accuracy"] is not None:
-        a = model["accuracy"]
-        caps.append(_cap("pronunciation", "Pronunciation",
-                         "ready" if a >= GOOD_PRONUNCIATION else ("partial" if a >= OK_PRONUNCIATION else "missing"),
-                         f"{a * 100:.0f}% of test words recognised"))
-    if is_base:
-        caps.append(_cap("variants", "Expression variants", "ready" if variants else "missing",
-                         f"{len(variants)} variant{'s' if len(variants) != 1 else ''}" if variants else "none yet"))
 
     # ── recommendations, most pressing first ─────────────────────────────────
     recs: list[dict] = []
@@ -93,7 +84,7 @@ def character_profile(name: str) -> dict | None:
                                  "gives a stronger resemblance.", "references"))
     if act_inf_share > MAX_INFLATED_SHARE and stats["active_recordings"]["clips"]:
         recs.append(_rec("warn", f"{act_inf_share:.0%} of the active audio is generated. The model can't beat the clone it "
-                                 "learns from — add more real recordings or lower the inflated share.", "training"))
+                                 "learns from — add more real recordings or lower the inflated mix on the TRAINING tab.", "training"))
     if rows and stats["transcript_share"] < MIN_TRANSCRIPT_SHARE:
         missing = len(rows) - stats["transcribed"]
         recs.append(_rec("warn", f"{missing} clip{'s' if missing != 1 else ''} have no transcript. Piper skips them when "
@@ -129,7 +120,7 @@ def character_profile(name: str) -> dict | None:
         "name": name, "is_base": is_base, "parent": char.get("parent"), "created": char.get("created", ""),
         "variants": variants, "stats": stats, "inherited": {"clips": len(inherited),
                                                              "seconds": sum(r["seconds"] for r in inherited)},
-        "model": model, "capabilities": caps, "recommendations": recs,
+        "model": model, "recommendations": recs, "details": _details(rows, inherited, stats),
         "favorites": len(C.list_character_favorites(name)) if is_base else 0,
         "history": sum(1 for _ in (C.CHARACTERS_DIR / name / "history").glob("*.wav")) if (C.CHARACTERS_DIR / name / "history").is_dir() else 0,
     }

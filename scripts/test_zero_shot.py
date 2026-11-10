@@ -48,7 +48,7 @@ def worker(case: str, char: str, out_dir: Path) -> dict:
     import soundfile as sf
     sys.path.insert(0, str(ROOT))
     import faily  # noqa: F401  (sets HF_HOME etc.)
-    from faily.core.characters import build_ref_audio, get_ref_chain, F5_REF_SECONDS
+    from faily.core.characters import build_ref_audio, get_ref_chain, ref_seconds
 
     res: dict = {"case": case}
     t0 = time.time()
@@ -59,7 +59,7 @@ def worker(case: str, char: str, out_dir: Path) -> dict:
     text = LONG_TEXT if case.startswith("long:") else TEXT
     res["text_len"] = len(text)
     is_f5 = base == "f5_tts"
-    with build_ref_audio(char, require_transcript=is_f5, max_duration=F5_REF_SECONDS if is_f5 else None,
+    with build_ref_audio(char, require_transcript=is_f5, max_duration=ref_seconds(base),
                          live_only=True) as (ref, ref_text):
         if case == "parler":
             from faily.modules.vc import _parler_generate_checked    # the path the app uses: takes are Whisper-checked

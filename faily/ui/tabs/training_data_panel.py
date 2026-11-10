@@ -1,11 +1,12 @@
-"""The activation layout on the TRAINING tab: what a run will learn from, at a glance.
+"""The activation layout on the TRAINING tab: what a run will learn from, at a glance, and a click to change it.
 
   gauge      active minutes against the 10 / 30 / 60 minute marks
-  treemap    every group of clips as a tile sized by audio length; amber = switched on, grey = off
-  mix        a slider for the inflated share of the active audio, plus ALL / RECORDINGS ONLY presets
-  group row  one chip per group to flip it on or off
+  boxes      the groups drawn as nested boxes — recordings and inflated are the big boxes, their sources /
+             backends sit inside as smaller boxes, and categories inside those as tiles. A box's size is its
+             audio length; its fill is how much of it is switched on. Click any box to switch it (and
+             everything inside it) on or off.
 
-The switches are the same ones the REFERENCES hub manages; this is the view you train from.
+The REFERENCES hub is where clips are looked at, filtered and deleted; this is the view you train from.
 """
 from typing import Callable
 
@@ -15,45 +16,48 @@ from faily.core import refs
 from faily.modules.profile import MIN_RECOGNIZABLE_MIN, MIN_STRONG_MIN
 
 _DIM = "text-[#444] font-mono text-[10px] tracking-wide"
-_ON, _OFF = "#f59e0b", "#374151"
 _SCALE_MIN = 60.0                        # the gauge's full width
+_TRACK = "#181a1f"                       # the unfilled part of a box
+_HUES = {                                # a box's colour comes from the deepest group name found here
+    "recordings": "#f59e0b", "uploaded": "#f59e0b", "imported": "#fbbf24",
+    "inflated": "#38bdf8", "chatterbox": "#38bdf8", "f5_tts": "#a78bfa", "xtts_v2": "#34d399", "unknown": "#94a3b8",
+}
+_GRAPHIC_HEIGHT = 340
 
 
-def group_title(g: dict) -> str:
-    if g["origin"] != "inflated":
-        return "recordings"
-    return f"{g['category'] or 'inflated'} · {g['backend'] or 'unknown'}"
+def node_hue(node: dict) -> str:
+    for label in reversed(node["path"]):
+        if label in _HUES:
+            return _HUES[label]
+    return "#94a3b8"
 
 
-def treemap_data(groups: list[dict]) -> list[dict]:
-    """One tile per group, split into an ON part and an OFF part (minutes of audio)."""
-    out = []
-    for g in groups:
-        on, off = g["active_seconds"] / 60, (g["seconds"] - g["active_seconds"]) / 60
-        kids = []
-        if on > 0:
-            kids.append({"name": f"on  {on:.1f} min", "value": round(on, 2), "itemStyle": {"color": _ON}})
-        if off > 0:
-            kids.append({"name": f"off  {off:.1f} min", "value": round(off, 2), "itemStyle": {"color": _OFF}})
-        if kids:
-            out.append({"name": group_title(g), "children": kids})
-    return out
+def rgba(hex_colour: str, alpha: float) -> str:
+    h = hex_colour.lstrip("#")
+    return f"rgba({int(h[0:2], 16)}, {int(h[2:4], 16)}, {int(h[4:6], 16)}, {alpha:.2f})"
 
 
-def treemap_options(groups: list[dict]) -> dict:
-    return {
-        "backgroundColor": "transparent",
-        "tooltip": {"formatter": "{b}"},
-        "series": [{
-            "type": "treemap", "roam": False, "nodeClick": False, "breadcrumb": {"show": False},
-            "left": 0, "right": 0, "top": 0, "bottom": 0,
-            "upperLabel": {"show": True, "height": 18, "color": "#cbd5e1", "fontFamily": "monospace", "fontSize": 10},
-            "label": {"show": True, "color": "#0b0b0b", "fontFamily": "monospace", "fontSize": 10},
-            "levels": [{"itemStyle": {"borderColor": "#0f0f0f", "borderWidth": 3, "gapWidth": 3}},
-                       {"itemStyle": {"borderColor": "#0f0f0f", "borderWidth": 1, "gapWidth": 1}}],
-            "data": treemap_data(groups),
-        }],
-    }
+def fill_fraction(node: dict) -> float:
+    """Share of the group's audio that is switched on (0..1)."""
+    return node["active_seconds"] / node["seconds"] if node["seconds"] else 0.0
+
+
+def tank_background(node: dict, direction: str = "to top") -> str:
+    """A CSS background that fills the box to the switched-on share, in the group's colour."""
+    pct = round(fill_fraction(node) * 100, 1)
+    hue = node_hue(node)
+    return f"linear-gradient({direction}, {rgba(hue, 0.62)} {pct}%, {_TRACK} {pct}%)"
+
+
+def toggle_icon(node: dict) -> str:
+    if node["active_clips"] == 0:
+        return "check_box_outline_blank"
+    return "check_box" if node["active_clips"] == node["clips"] else "indeterminate_check_box"
+
+
+def box_tooltip(node: dict) -> str:
+    return (f"{' › '.join(node['path']) or 'all data'} · {node['active_clips']}/{node['clips']} clips on · "
+            f"{node['active_seconds'] / 60:.1f}/{node['seconds'] / 60:.1f} min  —  click to switch the whole group")
 
 
 def gauge_html(active_minutes: float) -> str:
@@ -72,18 +76,11 @@ def build_activation_panel(name: str, *, on_change: Callable[[], None], goto_ref
     readout = ui.label("").classes("text-[#bbb] font-mono text-[12px]")
     note = ui.label("").classes("text-[#555] font-mono text-[10px] leading-snug")
     gauge = ui.html("", sanitize=False).classes("w-full")
-    tree = ui.echart({}).classes("w-full").style("height: 190px")
-    chips = ui.row().classes("w-full gap-1 flex-wrap")
-
-    with ui.row().classes("w-full items-center gap-3 mt-1 flex-wrap"):
-        share_lbl = ui.label("").classes("text-amber-400 font-mono text-[11px] w-44")
-        share = ui.slider(min=0, max=95, step=5, value=50).classes("w-56").props("color=amber")
-        share.on_value_change(lambda e: share_lbl.set_text(f"inflated share  {int(e.value)}%"))
-        share_lbl.set_text("inflated share  50%")
-        ui.button("APPLY MIX", icon="tune", on_click=lambda: apply_mix()).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest").tooltip(
-            "Switch on every recording, then just enough inflated clips (spread across categories) to make this "
-            "share of the active audio. The rest are switched off, not deleted.")
-    with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+    graphic = ui.element("div").classes("w-full").style(
+        f"display:flex; gap:8px; height:{_GRAPHIC_HEIGHT}px; align-items:stretch")
+    ui.label("Click a box to switch it — and everything inside it — on or off for training. "
+             "Box size = audio length; the coloured fill = how much is on.").classes(_DIM)
+    with ui.row().classes("w-full items-center gap-2 flex-wrap mt-1"):
         ui.button("EVERYTHING", on_click=lambda: preset("all")).props("flat dense color=grey").classes("font-mono text-[10px] tracking-widest")
         ui.button("RECORDINGS ONLY", on_click=lambda: preset("recordings")).props("flat dense color=grey").classes("font-mono text-[10px] tracking-widest").tooltip(
             "Closest to the real voice; needs enough real audio to train on")
@@ -92,9 +89,7 @@ def build_activation_panel(name: str, *, on_change: Callable[[], None], goto_ref
         ui.space()
         ui.button("MANAGE IN REFERENCES", icon="folder_open", on_click=goto_references).props("flat dense color=amber").classes("font-mono text-[10px] tracking-widest")
 
-    def changed(message: str | None = None):
-        if message:
-            ui.notify(message, timeout=1800)
+    def changed():
         refresh()
         on_change()
 
@@ -112,18 +107,79 @@ def build_activation_panel(name: str, *, on_change: Callable[[], None], goto_ref
             refs.set_active(name, rec, False)
         changed()
 
-    def apply_mix():
-        res = refs.balance_active(name, share.value / 100)
-        changed(f"{res['active_clips']} clips active · {res['share']:.0%} inflated")
-
-    def flip(g: dict):
-        refs.set_active(name, g["keys"], g["active_clips"] < g["clips"])      # partly/fully off -> on; fully on -> off
+    def flip(node: dict):
+        refs.set_active(name, node["keys"], node["active_clips"] < node["clips"])      # none/partly on -> all on; all on -> off
         changed()
+
+    # ── the nested boxes ─────────────────────────────────────────────────
+    def clickable(el, node: dict):
+        el.props(f'data-node-toggle="{node["id"]}"')
+        el.on("click.stop", lambda n=node: flip(n))
+        el.style("cursor:pointer")
+        with el:
+            ui.tooltip(box_tooltip(node))
+
+    def label_block(node: dict, big: bool):
+        off = node["active_clips"] == 0
+        with ui.element("div").style(f"min-width:0; opacity:{0.5 if off else 1}"):
+            ui.label(node["label"]).style(
+                f"font:{'600 12px' if big else '11px'} monospace; color:#f1f5f9; text-shadow:0 1px 2px #000; "
+                "white-space:nowrap; overflow:hidden; text-overflow:ellipsis")
+            ui.label(f"{node['seconds'] / 60:.1f} min · {node['clips']} clips").style(
+                "font:9px monospace; color:#cbd5e1; text-shadow:0 1px 2px #000; white-space:nowrap; overflow:hidden; text-overflow:ellipsis")
+
+    def draw_leaf(node: dict, grow_basis: str):
+        hue = node_hue(node)
+        tile = ui.element("div").style(
+            f"flex:{max(node['seconds'], 1) / 60:.3f} 1 {grow_basis}; min-height:54px; min-width:80px; border-radius:6px; "
+            f"padding:6px 8px; display:flex; align-items:flex-start; justify-content:space-between; gap:6px; "
+            f"background:{tank_background(node)}; border:1px solid {rgba(hue, 0.45)}; transition:filter .15s")
+        tile.classes("hover:brightness-125")
+        clickable(tile, node)
+        with tile:
+            label_block(node, big=False)
+            ui.icon(toggle_icon(node), size="15px").style("color:#e2e8f0; opacity:.85")
+
+    def draw_group(node: dict, depth: int):
+        """A box with a header you can click and its children inside it."""
+        hue = node_hue(node)
+        flex = f"flex:{max(node['seconds'], 1) / 60:.3f} 1 0" if depth else "flex:1 1 0"
+        box = ui.element("div").style(
+            f"{flex}; min-width:{150 if depth == 1 else 110}px; min-height:{80}px; display:flex; flex-direction:column; "
+            f"border-radius:{10 if depth == 1 else 8}px; border:1px solid {rgba(hue, 0.5)}; "
+            f"background:{rgba(hue, 0.07)}; overflow:hidden")
+        with box:
+            head = ui.element("div").style(
+                f"display:flex; align-items:center; justify-content:space-between; gap:6px; padding:6px 8px; "
+                f"background:{rgba(hue, 0.16)}; position:relative")
+            clickable(head, node)
+            with head:
+                label_block(node, big=depth == 1)
+                ui.icon(toggle_icon(node), size="16px").style("color:#e2e8f0; opacity:.9")
+                ui.element("div").style(                                      # fill bar along the header's bottom edge
+                    f"position:absolute; left:0; right:0; bottom:0; height:3px; background:{tank_background(node, 'to right')}")
+            leaves_only = all(not c["children"] for c in node["children"])
+            body = ui.element("div").style(
+                "flex:1 1 0; min-height:0; padding:6px; gap:6px; display:flex; "
+                + ("flex-wrap:wrap; align-content:stretch;" if leaves_only and depth >= 2 else "flex-direction:column;"))
+            with body:
+                for child in node["children"]:
+                    if child["children"]:
+                        draw_group(child, depth + 1)
+                    else:
+                        draw_leaf(child, "90px" if depth >= 2 else "0")
+
+    def render_graphic(tree: dict):
+        graphic.clear()
+        with graphic:
+            if not tree["children"]:
+                ui.label("No reference clips yet — add some on the REFERENCES tab.").classes(_DIM)
+            for node in tree["children"]:
+                draw_group(node, 1) if node["children"] else draw_leaf(node, "0")
 
     def refresh():
         rows = refs.clip_rows(name)
         stats = refs.summarize(rows)
-        groups = refs.groups(rows)
         a = stats["active"]
         mins = a["seconds"] / 60
         inf_share = stats["active_inflated"]["seconds"] / a["seconds"] if a["seconds"] else 0.0
@@ -141,17 +197,7 @@ def build_activation_panel(name: str, *, on_change: Callable[[], None], goto_ref
         note.set_text("  ·  ".join(msgs))
         note.classes(replace=("text-amber-500" if msgs else "text-[#555]") + " font-mono text-[10px] leading-snug")
         gauge.set_content(gauge_html(mins))
-        tree.options.clear()
-        tree.options.update(treemap_options(groups))
-        tree.update()
-        chips.clear()
-        with chips:
-            for g in groups:
-                on = g["active_clips"] == g["clips"]
-                part = 0 < g["active_clips"] < g["clips"]
-                ui.button(f"{group_title(g)}  {g['active_clips']}/{g['clips']}", on_click=lambda g=g: flip(g)).props(
-                    f"dense unelevated no-caps color={'amber' if on else 'amber-9' if part else 'grey-9'} text-color={'black' if on else 'grey-5'}"
-                ).classes("font-mono text-[10px]").tooltip("Click to flip this group on/off for training")
+        render_graphic(refs.group_tree(rows))
 
     refresh()
     return refresh

@@ -207,6 +207,12 @@ def ref_counts_text(name: str) -> str:
     return f"{live} recording{'s' if live != 1 else ''}" + (f" · {n_inf} inflated" if n_inf else "")
 
 
+# Two-pane tabs (controls | output, library | details): the divider sits a third of the way across, with a
+# floor so the left pane never gets cramped on a small window. min-w-0 on the panes lets them shrink instead
+# of pushing a horizontal scrollbar in.
+SPLIT_COLUMNS = "minmax(340px, 1fr) 2fr"
+
+
 def prime_audio(btn) -> None:
     """For a button whose handler generates audio and then calls play_url()."""
     btn.on("click", js_handler="() => window.failyPlay.prime()")

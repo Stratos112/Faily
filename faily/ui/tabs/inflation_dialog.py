@@ -2,7 +2,9 @@
 Backend, Generate, Review & Commit) that bulk-generates zero-shot clips of a
 character's own voice to inflate their reference pool before Piper training.
 """
+import asyncio
 import shutil
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -14,15 +16,12 @@ from faily.modules.vc import BACKENDS
 from faily.modules.inflation import (
     CATEGORIES, ScriptLine, InflatedCandidate,
     load_script_bank, sample_lines, generate_batch, used_inflated_lines,
+    session_dir, save_session, load_session, clear_session, discard_session,
 )
-from faily.core.paths import TMP_DIR
 from faily.modules.importer import stage_inflated
 from faily.modules import autoqualify as AQ
 from faily.ui.components import section_label, show_error, model_picker, bind_play, output_url, overlay_host
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
-
-_STAGING_ROOT = TMP_DIR / "inflation_staging"
-
 
 def _section_row(text: str, tip: str):
     with ui.row().classes("items-center gap-1"):
@@ -39,8 +38,40 @@ def _fmt_dur(seconds: float) -> str:
 _SESSIONS: dict[str, dict] = {}
 
 
+def commit_candidates(char_name: str, candidates: list) -> tuple[int, int]:
+    """Add every ticked (accepted) candidate to the character's reference pool as inflated data, keeping
+    which script category, engine and wizard run made it. Returns (added, failed)."""
+    ok, failed = 0, 0
+    for c in candidates:
+        if not c.accepted or c.committed:
+            continue
+        try:
+            add_ref_clip(
+                char_name, c.path, transcript=" ".join(c.text.split()),
+                source="inflated", category=c.category, backend=c.backend, batch=c.batch,
+            )
+            c.committed = True                  # a restored session must not add it a second time
+            ok += 1
+        except Exception:
+            failed += 1
+    return ok, failed
+
+
+def _session_alive(sess: dict) -> bool:
+    """False once the browser page that owns the wizard's dialog has been reloaded or dropped."""
+    try:
+        sess["dlg"].client
+        return True
+    except RuntimeError:
+        return False
+
+
 def _reopen(char_name: str) -> None:
     sess = _SESSIONS.get(char_name)
+    if sess and not _session_alive(sess):
+        _SESSIONS.pop(char_name, None)
+        ui.notify("That inflation was lost when the page reloaded — start a new one.", type="warning")
+        return
     if sess:
         sess["minimized"][0] = False
         sess["dlg"].open()
@@ -69,11 +100,42 @@ def global_inflation_chip() -> None:
     ui.timer(1.5, _refresh)
 
 
-def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], preset: dict | None = None) -> None:
+def _ask_resume(host, char_name: str, on_committed: Callable[[], None], preset: dict | None, saved: dict) -> None:
+    """An earlier wizard run for this character was saved but never added or discarded: offer to pick it up."""
+    n = len(saved["candidates"])
+    total = len(saved.get("lines") or [])
+    when = time.strftime("%b %d, %H:%M", time.localtime(saved.get("saved", time.time())))
+    engine = BACKENDS.get(saved.get("backend", ""), {}).get("label", saved.get("backend", "?"))
+    verdicts = sum(1 for c in saved["candidates"] if c.verdict)
+    with host, ui.dialog() as ask, ui.card().classes("bg-[#111] border border-[#2a2a2a] min-w-[420px] gap-3"):
+        ui.label("UNFINISHED INFLATION").classes("text-amber-400 font-mono text-xs tracking-widest")
+        ui.label(
+            f"{n} clip{'s' if n != 1 else ''}" + (f" of {total}" if total > n else "") + f" generated with {engine} on {when} "
+            f"were never added to {char_name}." + (f" {verdicts} already auto-qualified." if verdicts else "")
+        ).classes("text-[#aaa] font-mono text-[11px] max-w-md")
+
+        def go(choice):
+            ask.close()
+            open_inflation_dialog(char_name, on_committed, preset, resume=choice)
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=ask.close).props("flat dense color=grey")
+            ui.button("DISCARD & START NEW", on_click=lambda: go("discard")).props("flat dense color=negative")
+            ui.button("RESUME", icon="restore", on_click=lambda: go(saved)).props("color=amber unelevated dense")
+    ask.open()
+
+
+def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], preset: dict | None = None,
+                          resume: "dict | str | None" = None) -> None:
     """Open the Data Inflation wizard for char_name. on_committed() fires
     after Step 4 commits at least one candidate into the reference pool.
     preset (optional, for "generate more like this" on the REFERENCES hub):
-    {"category": only draw lines from this category, "backend": start on this engine, "count": clips}."""
+    {"category": only draw lines from this category, "backend": start on this engine, "count": clips}.
+    The wizard saves itself as it goes (see inflation.save_session). If a saved run exists this offers to
+    resume it; `resume` is that choice made: a loaded session dict, or "discard"."""
+    if char_name in _SESSIONS and not _session_alive(_SESSIONS[char_name]):
+        _SESSIONS.pop(char_name, None)     # its page is gone (reload): the old wizard can't be shown again;
+                                           # its saved clips stay on disk and are offered for resuming below
     if char_name in _SESSIONS:             # already running / minimized: bring it back, don't start over
         _reopen(char_name)
         return
@@ -92,9 +154,14 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
     # tab can't delete a wizard that is minimized or still generating.
     host = overlay_host() or ui.context.slot.parent
 
-    staging_dir = _STAGING_ROOT / char_name
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir, ignore_errors=True)
+    staging_dir = session_dir(char_name)
+    if resume is None:
+        saved = load_session(staging_dir)
+        if saved:
+            _ask_resume(host, char_name, on_committed, preset, saved)
+            return
+    if not isinstance(resume, dict):
+        discard_session(staging_dir)       # a fresh start (or the old run was thrown away)
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     has_transcripts = any(c["transcript"].strip() for c in chain)
@@ -116,6 +183,19 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
     _started: list[bool] = [False]
     _minimized: list[bool] = [False]
     _phase: list[str] = ["setup"]          # setup -> generating -> review
+    if isinstance(resume, dict):           # picking up a saved run: straight to reviewing what it made
+        for k, w in (resume.get("weights") or {}).items():
+            if k in _weights:
+                _weights[k][0] = float(w)
+        _count[0] = int(resume.get("count") or _count[0])
+        if resume.get("backend") in BACKENDS:
+            _backend[0] = resume["backend"]
+            _param1[0] = resume.get("param1", BACKENDS[_backend[0]]["param1"]["default"])
+            _param2[0] = resume.get("param2", BACKENDS[_backend[0]]["param2"]["default"])
+        _lines[:] = [ScriptLine(d["category"], d["text"]) for d in resume.get("lines", [])]
+        _candidates[:] = resume["candidates"]
+        _started[0] = True
+        _phase[0] = "review"
 
     with host, ui.dialog().props("persistent").classes("w-full max-w-5xl") as dlg, ui.card().classes(
         "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
@@ -143,6 +223,34 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                 fn()
             except RuntimeError:
                 pass
+
+        def _save():
+            """Write the run to disk (settings, script lines, every clip, ticks and verdicts)."""
+            try:
+                save_session(staging_dir, {
+                    "phase": _phase[0], "backend": _backend[0], "param1": _param1[0], "param2": _param2[0],
+                    "count": _count[0], "weights": {k: w[0] for k, w in _weights.items()},
+                    "lines": [{"category": l.category, "text": l.text} for l in _lines],
+                }, _candidates)
+            except OSError:
+                pass                                        # saving is a safety net, never a reason to stop
+
+        _save_pending = [False]
+
+        def _save_soon(delay: float = 3.0):
+            """Save in a few seconds; bursts of changes (ticking a whole category) share one write."""
+            if _save_pending[0]:
+                return
+
+            def _go():
+                _save_pending[0] = False
+                _save()
+            try:
+                _save_pending[0] = True
+                asyncio.get_running_loop().call_later(delay, _go)
+            except RuntimeError:
+                _save_pending[0] = False
+                _save()
 
         with ui.stepper().props("flat").classes("w-full bg-transparent") as stepper:
 
@@ -280,6 +388,12 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                             f"categories (asked for {_count[0]}) — generating those."
                         ))
 
+                    _save()                                  # the settings and script lines, before the first clip lands
+
+                    def _on_clip(cand):
+                        _candidates.append(cand)
+                        _save_soon(5.0)
+
                     def _stop():
                         _cancel[0] = True
                         stop_btn.set_text("STOPPING…")
@@ -303,7 +417,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                     try:
                         results = await generate_batch(
                             char_name, _lines, _backend[0], _param1[0], _param2[0],
-                            staging_dir, _cancel, _on_progress, _on_error,
+                            staging_dir, _cancel, _on_progress, _on_error, _on_clip,
                         )
                         _candidates[:] = results
                     except Exception as exc:
@@ -313,6 +427,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                         return
 
                     _phase[0] = "review"
+                    _save()
                     if _cancel[0]:
                         _ui_safe(lambda: gen_status.set_text(
                             f"{len(_candidates)}/{len(_lines)} generated — stopped early, reviewing what we have"
@@ -404,6 +519,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                                             def _on_toggle(e, c=c):
                                                 c.accepted = bool(e.value)
                                                 _refresh_header()
+                                                _save_soon()
                                             cb.on_value_change(_on_toggle)
                                             checkboxes.append(cb)
                                             bind_play(
@@ -459,11 +575,13 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                     try:
                         results = await ni_run.io_bound(_run)
                     except Exception as exc:
-                        show_error(exc)
+                        _ui_safe(lambda: show_error(exc))
                         results = []
                     finally:
-                        timer.cancel()
-                        auto_bar.set_visibility(False)
+                        # This runs for minutes. If the browser page was reloaded or dropped meanwhile, its
+                        # elements are gone: the work below must still finish and keep its results.
+                        _ui_safe(timer.cancel)
+                        _ui_safe(lambda: auto_bar.set_visibility(False))
                     _dur_cache.clear()              # auto-qualify rewrote the clips: lengths changed
                     counts = {"ok": 0, "review": 0, "reject": 0}
                     trimmed = 0
@@ -472,37 +590,31 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                         c.accepted = r.status == "ok"
                         counts[r.status] += 1
                         trimmed += r.status == "ok" and (r.trimmed_start + r.trimmed_end > 0.05)
-                    auto_status.set_text(
-                        f"auto-qualified: {counts['ok']} kept ({trimmed} trimmed), "
-                        f"{counts['review']} need a person, {counts['reject']} rejected"
-                    )
-                    for b in (auto_btn, qualify_btn, commit_btn, review_btn):
-                        b.enable()
-                    _render_review()
+
+                    _save()                         # the verdicts are kept even if nobody is looking
+
+                    def _show():
+                        auto_status.set_text(
+                            f"auto-qualified: {counts['ok']} kept ({trimmed} trimmed), "
+                            f"{counts['review']} need a person, {counts['reject']} rejected"
+                        )
+                        for b in (auto_btn, qualify_btn, commit_btn, review_btn):
+                            b.enable()
+                        _render_review()
+                    _ui_safe(_show)
 
                 async def _qualify():
                     await _qualify_clips()
 
                 def _add_selected() -> tuple[int, int]:
-                    """Add every ticked clip to the pool. Returns (added, failed)."""
-                    ok, failed = 0, 0
-                    for c in _candidates:
-                        if not c.accepted:
-                            continue
-                        try:
-                            add_ref_clip(
-                                char_name, c.path, transcript=" ".join(c.text.split()),
-                                source="inflated", category=c.category,
-                            )
-                            ok += 1
-                        except Exception:
-                            failed += 1
-                    return ok, failed
+                    return commit_candidates(char_name, _candidates)
 
                 async def _commit():
                     commit_btn.disable()
                     ok, failed = _add_selected()
+                    _save()
                     if ok:
+                        clear_session(staging_dir)                      # nothing left to resume
                         msg = f"{ok} clip{'s' if ok != 1 else ''} added to the reference pool"
                         if failed:
                             msg += f"  ({failed} failed)"
@@ -522,6 +634,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                     for b in (auto_btn, qualify_btn, commit_btn, review_btn):
                         b.disable()
                     ok, failed = _add_selected()
+                    _save()                                             # the added ones are marked, so a restore skips them
                     if ok:
                         ui.notify(f"{ok} kept clip{'s' if ok != 1 else ''} added — now reviewing "
                                   f"{len(flagged)} flagged", type="positive", timeout=4000)
@@ -534,6 +647,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                         return
 
                     def _committed(result: dict):
+                        clear_session(staging_dir)
                         ui.notify(f"{result['added']} reviewed clip{'s' if result['added'] != 1 else ''} "
                                   f"added to the reference pool", type="positive", timeout=4000)
                         on_committed()
@@ -548,7 +662,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                     """Stage the selected clips and run the full qualification on them (volume,
                     trim, noises, script words, duplicates); ADD at the end puts the survivors
                     in the pool as inflated data."""
-                    picked = picked if picked is not None else [c for c in _candidates if c.accepted]
+                    picked = picked if picked is not None else [c for c in _candidates if c.accepted and not c.committed]
                     if not picked:
                         ui.notify("Nothing selected to check", type="warning")
                         return
@@ -561,6 +675,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
                         return
 
                     def _committed(result: dict):
+                        clear_session(staging_dir)
                         ui.notify(
                             f"{result['added']} inflated clip{'s' if result['added'] != 1 else ''} "
                             f"added to the reference pool",
@@ -633,4 +748,9 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
         return "set up"
 
     _SESSIONS[char_name] = {"dlg": dlg, "minimized": _minimized, "phase": _phase, "label": _chip_label}
+    if isinstance(resume, dict):
+        _render_review()
+        auto_status.set_text(f"restored {len(_candidates)} clips from "
+                             f"{time.strftime('%b %d, %H:%M', time.localtime(resume.get('saved', time.time())))}")
+        stepper.set_value("Review & Commit")
     dlg.open()

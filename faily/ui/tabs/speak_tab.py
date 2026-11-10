@@ -10,10 +10,11 @@ from faily.modules.vc import (
 from faily.modules.edit import ensure_stereo
 from faily.modules.piper import generate_character_ref_sample, SAMPLE_TEXT
 from faily.core.characters import (
-    list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio, F5_REF_SECONDS,
+    list_characters, get_character, get_ref_chain, get_ref_path, build_ref_audio, ref_seconds,
 )
 from faily.core.paths import history_dir
 from faily.ui.components import (
+    SPLIT_COLUMNS,
     output_panel, section_label, show_error, model_picker, preview_meter,
     prime_audio, play_url, ref_mode_toggle, ref_live_only, ref_counts_text,
 )
@@ -563,7 +564,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         _out["model_loader"].set_visibility(True)
         _poll.active = True
         _is_f5 = _backend[0] == "f5_tts"
-        with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=F5_REF_SECONDS if _is_f5 else None,
+        with build_ref_audio(char_state[0], require_transcript=_is_f5, max_duration=ref_seconds(_backend[0]),
                              live_only=ref_live_only()) as (ref, chain_transcript):
             try:
                 for i in range(n):
@@ -694,7 +695,7 @@ def build_speak_tab():
 
     _out: dict = {}
 
-    with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
+    with ui.grid(columns=SPLIT_COLUMNS).classes("w-full h-full gap-0"):
 
         # ── LEFT: sub-tabs + swappable controls ──────────────────────────────
         with ui.column().classes("w-full h-full gap-0 border-r border-[#252525]"):

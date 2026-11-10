@@ -6,11 +6,6 @@ from nicegui import ui
 from faily.modules.profile import character_profile
 
 _DIM = "text-[#444] font-mono text-[10px] tracking-wide"
-_STATE = {          # capability state -> (icon, colour class)
-    "ready": ("check_circle", "text-emerald-500"),
-    "partial": ("adjust", "text-amber-500"),
-    "missing": ("radio_button_unchecked", "text-[#444]"),
-}
 _LEVEL = {          # recommendation level -> (icon, colour class)
     "warn": ("warning", "text-amber-500"),
     "todo": ("flag", "text-sky-500"),
@@ -46,17 +41,6 @@ def build_about_panel(name: str, *, goto: Callable[[str], None], open_character:
         if p["is_base"]:
             ui.label(f"{p['favorites']} favorites · {p['history']} generated clips").classes(_DIM)
 
-    # ── readiness ─────────────────────────────────────────────────────────
-    _label("WHAT IT CAN DO")
-    with ui.row().classes("w-full gap-2 flex-wrap"):
-        for cap in p["capabilities"]:
-            icon, colour = _STATE[cap["state"]]
-            with ui.column().classes("gap-0 p-2 rounded bg-[#111] border border-[#1e1e1e] w-[240px]"):
-                with ui.row().classes("items-center gap-1 no-wrap"):
-                    ui.icon(icon, size="14px").classes(colour)
-                    ui.label(cap["label"]).classes("text-[#bbb] font-mono text-[11px]")
-                ui.label(cap["detail"]).classes("text-[#666] font-mono text-[10px] leading-snug")
-
     # ── needs attention ───────────────────────────────────────────────────
     _label("WHERE IT NEEDS WORK")
     with ui.column().classes("w-full gap-1"):
@@ -82,6 +66,10 @@ def build_about_panel(name: str, *, goto: Callable[[str], None], open_character:
                 ui.label(f"epoch {m['epoch']} · base voice {m['base_voice'] or '—'}").classes(_DIM)
                 if m["clips"]:
                     ui.label(f"trained on {m['clips']} clips · {m['minutes']} min").classes(_DIM)
+                if m.get("trained_seconds"):
+                    ui.label(f"training took {m['trained_seconds'] / 3600:.1f} h").classes(_DIM)
+                if m["created"]:
+                    ui.label(f"saved {m['created'][:10]}").classes(_DIM)
                 if m["count"] > 1:
                     ui.label(f"{m['count']} saved models (MODELS tab)").classes(_DIM)
             if m["accuracy"] is not None:
@@ -95,23 +83,27 @@ def build_about_panel(name: str, *, goto: Callable[[str], None], open_character:
     else:
         ui.label("No Piper voice trained yet.").classes(_DIM)
 
-    # ── data at a glance ──────────────────────────────────────────────────
-    _label("DATA")
-    a, al = st["active"], st["all"]
-    with ui.row().classes("w-full gap-6 flex-wrap"):
+    # ── details ───────────────────────────────────────────────────────────
+    d = p["details"]
+    _label("DETAILS")
+    with ui.row().classes("w-full gap-x-8 gap-y-3 flex-wrap"):
         for title, value, sub in [
-            ("ACTIVE", f"{a['clips']} clips", _minutes(a["seconds"])),
-            ("ALL", f"{al['clips']} clips", _minutes(al["seconds"])),
+            ("ACTIVE FOR TRAINING", f"{d['active_clips']} clips", d["active_minutes"]),
+            ("ALL CLIPS", f"{d['clips']} clips", d["minutes"]),
             ("RECORDINGS", f"{st['recordings']['clips']}", _minutes(st["recordings"]["seconds"])),
             ("INFLATED", f"{st['inflated']['clips']}", _minutes(st["inflated"]["seconds"])),
-            ("FROM PARENT", f"{p['inherited']['clips']}", _minutes(p["inherited"]["seconds"])),
+            ("FROM PARENT", f"{d['inherited_clips']}", _minutes(p["inherited"]["seconds"])),
+            ("TYPICAL CLIP", f"{d['median_clip']:.1f} s", f"longest {d['longest_clip']:.0f} s"),
+            ("TRANSCRIPTS", f"{d['transcript_share']:.0%}", f"{st['transcribed']} of {d['clips']}"),
+            ("BLOCKED FROM CLONING", f"{d['no_cloning']}", "clips"),
         ]:
             with ui.column().classes("gap-0"):
                 ui.label(title).classes("text-[#444] font-mono text-[9px] tracking-widest")
                 ui.label(value).classes("text-[#bbb] font-mono text-[12px]")
                 ui.label(sub).classes("text-[#555] font-mono text-[10px]")
-    if st["by_backend"]:
-        ui.label("inflated by backend: " + " · ".join(f"{k} {v['clips']}" for k, v in st["by_backend"].items())).classes(_DIM + " mt-1")
+    if d["inflated_by_backend"]:
+        ui.label("inflated by backend: " + " · ".join(f"{k} {v}" for k, v in d["inflated_by_backend"].items())).classes(_DIM + " mt-1")
+        ui.label("inflated by category: " + " · ".join(f"{k} {v}" for k, v in d["inflated_by_category"].items())).classes(_DIM)
 
     if p["variants"]:
         _label("VARIANTS")

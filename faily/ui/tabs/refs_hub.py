@@ -2,7 +2,10 @@
 
   ADD / QUALIFY / INFLATE      get more or better data in
   metrics + switchable chart   how much, how long, from which source / category / backend
-  group cards                  one-click activate, deactivate, delete or generate-more per group
+  group cards                  drill down through the groups (recordings -> uploaded / imported, inflated ->
+                               backend -> category). Selecting one scopes the chart to it; each card can show
+                               its clips in the table, add more, or delete. Switching groups on/off for
+                               training lives on the TRAINING tab.
   clip table                   every clip, sortable and filterable, with a selection toolbar so
                                nothing has to be found by scrolling a list
 
@@ -47,7 +50,8 @@ def grid_rows(rows: list[dict], long_over: float) -> list[dict]:
             flags.append("NO TEXT")
         out.append({
             "key": r["key"], "name": r["name"] + (" ★" if r["primary"] else ""),
-            "origin": r["origin"], "category": r["category"] or "", "backend": r["backend"] or ("unknown" if r["origin"] == "inflated" else ""),
+            "origin": r["origin"], "source": refs.source_label("" if r["primary"] else r["source"]),
+            "category": r["category"] or "", "backend": r["backend"] or ("unknown" if r["origin"] == "inflated" else ""),
             "batch": r["batch"] or "", "seconds": round(r["seconds"], 1), "train": r["active"], "clone": r["clone"],
             "flags": " ".join(flags), "transcript": r["transcript"], "url": output_url(r["audio"]),
         })
@@ -86,15 +90,15 @@ def chart_options(data: dict, horizontal: bool, measure: str, stack: str | None)
 def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks: dict) -> Callable[[], None]:
     """Build the hub into the current slot. `rebuild` re-renders the whole character panel; hooks:
     edit(row), split(row), to_edit(row), open_character(name). Returns refresh()."""
-    state = {"by": "origin", "measure": "minutes", "stack": "state", "horizontal": False}
+    state = {"by": "source", "measure": "minutes", "stack": "state", "horizontal": False, "scope": ""}
     selected: list[dict] = []
 
     # ── data ─────────────────────────────────────────────────────────────
     def load():
         rows = refs.clip_rows(name)
-        return rows, refs.summarize(rows), refs.long_threshold(rows)
+        return rows, refs.summarize(rows), refs.long_threshold(rows), refs.group_tree(rows)
 
-    rows, stats, long_over = load()
+    rows, stats, long_over, tree = load()
     inherited = refs.inherited_rows(name)
     parent_name = (get_character(name) or {}).get("parent")
 
@@ -138,8 +142,9 @@ def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks
         ui.space()
         ui.label("Training uses ACTIVE clips only").classes(_DIM)
 
-    with ui.expansion("ADD CLIPS", icon="upload_file").classes("w-full").props(
-            "dense header-class='text-[#888] font-mono text-[11px] tracking-widest'"):
+    add_exp = ui.expansion("ADD CLIPS", icon="upload_file").classes("w-full").props(
+        "dense header-class='text-[#888] font-mono text-[11px] tracking-widest'")
+    with add_exp:
         ref_upload = (ui.upload(on_upload=on_upload, multiple=False, auto_upload=False)
                       .props("accept=.wav,.mp3,.flac,.ogg flat dense color=grey label='Select clip'").classes("w-full"))
         upload_text = (ui.input(placeholder="transcript (optional)…").props("outlined dark dense")
@@ -176,7 +181,7 @@ def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks
                     ui.label(small).classes("text-[#555] font-mono text-[9px]")
             if stats["long"]:
                 with ui.column().classes("gap-0 px-3 py-2 rounded bg-[#1a1200] border border-amber-900/40 min-w-[110px] cursor-pointer").on(
-                        "click", lambda: filter_to(flags="LONG", contains=True)):
+                        "click", lambda: grid.run_grid_method("setFilterModel", {"flags": {"filterType": "text", "type": "contains", "filter": "LONG"}})):
                     ui.label("LONG CLIPS").classes("text-amber-700 font-mono text-[9px] tracking-widest")
                     ui.label(str(stats["long"])).classes("text-amber-400 font-mono text-lg leading-tight")
                     ui.label(f"over {stats['long_threshold']:.0f} s · click to view").classes("text-[#7a5a1a] font-mono text-[9px]")
@@ -184,7 +189,7 @@ def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks
     # ── chart ────────────────────────────────────────────────────────────
     ui.separator().classes("my-1 opacity-10")
     with ui.row().classes("w-full items-center gap-3 flex-wrap"):
-        section_label("BREAKDOWN")
+        chart_title = ui.label("").classes("text-[#bbb] font-mono text-[11px] tracking-widest")
         by_tg = ui.toggle(refs.DIMENSIONS, value=state["by"]).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
         measure_tg = ui.toggle(refs.MEASURES, value=state["measure"]).props("dense no-caps unelevated toggle-color=amber text-color=grey-6")
         stack_sel = ui.select({"": "no split", **{k: f"split by {v.lower()}" for k, v in refs.DIMENSIONS.items()}},
@@ -197,7 +202,12 @@ def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks
         stack = state["stack"] or None
         if stack == state["by"]:
             stack = None
-        data = refs.breakdown(rows, state["by"], state["measure"], stack)
+        node = refs.find_node(tree, state["scope"]) or tree
+        keys = set(node["keys"])
+        scoped = [r for r in rows if r["key"] in keys]
+        chart_title.set_text("BREAKDOWN · " + (" › ".join(node["path"]) if node["path"] else "all data")
+                             + f" · {node['clips']} clips · {fmt_minutes(node['seconds'])}")
+        data = refs.breakdown(scoped, state["by"], state["measure"], stack)
         chart.options.clear()
         chart.options.update(chart_options(data, state["horizontal"], state["measure"], stack))
         chart.update()
@@ -212,63 +222,78 @@ def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks
     # ── group cards ──────────────────────────────────────────────────────
     ui.separator().classes("my-1 opacity-10")
     section_label("GROUPS")
-    ui.label("Switch whole groups on or off for training, delete them, or generate more like them.").classes(_DIM)
-    groups_row = ui.row().classes("w-full gap-2 flex-wrap")
+    ui.label("Click a group to chart just its clips; click it again to step back out. "
+             "Switch groups on or off for training on the TRAINING tab.").classes(_DIM)
+    groups_col = ui.column().classes("w-full gap-2")
 
-    def filter_to(contains: bool = False, **cols):
-        model = {c: {"filterType": "text", "type": "contains" if contains else "equals", "filter": v} for c, v in cols.items()}
+    def filter_node(node: dict):
+        model = {}
+        for col, value in node["filter"].items():
+            model[col] = ({"filterType": "text", "type": "blank"} if value == ""
+                          else {"filterType": "text", "type": "equals", "filter": value})
         grid.run_grid_method("setFilterModel", model or None)
 
-    def group_action(g: dict, what: str):
-        if what == "on":
-            n = refs.set_active(name, g["keys"], True)
-        elif what == "off":
-            n = refs.set_active(name, g["keys"], False)
-        elif what == "delete":
-            confirm_delete(g["keys"], f"{g['clips']} clips in this group")
-            return
+    def add_more(node: dict):
+        if node["filter"].get("origin") == "inflated":
+            path = node["path"]
+            backend = path[1] if len(path) > 1 and path[1] != refs.UNKNOWN else None
+            category = path[2] if len(path) > 2 and path[2] != "uncategorised" else None
+            open_inflation_dialog(name, rebuild, preset={"category": category, "backend": backend})
         else:
-            return
-        ui.notify(f"{n} clip{'s' if n != 1 else ''} switched {what}", timeout=1800)
-        refresh()
+            add_exp.set_value(True)
+            ui.notify("Choose a clip above, or split & qualify a longer recording", timeout=2500)
+
+    def select_group(node: dict):
+        state["scope"] = node["parent"] if state["scope"] == node["id"] else node["id"]
+        render_groups()
+        render_chart()
 
     def render_groups():
-        groups_row.clear()
-        with groups_row:
-            for g in refs.groups(rows):
-                is_inf = g["origin"] == "inflated"
-                title = (g["category"] or "uncategorised") if is_inf else "recordings"
-                sub = (g["backend"] or "") if is_inf else "your own audio"
-                share = g["active_seconds"] / g["seconds"] if g["seconds"] else 0.0
-                with ui.column().classes("gap-1 p-2 rounded bg-[#111] border border-[#1e1e1e] w-[210px]"):
-                    with ui.row().classes("w-full items-center gap-1 no-wrap"):
-                        ui.icon("science" if is_inf else "mic", size="13px").classes("text-[#555] shrink-0")
-                        ui.label(title).classes("text-[#bbb] font-mono text-[11px] truncate flex-grow")
-                    ui.label(sub).classes("text-[#555] font-mono text-[9px]")
-                    ui.label(f"{g['clips']} clips · {fmt_minutes(g['seconds'])}").classes("text-[#777] font-mono text-[10px]")
-                    ui.linear_progress(value=share, show_value=False, size="4px").props("color=amber track-color=grey-9").classes("w-full")
-                    ui.label(f"{g['active_clips']} active ({share:.0%} of its audio)").classes("text-[#555] font-mono text-[9px]")
-                    with ui.row().classes("gap-0 w-full"):
-                        ui.button(icon="toggle_on", on_click=lambda g=g: group_action(g, "on")).props("flat dense color=amber").tooltip("Switch the group ON for training")
-                        ui.button(icon="toggle_off", on_click=lambda g=g: group_action(g, "off")).props("flat dense color=grey").tooltip("Switch the group OFF (kept, just not trained on)")
-                        ui.button(icon="filter_alt", on_click=lambda g=g: filter_to(
-                            origin=g["origin"], **({"category": g["category"]} if g["category"] else {}),
-                            **({"backend": g["backend"]} if is_inf and g["backend"] else {}))).props("flat dense color=grey").tooltip("Show these clips in the table")
-                        if is_inf:
-                            ui.button(icon="add_circle", on_click=lambda g=g: open_inflation_dialog(
-                                name, rebuild, preset={"category": g["category"], "backend": g["backend"]})
-                            ).props("flat dense color=grey").tooltip("Generate more like this")
-                        ui.space()
-                        ui.button(icon="delete_outline", on_click=lambda g=g: group_action(g, "delete")).props("flat dense color=negative").tooltip("Delete the group (can be undone)")
-            if inherited:
-                with ui.column().classes("gap-1 p-2 rounded bg-[#0d0d0d] border border-dashed border-[#222] w-[210px]"):
-                    with ui.row().classes("items-center gap-1"):
-                        ui.icon("link", size="13px").classes("text-[#444]")
-                        ui.label("from parent").classes("text-[#777] font-mono text-[11px]")
-                    ui.label(f"{len(inherited)} clips · {fmt_minutes(sum(r['seconds'] for r in inherited))}").classes("text-[#555] font-mono text-[10px]")
-                    if parent_name:
-                        ui.button(f"manage on {parent_name}", on_click=lambda: hooks["open_character"](parent_name)
-                                  ).props("flat dense color=grey").classes("font-mono text-[9px]")
+        groups_col.clear()
+        sel = refs.find_node(tree, state["scope"]) or tree
+        chain = [n for n in refs.walk(tree) if n["id"] == "" or sel["id"] == n["id"] or sel["id"].startswith(n["id"] + "/")]
+        with groups_col:
+            for depth, parent in enumerate(chain):
+                if not parent["children"]:
+                    continue
+                with ui.row().classes("w-full gap-2 flex-wrap items-stretch").style(f"padding-left: {depth * 18}px"):
+                    if depth == 0:
+                        render_card(tree, sel["id"] == "")
+                    for node in parent["children"]:
+                        render_card(node, sel["id"] == node["id"] or sel["id"].startswith(node["id"] + "/"))
+            if inherited and parent_name:
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("link", size="13px").classes("text-[#444]")
+                    ui.label(f"{len(inherited)} more clips ({fmt_minutes(sum(r['seconds'] for r in inherited))}) "
+                             f"come from {parent_name}").classes(_DIM)
+                    ui.button(f"manage on {parent_name}", on_click=lambda: hooks["open_character"](parent_name)
+                              ).props("flat dense color=grey").classes("font-mono text-[9px]")
+
+    def render_card(node: dict, on_path: bool):
+        is_root = node["id"] == ""
+        is_inf = node["filter"].get("origin") == "inflated"
+        share = node["active_seconds"] / node["seconds"] if node["seconds"] else 0.0
+        border = ("border-amber-500/70 bg-[#1a1500]" if state["scope"] == node["id"] else
+                  "border-amber-900/50 bg-[#141008]" if on_path else "border-[#1e1e1e] bg-[#111] hover:border-[#333]")
+        card = ui.column().classes(f"gap-1 p-2 rounded border cursor-pointer w-[200px] {border}")
+        card.on("click", lambda n=node: select_group(n))
+        with card:
+            with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                ui.icon("hub" if is_root else "science" if is_inf else "mic", size="13px").classes("text-[#555] shrink-0")
+                ui.label(node["label"]).classes("text-[#bbb] font-mono text-[11px] truncate flex-grow")
+                if node["children"]:
+                    ui.icon("chevron_right", size="14px").classes("text-[#444]")
+            ui.label(f"{node['clips']} clips · {fmt_minutes(node['seconds'])}").classes("text-[#777] font-mono text-[10px]")
+            ui.linear_progress(value=share, show_value=False, size="3px").props("color=amber track-color=grey-9").classes("w-full")
+            ui.label(f"{node['active_clips']} active for training").classes("text-[#555] font-mono text-[9px]")
+            if not is_root:
+                with ui.row().classes("gap-0 w-full").on("click.stop", lambda: None):
+                    ui.button(icon="filter_alt", on_click=lambda n=node: filter_node(n)).props("flat dense color=grey").tooltip("Show these clips in the table")
+                    ui.button(icon="add_circle", on_click=lambda n=node: add_more(n)).props("flat dense color=grey").tooltip(
+                        "Generate more like this" if is_inf else "Add more recordings")
+                    ui.space()
+                    ui.button(icon="delete_outline", on_click=lambda n=node: confirm_delete(n["keys"], f"everything in “{n['label']}”")
+                              ).props("flat dense color=negative").tooltip("Delete this group (can be undone)")
 
     # ── clip table + selection toolbar ───────────────────────────────────
     ui.separator().classes("my-1 opacity-10")
@@ -303,7 +328,8 @@ def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks
         "columnDefs": [
             {"field": "name", "headerName": "CLIP  (click to play)", "flex": 2, "minWidth": 160,
              "cellStyle": {**cell_dark, "cursor": "pointer"}, "tooltipField": "name"},
-            {"field": "origin", "headerName": "SOURCE", "width": 100, "cellStyle": cell_dark},
+            {"field": "source", "headerName": "SOURCE", "width": 100, "cellStyle": cell_dark},
+            {"field": "origin", "hide": True},
             {"field": "category", "headerName": "CATEGORY", "width": 115, "cellStyle": cell_dark},
             {"field": "backend", "headerName": "BACKEND", "width": 105, "cellStyle": cell_dark},
             {"field": "batch", "headerName": "BATCH", "width": 120, "cellStyle": cell_dark},
@@ -429,8 +455,10 @@ def build_refs_hub(name: str, *, dialog_host, rebuild: Callable[[], None], hooks
 
     # ── refresh ──────────────────────────────────────────────────────────
     def refresh():
-        nonlocal rows, stats, long_over
-        rows, stats, long_over = load()
+        nonlocal rows, stats, long_over, tree
+        rows, stats, long_over, tree = load()
+        if refs.find_node(tree, state["scope"]) is None:
+            state["scope"] = ""                                    # the selected group no longer exists
         render_cards()
         render_chart()
         render_groups()

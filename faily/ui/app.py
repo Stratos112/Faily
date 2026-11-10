@@ -295,6 +295,10 @@ def run():
         show=_native,
         window_size=(1280, 780) if _native else None,
         reload=False,
+        # How long the server waits for a dropped browser to come back before throwing its page away.
+        # The default (3 s) is easily exceeded while a heavy job (inflation, auto-qualify, training) keeps
+        # the machine busy, and a thrown-away page takes its open wizard with it.
+        reconnect_timeout=60.0,
         dark=True,
         host="127.0.0.1" if _native else "0.0.0.0",
         port=7842,

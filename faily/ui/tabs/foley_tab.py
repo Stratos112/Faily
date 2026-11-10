@@ -2,7 +2,7 @@ from nicegui import ui, run as ni_run
 from faily.core.model_manager import manager
 from faily.modules.foley import get_models, generate as foley_generate
 from faily.core.paths import FOLEY_DIR
-from faily.ui.components import output_panel, output_url, section_label, show_error
+from faily.ui.components import SPLIT_COLUMNS, output_panel, output_url, section_label, show_error
 
 _BTN = "font-mono tracking-widest"
 
@@ -58,7 +58,7 @@ def build_foley_tab():
             _out["progress_bar"].set_visibility(False)
             gen_btn.enable()
 
-    with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
+    with ui.grid(columns=SPLIT_COLUMNS).classes("w-full h-full gap-0"):
 
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
             _section_row("MODEL", "SFX generation backend. Stable Audio Open produces the highest quality (44.1kHz stereo) but requires a Hugging Face account with the model's license accepted, and a local login token. AudioLDM2 is a versatile diffusion model that works out of the box.")

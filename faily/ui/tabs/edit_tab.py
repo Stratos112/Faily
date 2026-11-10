@@ -8,7 +8,7 @@ from faily.core.characters import (
     list_characters, get_character, add_ref_clip, add_clip_to_character,
     CHARACTERS_DIR, list_character_clips, list_character_favorites,
 )
-from faily.ui.components import section_label, show_error
+from faily.ui.components import SPLIT_COLUMNS, section_label, show_error
 from faily.ui.tabs.import_dialog import open_import_dialog
 
 _BTN = "font-mono tracking-widest"
@@ -297,7 +297,7 @@ def build_edit_tab():
             show_error(exc)
 
     # ── layout ────────────────────────────────────────────────────────────────
-    with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
+    with ui.grid(columns=SPLIT_COLUMNS).classes("w-full h-full gap-0"):
 
         # ── left: controls ──────────────────────────────────────────────────
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):

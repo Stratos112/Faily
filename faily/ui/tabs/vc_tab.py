@@ -2,7 +2,7 @@ from nicegui import ui, run as ni_run
 from faily.modules.vc import generate as vc_generate, BACKENDS, transcribe_ref
 from faily.core.paths import UPLOADS_DIR, history_dir
 from faily.core.characters import save_character, list_characters, delete_character
-from faily.ui.components import output_panel, output_url, section_label, show_error, model_picker, preview_meter
+from faily.ui.components import SPLIT_COLUMNS, output_panel, output_url, section_label, show_error, model_picker, preview_meter
 from pathlib import Path
 from faily.ui.tabs.import_dialog import open_import_dialog
 
@@ -152,7 +152,7 @@ def build_vc_tab(on_characters_changed=lambda: None):
             _out["progress_bar"].set_visibility(False)
             gen_btn.enable()
 
-    with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
+    with ui.grid(columns=SPLIT_COLUMNS).classes("w-full h-full gap-0"):
 
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
 

@@ -2,7 +2,7 @@ from nicegui import ui, run as ni_run
 from faily.modules.vc import tune_generate, STAGE2_BACKENDS
 from faily.core.characters import list_characters, get_character, get_ref_chain, build_ref_audio
 from faily.core.paths import history_dir
-from faily.ui.components import output_panel, output_url, section_label, show_error, model_picker, ref_mode_toggle, ref_live_only, ref_counts_text
+from faily.ui.components import SPLIT_COLUMNS, output_panel, output_url, section_label, show_error, model_picker, ref_mode_toggle, ref_live_only, ref_counts_text
 
 _BTN = "font-mono tracking-widest"
 _NO_CHAR = "— select character —"
@@ -105,7 +105,7 @@ def build_tune_tab():
                 gen_btn.enable()
 
     # ── UI ──────────────────────────────────────────────────────────────────
-    with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
+    with ui.grid(columns=SPLIT_COLUMNS).classes("w-full h-full gap-0"):
 
         with ui.column().classes("gap-4 p-8 border-r border-[#252525] overflow-y-auto"):
 

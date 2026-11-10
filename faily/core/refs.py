@@ -6,8 +6,9 @@ Each clip has:
   origin   "recording" (uploaded / imported audio) or "inflated" (generated zero-shot)
   active   used when TRAINING a voice model (default True; the primary is always active)
   clone    usable as a zero-shot cloning reference (False = the older "excluded" flag)
-  category / backend / batch   provenance of inflated clips (which script category, which
-           engine, which wizard run). Older clips lack backend/batch and show as "unknown".
+  source   uploaded (added as-is), imported (from Split & qualify) or inflated; inflated clips also carry
+           category / backend / batch (which script category, engine and wizard run). Older inflated clips
+           lack backend/batch and show as "unknown".
 Deleting moves clips to refs_trash/<id>/ with an index, so it can be undone.
 """
 import json
@@ -28,6 +29,14 @@ _DUR_CACHE: dict[tuple[str, int], float] = {}
 
 def origin_of(source: str) -> str:
     return "inflated" if source == "inflated" else "recording"
+
+
+SOURCE_LABELS = {"": "uploaded", "import": "imported", "inflated": "inflated"}
+
+
+def source_label(source: str) -> str:
+    """How a clip's `source` tag reads in the UI."""
+    return SOURCE_LABELS.get(source, source or "uploaded")
 
 
 def clip_seconds(path: Path) -> float:
@@ -127,15 +136,15 @@ def summarize(rows: list[dict]) -> dict:
 
 
 DIMENSIONS = {          # key -> label, in the order the chart picker shows them
-    "origin": "Source", "category": "Category", "backend": "Backend", "batch": "Batch",
+    "source": "Source", "category": "Category", "backend": "Backend", "batch": "Batch",
     "length": "Length", "state": "Training state",
 }
 MEASURES = {"clips": "Clips", "minutes": "Minutes", "avg": "Avg length (s)"}
 
 
 def _dim_value(r: dict, dim: str) -> str:
-    if dim == "origin":
-        return "inflated" if r["origin"] == "inflated" else "recordings"
+    if dim == "source":
+        return source_label(r["source"] if not r["primary"] else "")
     if dim == "length":
         s = r["seconds"]
         return next(label for lo, hi, label in LENGTH_BUCKETS if lo <= s < hi)
@@ -175,18 +184,165 @@ def breakdown(rows: list[dict], by: str, measure: str = "clips", stack: str | No
                         "data": [value(cells.get((c, seg), [])) for c in present]} for seg in segments]}
 
 
-def groups(rows: list[dict]) -> list[dict]:
-    """One entry per (origin, category, backend) — what the management cards show."""
-    cells: dict[tuple[str, str, str], list[dict]] = {}
-    for r in rows:
-        cells.setdefault((r["origin"], r["category"], r["backend"] or (UNKNOWN if r["origin"] == "inflated" else "")), []).append(r)
-    out = []
-    for (origin, category, backend), rs in sorted(cells.items()):
-        act = [r for r in rs if r["active"]]
-        out.append({"origin": origin, "category": category, "backend": backend,
-                    "keys": [r["key"] for r in rs], "clips": len(rs), "seconds": sum(r["seconds"] for r in rs),
-                    "active_clips": len(act), "active_seconds": sum(r["seconds"] for r in act)})
+# ── the group tree ──────────────────────────────────────────────────────────
+
+def _node(node_id: str, label: str, path: list[str], flt: dict, rs: list[dict]) -> dict:
+    act = [r for r in rs if r["active"]]
+    return {"id": node_id, "label": label, "path": path, "level": len(path), "filter": flt, "parent": "/".join(path[:-1]),
+            "keys": [r["key"] for r in rs], "clips": len(rs), "seconds": sum(r["seconds"] for r in rs),
+            "active_clips": len(act), "active_seconds": sum(r["seconds"] for r in act), "children": []}
+
+
+def group_tree(rows: list[dict]) -> dict:
+    """Every clip filed in a tree of groups:
+         all data
+         ├─ recordings ── uploaded, imported
+         └─ inflated ──── <backend> ── <script category>
+    `filter` on each node is the table filter that shows exactly that group's clips."""
+    root = _node("", "all data", [], {}, rows)
+    rec = [r for r in rows if r["origin"] == "recording"]
+    inf = [r for r in rows if r["origin"] == "inflated"]
+    if rec:
+        n = _node("recordings", "recordings", ["recordings"], {"origin": "recording"}, rec)
+        by: dict[str, list[dict]] = {}
+        for r in rec:
+            by.setdefault(source_label("" if r["primary"] else r["source"]), []).append(r)
+        for lab in sorted(by, key=lambda x: (x != "uploaded", x)):
+            n["children"].append(_node(f"recordings/{lab}", lab, ["recordings", lab], {"origin": "recording", "source": lab}, by[lab]))
+        root["children"].append(n)
+    if inf:
+        n = _node("inflated", "inflated", ["inflated"], {"origin": "inflated"}, inf)
+        by_backend: dict[str, list[dict]] = {}
+        for r in inf:
+            by_backend.setdefault(r["backend"] or UNKNOWN, []).append(r)
+        for be in sorted(by_backend, key=lambda x: (x == UNKNOWN, x)):
+            bn = _node(f"inflated/{be}", be, ["inflated", be], {"origin": "inflated", "backend": be}, by_backend[be])
+            by_cat: dict[str, list[dict]] = {}
+            for r in by_backend[be]:
+                by_cat.setdefault(r["category"] or "uncategorised", []).append(r)
+            for cat in sorted(by_cat):
+                raw = by_cat[cat][0]["category"]
+                bn["children"].append(_node(f"inflated/{be}/{cat}", cat, ["inflated", be, cat],
+                                            {"origin": "inflated", "backend": be, "category": raw}, by_cat[cat]))
+            n["children"].append(bn)
+        root["children"].append(n)
+    return root
+
+
+def walk(node: dict):
+    """The node and everything under it, parents first."""
+    yield node
+    for c in node["children"]:
+        yield from walk(c)
+
+
+def find_node(tree: dict, node_id: str) -> dict | None:
+    return next((n for n in walk(tree) if n["id"] == node_id), None)
+
+
+def leaves(node: dict) -> list[dict]:
+    return [n for n in walk(node) if not n["children"] and n["clips"]]
+
+
+# ── mixes (PARKED: tested, but not wired to any UI right now — the sliders came off the TRAINING tab on purpose) ────────────────────────────────────────────────────────────────────
+# A mix says how the training audio is shared out. Each node has a WEIGHT among its siblings (they sum
+# to 1); its SHARE of the whole is the product of the weights down to it. Moving a parent's share keeps
+# its children's weights, so they shrink or grow with it; its siblings take the other side. Only a
+# draft until apply_mix() switches clips on/off to match.
+
+def mix_weights(tree: dict) -> dict[str, float]:
+    """Weights that reproduce what is switched on right now. A branch with nothing on gets weights from
+    its available audio instead, so switching it back on has sensible proportions."""
+    w: dict[str, float] = {}
+
+    def go(node):
+        kids = node["children"]
+        if not kids:
+            return
+        for field in ("active_seconds", "seconds"):
+            total = sum(c[field] for c in kids)
+            if total > 0:
+                for c in kids:
+                    w[c["id"]] = c[field] / total
+                break
+        else:
+            for c in kids:
+                w[c["id"]] = 1.0 / len(kids)
+        for c in kids:
+            go(c)
+    go(tree)
+    return w
+
+
+def node_shares(tree: dict, weights: dict[str, float]) -> dict[str, float]:
+    """Each node's share (0..1) of the whole mix."""
+    share = {tree["id"]: 1.0}
+
+    def go(node):
+        for c in node["children"]:
+            share[c["id"]] = share[node["id"]] * weights.get(c["id"], 0.0)
+            go(c)
+    go(tree)
+    return share
+
+
+def set_share(tree: dict, weights: dict[str, float], node_id: str, share: float) -> dict[str, float]:
+    """New weights after setting `node_id`'s overall share. Its siblings rescale to fill the rest of the
+    parent's share; its own children keep their proportions (so they scale with it). A node whose parent
+    has no share can't be set (nothing to take it from)."""
+    parent = next((n for n in walk(tree) if any(c["id"] == node_id for c in n["children"])), None)
+    if parent is None:
+        return dict(weights)
+    parent_share = node_shares(tree, weights)[parent["id"]]
+    if parent_share <= 1e-9:
+        return dict(weights)
+    sibs = [c for c in parent["children"] if c["id"] != node_id]
+    rel = min(max(share / parent_share, 0.0), 1.0) if sibs else 1.0
+    out = dict(weights)
+    out[node_id] = rel
+    rest = sum(weights.get(c["id"], 0.0) for c in sibs)
+    for c in sibs:
+        out[c["id"]] = weights.get(c["id"], 0.0) * (1 - rel) / rest if rest > 1e-9 else (1 - rel) / len(sibs)
     return out
+
+
+def mix_plan(tree: dict, weights: dict[str, float], cap_seconds: float | None = None) -> dict:
+    """How much audio each leaf group should contribute: as much total as the scarcest group allows
+    (so the proportions hold), optionally capped. {"total", "targets": {leaf_id: seconds}}."""
+    share = node_shares(tree, weights)
+    live = [(n, share[n["id"]]) for n in leaves(tree) if share[n["id"]] > 1e-9]
+    if not live:
+        return {"total": 0.0, "targets": {n["id"]: 0.0 for n in leaves(tree)}}
+    total = min(n["seconds"] / sh for n, sh in live)
+    if cap_seconds:
+        total = min(total, cap_seconds)
+    return {"total": total, "targets": {n["id"]: (share[n["id"]] * total if share[n["id"]] > 1e-9 else 0.0) for n in leaves(tree)}}
+
+
+def apply_mix(name: str, weights: dict[str, float], cap_seconds: float | None = None) -> dict:
+    """Switch clips on/off so the active audio follows the mix. Within a group, clips already on are
+    kept first (stable), the primary always stays on. Returns {"active_clips", "active_seconds", "total"}."""
+    rows = clip_rows(name)
+    tree = group_tree(rows)
+    plan = mix_plan(tree, weights, cap_seconds)
+    by_key = {r["key"]: r for r in rows}
+    on: list[str] = []
+    for leaf in leaves(tree):
+        target = plan["targets"][leaf["id"]]
+        order = sorted((by_key[k] for k in leaf["keys"]), key=lambda r: (not r["primary"], not r["active"]))
+        got = 0.0
+        for r in order:
+            if r["primary"]:
+                on.append(r["key"])
+                got += r["seconds"]
+            elif target > 0 and (got == 0 or got + r["seconds"] / 2 <= target):
+                on.append(r["key"])              # nearest whole clip to the target, but never drop a group that has a share
+                got += r["seconds"]
+    keep = set(on)
+    set_active(name, [k for k in by_key if k not in keep], False)
+    set_active(name, on, True)
+    after = [r for r in clip_rows(name) if r["active"]]
+    return {"active_clips": len(after), "active_seconds": sum(r["seconds"] for r in after), "total": plan["total"]}
 
 
 # ── changing things ──────────────────────────────────────────────────────────
@@ -311,35 +467,3 @@ def restore_deleted(name: str, trash_id: str) -> int:
     except OSError:
         pass
     return n
-
-
-def balance_active(name: str, inflated_share: float) -> dict:
-    """Make roughly `inflated_share` (0..0.99) of the ACTIVE audio inflated. Every recording is switched
-    on; inflated clips are then switched on round-robin across their categories until the share is
-    reached (nearest whole clip), and the rest are switched off. For "everything on", use set_active.
-    Returns {"active_clips", "active_seconds", "share"} describing the result."""
-    share = min(max(inflated_share, 0.0), 0.99)
-    rows = clip_rows(name)
-    rec = [r for r in rows if r["origin"] == "recording"]
-    inf = [r for r in rows if r["origin"] == "inflated"]
-    rec_sec = sum(r["seconds"] for r in rec)
-    want_sec = rec_sec * share / (1 - share) if rec_sec else 0.0
-    if not rec:                                                 # nothing real to balance against
-        want_sec = sum(r["seconds"] for r in inf) * share
-    lanes: dict[str, list[dict]] = {}
-    for r in inf:
-        lanes.setdefault(r["category"], []).append(r)
-    chosen, total = [], 0.0
-    while total < want_sec and any(lanes.values()):
-        for cat in sorted(lanes):
-            if lanes[cat] and total < want_sec:
-                r = lanes[cat].pop(0)
-                chosen.append(r["key"])
-                total += r["seconds"]
-    set_active(name, [r["key"] for r in rec], True)
-    set_active(name, [r["key"] for r in inf if r["key"] not in set(chosen)], False)
-    set_active(name, chosen, True)
-    after = [r for r in clip_rows(name) if r["active"]]
-    sec = sum(r["seconds"] for r in after)
-    inf_sec = sum(r["seconds"] for r in after if r["origin"] == "inflated")
-    return {"active_clips": len(after), "active_seconds": sec, "share": inf_sec / sec if sec else 0.0}

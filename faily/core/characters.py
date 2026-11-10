@@ -81,11 +81,28 @@ def get_ref_chain(name: str, include_excluded: bool = False, live_only: bool = F
 # F5-TTS clips any reference over 12 s itself but keeps the whole transcript, so the
 # transcript's tail gets spoken in the output. Keep the reference safely under that.
 F5_REF_SECONDS = 11.0
-# Every backend conditions on well under a minute of reference (XTTS ~30 s, Chatterbox ~10 s,
-# the voice converters a few seconds), but they LOAD the whole file first.
-# A character with thousands of clips concatenates to hours of audio, which XTTS tries to
-# read and resample in RAM: the OOM killer then takes the whole server down.
+# Backends LOAD the whole reference file before using any of it. A character with thousands of
+# clips concatenates to hours of audio, which XTTS read and resampled in RAM until the OOM killer
+# took the whole server down, so every reference is capped. This is the cap for callers that don't
+# name a backend (the TUNE voice converters, which use a few seconds).
 DEFAULT_REF_SECONDS = 30.0
+# What each zero-shot backend can actually use, so the cap never throws away voice it would hear:
+# - Chatterbox averages its speaker embedding over the WHOLE reference (only its prompt tokens and
+#   decoder prompt stop at 6 / 10 s), so more clips = a steadier voice. The 30 s cap was audibly worse.
+# - XTTS conditions on max_ref_len (10 s) per FILE but averages speaker embeddings over a list of
+#   files; vc._xtts_generate cuts a long reference into such pieces.
+# - F5-TTS is a hard 12 s (see F5_REF_SECONDS): it gets the densest 11 s instead (edge silence cut).
+# 10 minutes is far past where an averaged embedding stops moving, and cheap (~60 MB of samples).
+REF_SECONDS = {"f5_tts": F5_REF_SECONDS, "chatterbox": 600.0, "xtts_v2": 600.0}
+# Silence kept at each end of a clip in a combined reference: long recorded lead-ins/tails would
+# otherwise eat F5's 11 s; this still leaves a natural gap between clips.
+_REF_EDGE_KEEP = 0.12
+_REF_EDGE_SLACK = 1.5              # assume at most this much edge silence per side when pre-screening by length
+
+
+def ref_seconds(backend: str | None) -> float:
+    """The reference budget (seconds) for a zero-shot backend; DEFAULT_REF_SECONDS for anything else."""
+    return REF_SECONDS.get(backend or "", DEFAULT_REF_SECONDS)
 
 # ── choosing which clips become the reference ────────────────────────────────
 # Taking the first clips in file order clones from the same early (and not necessarily best)
@@ -188,86 +205,99 @@ def _rank_reference_clips(chain: list[dict]) -> list[dict]:
         return chain
 
 
+def _speech_span(x, sr: int) -> tuple[int, int]:
+    """(start, end) sample range of `x` with edge silence beyond _REF_EDGE_KEEP cut off.
+    Silence = 10 ms windows more than 40 dB under the clip's loudest (as vc._trim_edges)."""
+    import numpy as np
+    win = max(int(0.01 * sr), 1)
+    n = len(x) // win
+    if n == 0:
+        return 0, len(x)
+    env = np.abs(x[: n * win]).reshape(n, win).max(axis=1)
+    peak = float(env.max())
+    if peak <= 1e-4:
+        return 0, len(x)
+    live = np.nonzero(env > peak * 0.01)[0]
+    keep = int(_REF_EDGE_KEEP * sr)
+    return max(int(live[0]) * win - keep, 0), min((int(live[-1]) + 1) * win + keep, len(x))
+
+
 @contextmanager
 def build_ref_audio(name: str, require_transcript: bool = False, max_duration: float | None = None,
                     live_only: bool = False):
-    """Yield (Path, transcript) for the full ref chain.
+    """Yield (Path, transcript) for the character's reference.
 
-    Single-entry chains return the existing file directly (no copy).
-    Multi-entry chains are concatenated into a temp file that is deleted on exit.
+    A single clip that needs no trimming is returned directly (no copy). Otherwise the chosen
+    clips (edge silence cut to _REF_EDGE_KEEP) are concatenated into a temp file deleted on exit.
     require_transcript=True: drop clips without transcripts so audio/text stay aligned (F5-TTS).
-    max_duration: stop accumulating clips once this total duration (seconds) would be exceeded
-      (None = DEFAULT_REF_SECONDS; the whole chain is never loaded). With more clips than fit,
-      the best ones are chosen (clean, typical of the voice, 4-10 s), not the first in file order.
+    max_duration: total seconds of reference (None = DEFAULT_REF_SECONDS; pass ref_seconds(backend)
+      for a zero-shot backend; 0 = no cap, tests only). With more clips than fit, the best ones are
+      chosen (clean, typical of the voice, 4-10 s), not the first in file order. Clips that don't fit
+      are skipped, so the transcript always matches the audio.
       F5-TTS generates [ref]+[gen] as one sequence and trims by duration — optimal ref is
       5–11 s (F5_REF_SECONDS); longer refs break the trim and cause the ref speech to bleed
-      into output. Clips longer than the cap are skipped.
+      into output.
     live_only: use the real recordings only, leaving out inflated clips.
     """
-    chain = get_ref_chain(name, live_only=live_only)
+    import numpy as np
+    import soundfile as sf
+
+    chain = [n for n in get_ref_chain(name, live_only=live_only) if n.get("audio")]
     if require_transcript:
         chain = [n for n in chain if n["transcript"].strip()]
     if max_duration is None:
         max_duration = DEFAULT_REF_SECONDS
-    if max_duration:
-        import soundfile as _sf
-        if len(chain) > _REF_RANK_MIN_CHAIN:
-            chain = _rank_reference_clips(chain)
-        capped, total = [], 0.0
-        for node in chain:
-            if max_duration - total < 1.0:
-                break                             # budget used up
-            dur = _sf.info(str(node["audio"])).duration
-            if dur > max_duration:
-                continue                          # a single over-long clip can't be used as-is
-            if capped and total + dur > max_duration:
-                continue                          # doesn't fit; a shorter one further down might
-            capped.append(node)
-            total += dur
-        chain = capped or chain[:1]               # nothing fits: the first clip, trimmed by the backend
     if not chain:
         yield None, ""
         return
-    transcript = " ".join(n["transcript"] for n in chain if n["transcript"]).strip()
-    if len(chain) == 1:
-        import soundfile as sf
-        info = sf.info(str(chain[0]["audio"]))
-        if max_duration and info.duration > max_duration * 1.5:
-            # one enormous clip and nothing shorter to use: take its start; the transcript no
-            # longer matches, so drop it (F5 then transcribes the clipped audio itself)
-            head, sr = sf.read(str(chain[0]["audio"]), frames=int(max_duration * info.samplerate),
-                               dtype="float32", always_2d=False)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-                tmp = Path(f.name)
-            try:
-                sf.write(str(tmp), head, sr)
-                yield tmp, ""
-            finally:
-                if tmp.exists():
-                    tmp.unlink()
-            return
-        yield chain[0]["audio"], transcript
-        return
-    import numpy as np
-    import soundfile as sf
-    import torch
-    import torchaudio
-    arrays, target_sr = [], None
+    if max_duration and len(chain) > _REF_RANK_MIN_CHAIN:
+        chain = _rank_reference_clips(chain)
+
+    picked: list[tuple[dict, "np.ndarray", int, bool]] = []      # (node, samples, sr, whole file?)
+    total = 0.0
     for node in chain:
+        left = max_duration - total if max_duration else None
+        if left is not None:
+            if left < 1.0:
+                break                             # budget used up
+            if sf.info(str(node["audio"])).duration > left + 2 * _REF_EDGE_SLACK:
+                continue                          # can't fit even with its edge silence cut; no need to read it
         data, sr = sf.read(str(node["audio"]), dtype="float32", always_2d=False)
         if data.ndim > 1:
             data = data.mean(axis=1)
-        if target_sr is None:
-            target_sr = sr
-        elif sr != target_sr:
-            wav = torch.from_numpy(data).unsqueeze(0)
+        a, b = _speech_span(data, sr)
+        dur = (b - a) / sr
+        if left is not None and dur > left:
+            continue                              # doesn't fit; a shorter one further down might
+        picked.append((node, data[a:b], sr, a == 0 and b == len(data)))
+        total += dur
+
+    transcript = " ".join(n["transcript"] for n, *_ in picked if n["transcript"]).strip()
+    if not picked:
+        # nothing fits: the start of the first clip; the transcript no longer matches, so drop it
+        # (F5 then transcribes the clipped audio itself). Only max_duration seconds are read.
+        info = sf.info(str(chain[0]["audio"]))
+        head, sr = sf.read(str(chain[0]["audio"]), frames=int(max_duration * info.samplerate),
+                           dtype="float32", always_2d=False)
+        if head.ndim > 1:
+            head = head.mean(axis=1)
+        picked, transcript = [(chain[0], head, sr, False)], ""
+    elif len(picked) == 1 and picked[0][3]:
+        yield picked[0][0]["audio"], transcript
+        return
+
+    import torch
+    import torchaudio
+    arrays, target_sr = [], picked[0][2]
+    for _, data, sr, _ in picked:
+        if sr != target_sr:
+            wav = torch.from_numpy(np.ascontiguousarray(data)).unsqueeze(0)
             data = torchaudio.functional.resample(wav, sr, target_sr).squeeze(0).numpy()
         arrays.append(data)
-    combined = np.concatenate(arrays)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
         tmp = Path(f.name)
     try:
-        sf.write(str(tmp), combined, target_sr)
+        sf.write(str(tmp), np.concatenate(arrays), target_sr)
         yield tmp, transcript
     finally:
         if tmp.exists():

@@ -23,6 +23,7 @@ as markdown.
 Exit status is non-zero if anything fails.
 """
 import asyncio
+import collections
 import json
 import os
 import re
@@ -480,6 +481,42 @@ class TestBuildRefAudio(Sandboxed):
             info = sf.info(str(ref))
             self.assertEqual(info.samplerate, SR)
             self.assertAlmostEqual(info.duration, 5.0, delta=0.2)
+
+    @regression(
+        "The 30 s DEFAULT_REF_SECONDS cap applied to Chatterbox/XTTS too: Chatterbox averages its speaker embedding "
+        "over the whole reference, so zero-shot clones from SPEAK got audibly worse.",
+        "Keep REF_SECONDS in core/characters.py giving chatterbox/xtts_v2 minutes of reference, and SPEAK / inflation "
+        "passing max_duration=ref_seconds(backend).")
+    def test_zero_shot_backends_get_more_than_the_default(self):
+        for b in ("chatterbox", "xtts_v2"):
+            self.assertGreaterEqual(C.ref_seconds(b), 300.0)
+        self.assertEqual(C.ref_seconds("freevc"), C.DEFAULT_REF_SECONDS)
+        self.assertEqual(C.ref_seconds(None), C.DEFAULT_REF_SECONDS)
+        make_char("alice", refs=30, seconds=4.0)                  # 124 s of audio
+        with C.build_ref_audio("alice", max_duration=C.ref_seconds("chatterbox")) as (ref, text):
+            self.assertAlmostEqual(sf.info(str(ref)).duration, 124.0, delta=0.5)
+            self.assertEqual(len(text.split(" line ")), 31)
+
+    def test_edge_silence_is_cut_so_more_clips_fit(self):
+        make_char("alice", seconds=4.0)
+        quiet = lambda s: np.zeros(int(s * SR), dtype="float32")
+        for i in range(3):        # 3 s of speech inside 1.2 s of silence each side: 5.4 s raw, ~3.25 s packed
+            C.add_ref_clip("alice", write_wav(SANDBOX / f"p{i}.wav",
+                                              np.concatenate([quiet(1.2), speechish(3.0, seed=i), quiet(1.2)])), f"pad {i}.")
+        with C.build_ref_audio("alice", max_duration=C.F5_REF_SECONDS) as (ref, text):
+            dur = sf.info(str(ref)).duration
+            self.assertLessEqual(dur, C.F5_REF_SECONDS + 0.05)
+            self.assertEqual(text.count("pad "), 2, text)          # raw lengths would fit only one beside the primary
+            self.assertGreater(dur, 10.0)
+
+    def test_single_padded_clip_is_trimmed_not_returned_raw(self):
+        make_char("alice", seconds=4.0)
+        cfg = C.get_character("alice"); path = C.get_ref_path("alice")
+        write_wav(path, np.concatenate([np.zeros(SR * 3, dtype="float32"), speechish(4.0), np.zeros(SR * 3, dtype="float32")]))
+        with C.build_ref_audio("alice", max_duration=C.F5_REF_SECONDS) as (ref, text):
+            self.assertNotEqual(ref, path)
+            self.assertAlmostEqual(sf.info(str(ref)).duration, 4.24, delta=0.05)
+            self.assertIn("primary", text)
 
     def test_no_clips_yields_none(self):
         make_char("alice")
@@ -1670,13 +1707,41 @@ class TestRegressions(Sandboxed):
     @regression(
         "F5-TTS clips any reference over 12 s itself but keeps the full transcript, so the transcript's tail was "
         "spoken into every output.",
-        "Keep F5_REF_SECONDS under 12 (core/characters.py) and make the F5 call sites (ui/tabs/speak_tab.py, "
-        "modules/inflation.py) pass max_duration=F5_REF_SECONDS.")
+        "Keep F5_REF_SECONDS under 12 and REF_SECONDS['f5_tts'] == F5_REF_SECONDS (core/characters.py), and make the "
+        "zero-shot call sites (ui/tabs/speak_tab.py, modules/inflation.py) pass max_duration=ref_seconds(backend).")
     def test_f5_reference_budget_is_wired_everywhere(self):
         self.assertLess(C.F5_REF_SECONDS, 12.0)
+        self.assertEqual(C.ref_seconds("f5_tts"), C.F5_REF_SECONDS)
         for rel in ("faily/ui/tabs/speak_tab.py", "faily/modules/inflation.py"):
             src = (ROOT / rel).read_text()
-            self.assertIn("F5_REF_SECONDS", src, f"{rel} no longer applies the F5 reference cap")
+            self.assertIn("ref_seconds(", src, f"{rel} no longer applies the per-backend reference budget")
+
+    @regression(
+        "XTTS keeps only max_ref_len (10 s) of each reference FILE, so one long concatenated reference was heard as its "
+        "first 10 s; the rest of the voice never reached the speaker embedding.",
+        "Keep _xtts_generate -> _split_reference (modules/vc.py): pass a long reference as a list of max_ref_len pieces "
+        "(XTTS averages their speaker embeddings) and delete the pieces afterwards.")
+    def test_xtts_gets_long_reference_as_pieces(self):
+        ref = write_wav(SANDBOX / "long.wav", speechish(42.0))
+        seen = {}
+
+        class FakeTTS:
+            synthesizer = type("S", (), {"tts_model": type("M", (), {"config": type("Cfg", (), {"max_ref_len": 10})()})()})()
+
+            def tts_to_file(self, speaker_wav, **kw):
+                seen["wav"] = speaker_wav
+                seen["durs"] = [sf.info(p).duration for p in speaker_wav]
+
+        with mock.patch.object(self.vc.manager, "load", lambda key, fn: FakeTTS()):
+            self.vc._xtts_generate("hello", ref, SANDBOX / "o.wav", 0.7, 1.0)
+        self.assertEqual(len(seen["wav"]), 4)                              # 10 + 10 + 10 + 12 (the 2 s tail joins the last)
+        self.assertAlmostEqual(sum(seen["durs"]), 42.0, delta=0.05)
+        self.assertTrue(all(3.0 <= d <= 13.0 for d in seen["durs"]), seen["durs"])
+        self.assertFalse(any(Path(p).exists() for p in seen["wav"]), "pieces must be cleaned up")
+        short = write_wav(SANDBOX / "short.wav", speechish(8.0))
+        with mock.patch.object(self.vc.manager, "load", lambda key, fn: type("T", (), {"tts_to_file": lambda self, speaker_wav, **kw: seen.update(wav=speaker_wav)})()):
+            self.vc._xtts_generate("hello", short, SANDBOX / "o.wav", 0.7, 1.0)
+        self.assertEqual(seen["wav"], str(short))
 
     @regression(
         "If a long reference still reaches F5, the audio must be cut and its transcript regenerated to match, "
@@ -1915,7 +1980,7 @@ class TestRegressions(Sandboxed):
             yield (C.get_ref_path(name), "text")
 
         gen = lambda text, ref, progress, out_dir, *a: write_wav(Path(out_dir) / "x.wav", speechish(1.5))
-        for backend, expect_cap in (("xtts_v2", None), ("f5_tts", C.F5_REF_SECONDS)):
+        for backend, expect_cap in (("xtts_v2", C.REF_SECONDS["xtts_v2"]), ("f5_tts", C.F5_REF_SECONDS)):
             with mock.patch.object(inflation, "build_ref_audio", fake_build), mock.patch.object(inflation, "generate", gen):
                 asyncio.run(inflation.generate_batch("alice", [inflation.ScriptLine("neutral", "hi")], backend, 1, 1,
                                                      SANDBOX / "s", [False], lambda *a: None, lambda *a: None))
@@ -2338,8 +2403,8 @@ class TestRefsData(Sandboxed):
                 d = self.refs.breakdown(rows, dim, measure, "state" if dim != "state" else None)
                 self.assertTrue(d["categories"] and d["series"], (dim, measure))
                 self.assertTrue(all(len(s["data"]) == len(d["categories"]) for s in d["series"]))
-        d = self.refs.breakdown(rows, "origin", "clips")
-        self.assertEqual(dict(zip(d["categories"], d["series"][0]["data"])), {"inflated": 8.0, "recordings": 5.0})
+        d = self.refs.breakdown(rows, "source", "clips")
+        self.assertEqual(dict(zip(d["categories"], d["series"][0]["data"])), {"inflated": 8.0, "uploaded": 5.0})
         d = self.refs.breakdown(rows, "backend", "minutes")
         self.assertEqual(d["categories"], ["— (recordings)", "chatterbox", "f5_tts"])
         self.assertEqual(d["series"][0]["data"][1], round(9 / 60, 2))
@@ -2348,27 +2413,146 @@ class TestRefsData(Sandboxed):
         with self.assertRaises(ValueError):
             self.refs.breakdown(rows, "nonsense")
 
-    def test_groups_partition_the_clips(self):
+    def test_group_tree_shape_and_totals(self):
         make_mixed()
         rows = self.refs.clip_rows("mix")
-        gs = self.refs.groups(rows)
-        self.assertEqual(len(gs), 4)
-        self.assertEqual(sorted(k for g in gs for k in g["keys"]), sorted(r["key"] for r in rows))
-        self.assertEqual({(g["origin"], g["category"], g["backend"]): g["clips"] for g in gs}[("inflated", "plosives", "f5_tts")], 2)
+        tree = self.refs.group_tree(rows)
+        ids = [n["id"] for n in self.refs.walk(tree)]
+        self.assertEqual(ids, ["", "recordings", "recordings/uploaded", "inflated", "inflated/chatterbox",
+                               "inflated/chatterbox/plosives", "inflated/f5_tts", "inflated/f5_tts/nasals", "inflated/f5_tts/plosives"])
+        by = {n["id"]: n for n in self.refs.walk(tree)}
+        self.assertEqual((by["recordings"]["clips"], by["inflated"]["clips"], by["inflated/f5_tts"]["clips"]), (5, 8, 5))
+        self.assertEqual(by["inflated/f5_tts/plosives"]["parent"], "inflated/f5_tts")
+        self.assertEqual(by["inflated/f5_tts/plosives"]["filter"], {"origin": "inflated", "backend": "f5_tts", "category": "plosives"})
+        # every clip is in exactly one leaf, and a parent holds exactly its children's clips
+        leaf_keys = sorted(k for n in self.refs.leaves(tree) for k in n["keys"])
+        self.assertEqual(leaf_keys, sorted(r["key"] for r in rows))
+        for n in self.refs.walk(tree):
+            if n["children"]:
+                self.assertEqual(sorted(n["keys"]), sorted(k for c in n["children"] for k in c["keys"]))
+        self.assertIs(self.refs.find_node(tree, "inflated/chatterbox"), by["inflated/chatterbox"])
+        self.assertIsNone(self.refs.find_node(tree, "nope"))
 
-    def test_balance_active_hits_the_requested_share(self):
+    @regression("Recordings split by how they arrived (uploaded vs imported) and inflated clips by backend, so a second "
+                "backend can be switched or mixed on its own.", "Keep group_tree filing by source_label and by backend before category (core/refs.py).")
+    def test_tree_separates_sources_and_backends(self):
         make_mixed()
-        res = self.refs.balance_active("mix", 0.0)
-        self.assertEqual(res["active_clips"], 5)
-        self.assertAlmostEqual(res["share"], 0.0)
-        res = self.refs.balance_active("mix", 0.5)                              # 20 s of recordings -> ~20 s inflated
-        self.assertAlmostEqual(res["share"], 0.5, delta=0.1)
-        active_cats = {r["category"] for r in self.refs.clip_rows("mix") if r["origin"] == "inflated" and r["active"]}
-        self.assertGreaterEqual(len(active_cats), 2, "inflated clips should be spread across categories")
-        res = self.refs.balance_active("mix", 0.99)
-        self.assertEqual(res["active_clips"], 13)                               # can't exceed what exists
-        recs_off = [r for r in self.refs.clip_rows("mix") if r["origin"] == "recording" and not r["active"]]
-        self.assertEqual(recs_off, [], "every recording is always switched on by a mix")
+        C.add_ref_clip("mix", write_wav(SANDBOX / "_fixtures" / "imp.wav", speechish(3.0)), "imported one.", source="import")
+        C.add_ref_clip("mix", write_wav(SANDBOX / "_fixtures" / "old.wav", speechish(3.0)), "old inflated.", source="inflated", category="neutral")
+        C.add_ref_clip("mix", write_wav(SANDBOX / "_fixtures" / "nocat.wav", speechish(3.0)), "no category.", source="inflated", backend="chatterbox")
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        ids = {n["id"] for n in self.refs.walk(tree)}
+        self.assertTrue({"recordings/uploaded", "recordings/imported", "inflated/chatterbox", "inflated/f5_tts",
+                         "inflated/unknown", "inflated/unknown/neutral", "inflated/chatterbox/uncategorised"} <= ids)
+        node = self.refs.find_node(tree, "inflated/chatterbox/uncategorised")
+        self.assertEqual(node["filter"]["category"], "")                       # the table filters blanks, not the word
+
+    def test_mix_weights_follow_what_is_active(self):
+        make_mixed()
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        w = self.refs.mix_weights(tree)
+        shares = self.refs.node_shares(tree, w)
+        self.assertAlmostEqual(shares["recordings"], 20 / 44, places=2)          # 5 x 4 s vs 8 x 3 s
+        self.assertAlmostEqual(shares["inflated"], 24 / 44, places=2)
+        self.assertAlmostEqual(shares["inflated/f5_tts"] + shares["inflated/chatterbox"], shares["inflated"])
+        self.assertAlmostEqual(sum(shares[n["id"]] for n in self.refs.leaves(tree)), 1.0)
+
+    def test_switched_off_branch_gets_a_sensible_mix_when_edited(self):
+        make_mixed()
+        rows = self.refs.clip_rows("mix")
+        self.refs.set_active("mix", [r["key"] for r in rows if r["backend"] == "chatterbox"], False)
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        w = self.refs.mix_weights(tree)
+        self.assertEqual(w["inflated/chatterbox"], 0.0)
+        self.assertEqual(w["inflated/f5_tts"], 1.0)
+        w2 = self.refs.set_share(tree, w, "inflated/chatterbox", 0.2)
+        shares = self.refs.node_shares(tree, w2)
+        self.assertAlmostEqual(shares["inflated/chatterbox"], 0.2, places=2)
+        self.assertGreater(shares["inflated/chatterbox/plosives"], 0.0)          # its children were not stuck at zero
+
+    @regression("Changing a parent's mix must scale its children with it and make the other groups take the rest, "
+                "not leave the mixes inconsistent.", "Keep set_share working on sibling weights (core/refs.py): children keep their weights, siblings rescale.")
+    def test_parent_mix_scales_children_and_siblings(self):
+        make_mixed()
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        w = self.refs.mix_weights(tree)
+        before = self.refs.node_shares(tree, w)
+        w2 = self.refs.set_share(tree, w, "inflated", 0.20)
+        after = self.refs.node_shares(tree, w2)
+        self.assertAlmostEqual(after["inflated"], 0.20, places=6)
+        self.assertAlmostEqual(after["recordings"], 0.80, places=6)
+        ratio = after["inflated"] / before["inflated"]
+        for child in ("inflated/chatterbox", "inflated/f5_tts", "inflated/f5_tts/nasals", "inflated/chatterbox/plosives"):
+            self.assertAlmostEqual(after[child], before[child] * ratio, places=6, msg=child)      # shrank in proportion
+        self.assertAlmostEqual(sum(after[n["id"]] for n in self.refs.leaves(tree)), 1.0)
+
+    def test_child_mix_moves_only_its_siblings(self):
+        make_mixed()
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        w = self.refs.mix_weights(tree)
+        before = self.refs.node_shares(tree, w)
+        w2 = self.refs.set_share(tree, w, "inflated/chatterbox", before["inflated/chatterbox"] / 2)
+        after = self.refs.node_shares(tree, w2)
+        self.assertAlmostEqual(after["inflated"], before["inflated"], places=6)          # the parent's share is untouched
+        self.assertAlmostEqual(after["recordings"], before["recordings"], places=6)
+        self.assertAlmostEqual(after["inflated/chatterbox"], before["inflated/chatterbox"] / 2, places=6)
+        self.assertGreater(after["inflated/f5_tts"], before["inflated/f5_tts"])
+        # a lone child can only follow its parent
+        w3 = self.refs.set_share(tree, w, "recordings/uploaded", 0.1)
+        self.assertAlmostEqual(self.refs.node_shares(tree, w3)["recordings/uploaded"], self.refs.node_shares(tree, w3)["recordings"])
+
+    def test_set_share_edge_cases(self):
+        make_mixed()
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        w = self.refs.mix_weights(tree)
+        self.assertEqual(self.refs.set_share(tree, w, "", 0.5), w)                         # the root has no siblings
+        self.assertEqual(self.refs.set_share(tree, w, "ghost", 0.5), w)
+        zero = self.refs.set_share(tree, w, "inflated", 0.0)
+        self.assertEqual(self.refs.set_share(tree, zero, "inflated/f5_tts", 0.3), zero)  # parent at 0%: nothing to take from
+        full = self.refs.set_share(tree, w, "inflated", 1.5)                               # clamped
+        self.assertAlmostEqual(self.refs.node_shares(tree, full)["inflated"], 1.0)
+
+    def test_mix_plan_uses_the_scarcest_group(self):
+        make_mixed()
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        w = self.refs.set_share(tree, self.refs.mix_weights(tree), "inflated", 0.5)
+        plan = self.refs.mix_plan(tree, w)
+        rec = plan["targets"]["recordings/uploaded"]
+        inf = sum(v for k, v in plan["targets"].items() if k.startswith("inflated"))
+        self.assertAlmostEqual(rec, inf, delta=0.01)                                  # 50/50
+        self.assertLessEqual(inf, 24.01)                                              # only 24 s of inflated exist
+        capped = self.refs.mix_plan(tree, w, cap_seconds=10)
+        self.assertAlmostEqual(capped["total"], 10.0)
+
+    @regression("Each group has a mix; applying it must make the ACTIVE audio follow those shares while keeping the primary on.",
+                "Check refs.apply_mix / mix_plan: per-leaf targets = share x total, clips on already are kept first.")
+    def test_apply_mix_makes_the_active_audio_follow_it(self):
+        make_mixed()
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        w = self.refs.mix_weights(tree)
+        w = self.refs.set_share(tree, w, "inflated", 0.40)
+        w = self.refs.set_share(tree, w, "inflated/chatterbox", 0.10)                # 10% chatterbox, 30% f5
+        res = self.refs.apply_mix("mix", w)
+        rows = self.refs.clip_rows("mix")
+        act = [r for r in rows if r["active"]]
+        total = sum(r["seconds"] for r in act)
+        share = lambda pred: sum(r["seconds"] for r in act if pred(r)) / total
+        self.assertAlmostEqual(res["active_seconds"], total, places=3)
+        self.assertAlmostEqual(share(lambda r: r["origin"] == "inflated"), 0.40, delta=0.12)
+        self.assertAlmostEqual(share(lambda r: r["backend"] == "chatterbox"), 0.10, delta=0.10)
+        self.assertTrue(next(r for r in rows if r["primary"])["active"])
+        # a group at 0% is switched off entirely
+        w0 = self.refs.set_share(self.refs.group_tree(rows), self.refs.mix_weights(self.refs.group_tree(rows)), "inflated", 0.0)
+        self.refs.apply_mix("mix", w0)
+        self.assertFalse(any(r["active"] for r in self.refs.clip_rows("mix") if r["origin"] == "inflated"))
+
+    def test_apply_mix_respects_a_cap_and_leaves_files_alone(self):
+        make_mixed()
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        res = self.refs.apply_mix("mix", self.refs.mix_weights(tree), cap_seconds=15)
+        self.assertLess(res["active_seconds"], 15 + 6)                                   # near the cap: whole clips, and every group keeps one
+        self.assertGreater(len({r["category"] for r in self.refs.clip_rows("mix") if r["active"] and r["origin"] == "inflated"}), 0)
+        self.assertEqual(len(self.refs.clip_rows("mix")), 13)                            # nothing deleted
 
     def test_long_clips_are_flagged_relative_to_the_set(self):
         make_mixed()
@@ -2430,9 +2614,6 @@ class TestProfile(Sandboxed):
     def texts(self, name):
         return " | ".join(t for _, t, _ in self.recs(name))
 
-    def cap(self, name, key):
-        return next(c for c in self.profile.character_profile(name)["capabilities"] if c["key"] == key)
-
     def test_unknown_character(self):
         self.assertIsNone(self.profile.character_profile("ghost"))
 
@@ -2440,7 +2621,7 @@ class TestProfile(Sandboxed):
         make_char("empty")
         cfg = C.get_character("empty"); cfg.pop("ref_audio"); C._cfg("empty").write_text(json.dumps(cfg))
         self.assertIn("No reference audio yet", self.texts("empty"))
-        self.assertEqual(self.cap("empty", "clone")["state"], "missing")
+        self.assertEqual(self.profile.character_profile("empty")["details"]["clips"], 0)
 
     def test_little_data_is_the_first_warning(self):
         make_char("small", refs=2, seconds=4.0)                                # 12 s
@@ -2448,9 +2629,7 @@ class TestProfile(Sandboxed):
         self.assertEqual(recs[0][0], "warn")
         self.assertIn("Only 0.2 min", recs[0][1])
         self.assertEqual(recs[0][2], "references")
-        self.assertEqual(self.cap("small", "data")["state"], "missing")
-        self.assertEqual(self.cap("small", "voice")["state"], "missing")
-        self.assertEqual(self.cap("small", "clone")["state"], "ready")
+        self.assertIsNone(self.profile.character_profile("small")["model"])
 
     def test_mostly_generated_audio_is_called_out(self):
         make_char("gen", refs=2, seconds=2.0, inflated=0)
@@ -2485,14 +2664,14 @@ class TestProfile(Sandboxed):
         return PM.save_model(name, onnx=d / "m.onnx", ckpt=None, meta={
             "epoch": 500, "base_voice_label": "Amy", "clips": {"n": clips_n, "minutes": 12.0}})
 
-    def test_trained_voice_and_capabilities(self):
+    def test_trained_voice_summary(self):
         make_char("voiced", refs=3, seconds=4.0)
         self._model("voiced", clips_n=4, accuracy=0.96)
         p = self.profile.character_profile("voiced")
-        self.assertEqual(p["model"]["epoch"], 500)
-        self.assertEqual(self.cap("voiced", "voice")["state"], "ready")
-        self.assertEqual(self.cap("voiced", "pronunciation")["state"], "ready")
+        self.assertEqual((p["model"]["epoch"], p["model"]["accuracy"]), (500, 0.96))
+        self.assertEqual(p["model"]["base_voice"], "Amy")
         self.assertNotIn("Retrain", self.texts("voiced"))
+        self.assertNotIn("Pronunciation is weak", self.texts("voiced"))
 
     def test_retrain_hint_when_the_active_set_moved(self):
         make_char("moved", refs=3, seconds=4.0)
@@ -2503,17 +2682,28 @@ class TestProfile(Sandboxed):
     def test_weak_pronunciation_is_flagged(self):
         make_char("mumbly", refs=3, seconds=4.0)
         self._model("mumbly", clips_n=4, accuracy=0.6)
-        self.assertEqual(self.cap("mumbly", "pronunciation")["state"], "missing")
         self.assertIn("Pronunciation is weak", self.texts("mumbly"))
 
     def test_variants_are_listed(self):
         make_char("base", refs=1)
         make_char("base-angry", parent="base")
-        p = self.profile.character_profile("base")
-        self.assertEqual(p["variants"], ["base-angry"])
-        self.assertEqual(self.cap("base", "variants")["state"], "ready")
+        self.assertEqual(self.profile.character_profile("base")["variants"], ["base-angry"])
         self.assertFalse(self.profile.character_profile("base-angry")["is_base"])
 
+    @regression("The ABOUT page was asked to drop the 'what it can do' capability cards in favour of plain information.",
+                "Keep character_profile free of 'capabilities' and about_panel free of the WHAT IT CAN DO section; add facts to 'details' instead.")
+    def test_profile_carries_details_not_capabilities(self):
+        make_mixed("rich")
+        p = self.profile.character_profile("rich")
+        self.assertNotIn("capabilities", p)
+        d = p["details"]
+        self.assertEqual((d["clips"], d["active_clips"]), (13, 13))
+        self.assertAlmostEqual(d["median_clip"], 3.0, delta=1.1)
+        self.assertAlmostEqual(d["longest_clip"], 4.0, delta=0.1)
+        self.assertEqual(d["inflated_by_backend"], {"chatterbox": 3, "f5_tts": 5})
+        self.assertEqual(d["inflated_by_category"], {"nasals": 3, "plosives": 5})
+        self.assertEqual(d["transcript_share"], 1.0)
+        self.assertNotIn("capabilit", Path(ROOT / "faily/ui/tabs/about_panel.py").read_text().lower())
 
 class TestHubHelpers(Sandboxed):
     def setUp(self):
@@ -2532,6 +2722,7 @@ class TestHubHelpers(Sandboxed):
         rows = self.refs.clip_rows("mix")
         out = {r["key"]: r for r in self.hub.grid_rows(rows, long_over=20.0)}
         self.assertTrue(out[self.refs.PRIMARY]["name"].endswith("★"))
+        self.assertEqual(out[self.refs.PRIMARY]["source"], "uploaded")
         self.assertEqual(out["refs/ref_013.wav"]["flags"], "LONG NO TEXT")
         inf = next(r for r in out.values() if r["origin"] == "inflated")
         self.assertEqual((inf["category"], inf["backend"], inf["train"], inf["clone"]), ("plosives", "chatterbox", True, True))
@@ -2543,7 +2734,7 @@ class TestHubHelpers(Sandboxed):
     def test_chart_options(self):
         make_mixed()
         rows = self.refs.clip_rows("mix")
-        data = self.refs.breakdown(rows, "origin", "minutes", "state")
+        data = self.refs.breakdown(rows, "source", "minutes", "state")
         v = self.hub.chart_options(data, horizontal=False, measure="minutes", stack="state")
         self.assertEqual(v["xAxis"]["type"], "category")
         self.assertTrue(v["legend"]["show"])
@@ -2551,21 +2742,39 @@ class TestHubHelpers(Sandboxed):
         self.assertEqual(v["series"][0]["itemStyle"]["color"], "#f59e0b")           # "active" is amber
         h = self.hub.chart_options(data, horizontal=True, measure="minutes", stack="state")
         self.assertEqual((h["yAxis"]["type"], h["xAxis"]["type"]), ("category", "value"))
-        plain = self.hub.chart_options(self.refs.breakdown(rows, "origin", "clips"), False, "clips", None)
+        plain = self.hub.chart_options(self.refs.breakdown(rows, "source", "clips"), False, "clips", None)
         self.assertFalse(plain["legend"]["show"])
         self.assertNotIn("stack", plain["series"][0])
 
-    def test_treemap_splits_each_group_into_on_and_off(self):
+    def test_box_helpers_colour_and_fill(self):
         make_mixed()
-        self.refs.set_active("mix", [r["key"] for r in self.refs.clip_rows("mix") if r["category"] == "nasals"][:1], False)
-        tiles = self.panel.treemap_data(self.refs.groups(self.refs.clip_rows("mix")))
-        by = {t["name"]: t["children"] for t in tiles}
-        self.assertEqual(set(by), {"recordings", "nasals · f5_tts", "plosives · chatterbox", "plosives · f5_tts"})
-        self.assertEqual(len(by["recordings"]), 1)                                # nothing off: no grey part
-        self.assertEqual(len(by["nasals · f5_tts"]), 2)                           # one clip off: both parts
-        self.assertAlmostEqual(sum(c["value"] for c in by["nasals · f5_tts"]), 9 / 60, places=2)
-        opts = self.panel.treemap_options(self.refs.groups(self.refs.clip_rows("mix")))
-        self.assertEqual(opts["series"][0]["type"], "treemap")
+        self.refs.set_active("mix", [r["key"] for r in self.refs.clip_rows("mix") if r["backend"] == "f5_tts" and r["category"] == "nasals"][:1], False)
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        by = {n["id"]: n for n in self.refs.walk(tree)}
+        self.assertEqual(self.panel.node_hue(by["recordings"]), "#f59e0b")
+        self.assertEqual(self.panel.node_hue(by["inflated/chatterbox/plosives"]), "#38bdf8")      # categories take their backend's colour
+        self.assertEqual(self.panel.node_hue(by["inflated/f5_tts/nasals"]), "#a78bfa")
+        self.assertEqual(self.panel.fill_fraction(by["recordings"]), 1.0)
+        self.assertAlmostEqual(self.panel.fill_fraction(by["inflated/f5_tts/nasals"]), 2 / 3, places=2)
+        bg = self.panel.tank_background(by["inflated/f5_tts/nasals"])
+        self.assertIn("linear-gradient(to top", bg)
+        self.assertIn("66.7%", bg)
+        self.assertIn("rgba(167, 139, 250", bg)
+        self.assertIn("100.0%", self.panel.tank_background(by["recordings"]))
+        self.assertEqual(self.panel.rgba("#ffffff", 0.5), "rgba(255, 255, 255, 0.50)")
+        self.assertIn("inflated › f5_tts › nasals", self.panel.box_tooltip(by["inflated/f5_tts/nasals"]))
+        self.assertIn("click to switch", self.panel.box_tooltip(by["recordings"]))
+        empty = self.refs.group_tree([])
+        self.assertEqual(self.panel.fill_fraction(empty), 0.0)
+
+    def test_toggle_icon_states(self):
+        make_mixed()
+        self.refs.set_active("mix", [r["key"] for r in self.refs.clip_rows("mix") if r["category"] == "nasals"], False)
+        tree = self.refs.group_tree(self.refs.clip_rows("mix"))
+        by = {n["id"]: self.panel.toggle_icon(n) for n in self.refs.walk(tree)}
+        self.assertEqual(by["inflated/f5_tts/nasals"], "check_box_outline_blank")
+        self.assertEqual(by["inflated/f5_tts"], "indeterminate_check_box")          # part of it is on
+        self.assertEqual(by["recordings"], "check_box")
 
     def test_gauge_colour_follows_the_data_amount(self):
         low, mid, good = (self.panel.gauge_html(m) for m in (2, 8, 45))
@@ -2593,6 +2802,14 @@ def _ui_client():
         def page(name: str):
             _UI["clients"].append(ui.context.client)
             build_characters_tab(lambda n: None, lambda: None, initial=name)
+
+        @ui.page("/wizard/{name}")
+        def wizard(name: str, category: str = "", backend: str = "", resume: str = ""):
+            from faily.modules.inflation import load_session, session_dir
+            from faily.ui.tabs.inflation_dialog import open_inflation_dialog
+            _UI["clients"].append(ui.context.client)
+            choice = load_session(session_dir(name)) if resume == "load" else ("discard" if resume == "discard" else None)
+            open_inflation_dialog(name, lambda: None, preset={"category": category or None, "backend": backend or None}, resume=choice)
 
         ui.run_with(app, storage_secret="faily-test")
         _UI["client"] = TestClient(app)
@@ -2633,11 +2850,11 @@ class TestHubUi(Sandboxed):
         make_mixed("alice")
         make_char("alice-calm", parent="alice")
         html, _ = self.render("alice")
-        for needle in ("WHAT IT CAN DO", "WHERE IT NEEDS WORK", "BREAKDOWN", "GROUPS", "QUALIFY DATA", "INFLATE DATA",
-                       "SELECT SHOWN", "TRAINING DATA", "APPLY MIX", "MANAGE IN REFERENCES"):
+        for needle in ("WHERE IT NEEDS WORK", "BREAKDOWN", "GROUPS", "QUALIFY DATA", "INFLATE DATA",
+                       "SELECT SHOWN", "TRAINING DATA", "MANAGE IN REFERENCES"):
             self.assertIn(needle, html, needle)
         html, _ = self.render("alice-calm")
-        self.assertIn("from parent", html)
+        self.assertIn("come from alice", html)
 
     def test_training_tab_no_longer_has_the_old_controls(self):
         make_mixed("alice")
@@ -2645,24 +2862,189 @@ class TestHubUi(Sandboxed):
         for gone in ("TRAIN ON", "UNUSUALLY LONG REFERENCE CLIPS", "Optional — inflate the reference data", "Before training — check"):
             self.assertNotIn(gone, html, gone)
 
-    def test_group_cards_switch_whole_groups(self):
+    # element lookup helpers ------------------------------------------------
+    def labels(self, client, text, cls=None):
+        from nicegui import ui
+        return [e for e in client.elements.values()
+                if isinstance(e, ui.label) and e.text == text and (cls is None or cls in " ".join(e._classes))]
+
+    def card_of(self, client, text):
+        """The hub's group card whose title is `text` (title label -> its row -> the card)."""
+        lbl = next(l for l in self.labels(client, text, "truncate") if "w-32" not in " ".join(l._classes))
+        return lbl.parent_slot.parent.parent_slot.parent
+
+    def select(self, client, card):
+        from nicegui import events
+        for l in list(card._event_listeners.values()):
+            if l.type == "click":
+                events.handle_event(l.handler, events.GenericEventArguments(sender=card, client=client, args={}))
+
+    def chart(self, client):
+        from nicegui import ui
+        return next(e for e in client.elements.values() if isinstance(e, ui.echart) and "xAxis" in e.options)
+
+    def title(self, client):
+        return next(e.text for e in client.elements.values() if isinstance(getattr(e, "text", None), str) and e.text.startswith("BREAKDOWN"))
+
+    def series_total(self, client):
+        return sum(sum(s["data"]) for s in self.chart(client).options["series"])
+
+
+    @regression("Clicking a group must pull up only that group's data in the breakdown chart, with a title saying what is shown.",
+                "Check state['scope'] handling in refs_hub.render_chart / select_group (scoped rows come from the node's keys).")
+    def test_selecting_a_group_scopes_the_chart_and_its_title(self):
         make_mixed("alice")
         _, client = self.render("alice")
-        icon_only = [b for b in self.buttons(client) if not getattr(b, "text", "")]              # the group cards' buttons
-        offs = [b for b in icon_only if b.props.get("icon") == "toggle_off"]
-        ons = [b for b in icon_only if b.props.get("icon") == "toggle_on"]
-        self.assertEqual(len(offs), 4)                                          # recordings + 3 inflated groups
-        self.press(client, offs[-1])                                            # last group = recordings
-        state = self.active("alice")
-        self.assertTrue(state[self.refs.PRIMARY])
-        self.assertEqual(sum(state.values()), 1 + 8)                            # primary + the 8 inflated
-        icon_only = [b for b in self.buttons(client) if not getattr(b, "text", "") and b.props.get("icon") == "toggle_on"]
-        self.assertEqual(len(icon_only), 4)                                      # the cards were re-rendered; press a live button
-        self.press(client, icon_only[-1])
-        self.assertTrue(all(self.active("alice").values()))
+        self.assertIn("all data · 13 clips", self.title(client))
+        everything = self.series_total(client)
+        self.select(client, self.card_of(client, "inflated"))
+        self.assertIn("inflated · 8 clips", self.title(client))
+        self.assertEqual(self.chart(client).options["xAxis"]["data"], ["inflated"])      # only that group's clips are charted
+        self.assertLess(self.series_total(client), everything)
+        self.select(client, self.card_of(client, "f5_tts"))                              # drill down: its children appeared
+        self.assertIn("inflated › f5_tts · 5 clips", self.title(client))
+        self.select(client, self.card_of(client, "f5_tts"))                              # click again: step back out one level
+        self.assertIn("inflated · 8 clips", self.title(client))
+        self.select(client, self.card_of(client, "inflated"))
+        self.assertIn("all data", self.title(client))
 
-    def test_activation_presets_and_mix(self):
+    def test_chart_dimensions_apply_inside_a_group(self):
         from nicegui import ui
+        make_mixed("alice")
+        _, client = self.render("alice")
+        self.select(client, self.card_of(client, "inflated"))
+        by = next(e for e in client.elements.values() if isinstance(e, ui.toggle) and "backend" in e.options)
+        by.value = "backend"
+        self.assertEqual(self.chart(client).options["xAxis"]["data"], ["chatterbox", "f5_tts"])
+        by.value = "category"
+        self.assertEqual(self.chart(client).options["xAxis"]["data"], ["nasals", "plosives"])
+
+    @regression("Switching groups on/off for training lives on the TRAINING tab; the REFERENCES group cards only offer "
+                "show-in-filter, add-more and delete.", "Remove any toggle_on/toggle_off from refs_hub group cards.")
+    def test_hub_cards_have_only_filter_add_and_delete(self):
+        make_mixed("alice")
+        _, client = self.render("alice")
+        card = self.card_of(client, "inflated")
+        from nicegui import ui
+        icons = [e.props.get("icon") for e in card.descendants() if isinstance(e, ui.button)]
+        self.assertEqual(icons, ["filter_alt", "add_circle", "delete_outline"])
+        recordings = [e.props.get("icon") for e in self.card_of(client, "recordings").descendants() if isinstance(e, ui.button)]
+        self.assertEqual(recordings, ["filter_alt", "add_circle", "delete_outline"])
+        root_icons = [e.props.get("icon") for e in self.card_of(client, "all data").descendants() if isinstance(e, ui.button)]
+        self.assertEqual(root_icons, [])
+
+    def test_card_filter_and_delete_actions(self):
+        from nicegui import ui
+        make_mixed("alice")
+        _, client = self.render("alice")
+        self.select(client, self.card_of(client, "inflated"))                              # backend cards appear after drilling in
+        card = self.card_of(client, "chatterbox")
+        delete = next(e for e in card.descendants() if isinstance(e, ui.button) and e.props.get("icon") == "delete_outline")
+        self.press(client, delete)                                                         # opens a confirmation, deletes nothing yet
+        self.assertEqual(len(self.refs.clip_rows("alice")), 13)
+
+
+
+
+    # the TRAINING tab's nested boxes -----------------------------------------
+    def box(self, client, node_id):
+        """The clickable element (a tile, or a parent box's header) for a group."""
+        return next(e for e in client.elements.values() if e.props.get("data-node-toggle") == node_id)
+
+    def ancestors(self, el):
+        out = []
+        while el is not None:
+            out.append(el)
+            el = el.parent_slot.parent if getattr(el, "parent_slot", None) else None
+        return out
+
+    def click_box(self, client, node_id):
+        from nicegui import events
+        el = self.box(client, node_id)
+        for l in list(el._event_listeners.values()):
+            if l.type.split(".")[0] == "click":                                            # "click.stop": the modifier is part of the type
+                events.handle_event(l.handler, events.GenericEventArguments(sender=el, client=client, args={}))
+
+    @regression("The activation graphic must show the nesting: bigger boxes with smaller boxes inside them.",
+                "Check draw_group / draw_leaf in training_data_panel: a group's children are drawn inside its box body.")
+    def test_training_graphic_is_really_nested(self):
+        make_mixed("alice")
+        _, client = self.render("alice")
+        tile = self.box(client, "inflated/f5_tts/nasals")                                # a category tile ...
+        chain = self.ancestors(tile)
+        backend_box = next(a for a in chain if any(d.props.get("data-node-toggle") == "inflated/f5_tts" for d in a.descendants()))
+        inflated_box = next(a for a in chain if any(d.props.get("data-node-toggle") == "inflated" for d in a.descendants()))
+        self.assertIn(backend_box, self.ancestors(tile))                                  # ... inside the backend's box ...
+        self.assertIn(inflated_box, self.ancestors(backend_box))                          # ... inside the inflated box
+        self.assertIsNot(backend_box, inflated_box)
+        # recordings and inflated are siblings at the top; nothing from one is inside the other
+        rec_box = next(a for a in self.ancestors(self.box(client, "recordings/uploaded"))
+                       if any(d.props.get("data-node-toggle") == "recordings" for d in a.descendants()))
+        self.assertNotIn(rec_box, self.ancestors(tile))
+        self.assertEqual(len(list(self.labels(client, "nasals"))), 1)                     # the tile (hub cards for categories appear only when drilled into)
+
+    @regression("Boxes switch their whole group on/off, at every level of nesting.",
+                "Check clickable()/flip() in training_data_panel and refs.set_active on node['keys'].")
+    def test_clicking_boxes_switches_groups_at_every_level(self):
+        make_mixed("alice")
+        _, client = self.render("alice")
+        self.click_box(client, "inflated")                                                # the big box: everything inside goes off
+        rows = self.refs.clip_rows("alice")
+        self.assertFalse(any(r["active"] for r in rows if r["origin"] == "inflated"))
+        self.assertEqual(sum(r["active"] for r in rows), 5)
+        self.click_box(client, "inflated")                                                # off -> back on
+        self.assertTrue(all(self.active("alice").values()))
+        self.click_box(client, "inflated/f5_tts")                                         # a middle box
+        rows = self.refs.clip_rows("alice")
+        self.assertFalse(any(r["active"] for r in rows if r["backend"] == "f5_tts"))
+        self.assertTrue(all(r["active"] for r in rows if r["backend"] == "chatterbox"))
+        self.click_box(client, "inflated/f5_tts/nasals")                                  # a small tile inside a switched-off box turns it on
+        rows = self.refs.clip_rows("alice")
+        self.assertTrue(all(r["active"] for r in rows if r["category"] == "nasals"))
+        self.assertFalse(any(r["active"] for r in rows if r["backend"] == "f5_tts" and r["category"] == "plosives"))
+        self.click_box(client, "recordings/uploaded")
+        self.assertEqual(sum(1 for r in self.refs.clip_rows("alice") if r["origin"] == "recording" and r["active"]), 1)   # primary stays on
+
+    def test_box_icons_show_partial_state(self):
+        make_mixed("alice")
+        self.refs.set_active("alice", [r["key"] for r in self.refs.clip_rows("alice") if r["backend"] == "f5_tts" and r["category"] == "nasals"], False)
+        _, client = self.render("alice")
+        from nicegui import ui
+        icon_of = lambda nid: next(e for e in self.box(client, nid).descendants() if isinstance(e, ui.icon)).props["name"]
+        self.assertEqual(icon_of("inflated/f5_tts/nasals"), "check_box_outline_blank")
+        self.assertEqual(icon_of("inflated/f5_tts"), "indeterminate_check_box")
+        self.assertEqual(icon_of("recordings"), "check_box")
+
+    @regression("The mix sliders were taken off the TRAINING tab for now; only the boxes control activation.",
+                "Remove sliders, APPLY MIX, RESET and max-minutes from training_data_panel (refs.apply_mix stays in core for later).")
+    def test_training_tab_has_no_mix_controls(self):
+        make_mixed("alice")
+        html, client = self.render("alice")
+        from nicegui import ui
+        self.assertNotIn("APPLY MIX", html)
+        self.assertNotIn("max minutes", html)
+        self.assertEqual([e for e in client.elements.values() if isinstance(e, ui.slider)], [])
+
+    @regression("The two-pane tabs were slightly too wide (a horizontal scrollbar on TRAINING) and the left pane too roomy; "
+                "the divider moved left on every tab.", "Use components.SPLIT_COLUMNS for every two-pane grid and keep min-w-0 / overflow-x-hidden on the right pane.")
+    def test_every_two_pane_tab_shares_the_split(self):
+        from faily.ui import components
+        self.assertTrue(components.SPLIT_COLUMNS.endswith("2fr"))
+        for tab in ("characters", "speak", "tune", "vc", "edit", "foley"):
+            src = (ROOT / f"faily/ui/tabs/{tab}_tab.py").read_text()
+            self.assertIn("ui.grid(columns=SPLIT_COLUMNS)", src, tab)
+            self.assertNotIn('columns="2fr 3fr"', src, tab)
+        chars = (ROOT / "faily/ui/tabs/characters_tab.py").read_text()
+        self.assertIn("overflow-x-hidden min-w-0", chars)
+
+    def test_about_page_has_no_capability_cards(self):
+        make_mixed("alice")
+        html, _ = self.render("alice")
+        self.assertNotIn("WHAT IT CAN DO", html)
+        self.assertIn("WHERE IT NEEDS WORK", html)
+        self.assertIn("DETAILS", html)
+
+    def test_activation_presets(self):
         make_mixed("alice")
         _, client = self.render("alice")
         by_text = lambda t: next(b for b in self.buttons(client) if getattr(b, "text", "") == t)
@@ -2675,27 +3057,314 @@ class TestHubUi(Sandboxed):
         self.assertEqual(sum(1 for r in rows if r["origin"] == "recording" and r["active"]), 1)   # only the primary stays on
         self.press(client, by_text("EVERYTHING"))
         self.assertTrue(all(self.active("alice").values()))
-        slider = next(e for e in client.elements.values() if isinstance(e, ui.slider) and e.props.get("max") == 95)
-        slider.value = 30
-        self.press(client, by_text("APPLY MIX"))
-        s = self.refs.summarize(self.refs.clip_rows("alice"))
-        share = s["active_inflated"]["seconds"] / s["active"]["seconds"]
-        self.assertAlmostEqual(share, 0.30, delta=0.12)
 
-    def test_chips_flip_a_group(self):
+    def test_wizard_offers_to_resume_a_saved_run(self):
+        from faily.modules import inflation as inf
+        from faily.ui.tabs import inflation_dialog as ID
         make_mixed("alice")
-        _, client = self.render("alice")
-        chip = next(b for b in self.buttons(client) if getattr(b, "text", "").startswith("nasals · f5_tts"))
-        self.press(client, chip)
-        self.assertEqual(sum(1 for r in self.refs.clip_rows("alice") if r["category"] == "nasals" and r["active"]), 0)
-        chip = next(b for b in self.buttons(client) if getattr(b, "text", "").startswith("nasals · f5_tts"))
-        self.press(client, chip)
-        self.assertEqual(sum(1 for r in self.refs.clip_rows("alice") if r["category"] == "nasals" and r["active"]), 3)
+        ID._SESSIONS.pop("alice", None)
+        d = inf.session_dir("alice")
+        cands = [inf.InflatedCandidate("nasals", f"Saved line number {i}.", write_wav(d / f"c{i}.wav", speechish(2.0, seed=i)),
+                                       backend="f5_tts", batch="B1") for i in range(3)]
+        inf.save_session(d, {"phase": "review", "backend": "f5_tts", "param1": 32, "param2": 1.0, "count": 40,
+                             "weights": {"nasals": 1.0}, "lines": [{"category": "nasals", "text": "x"}] * 40}, cands)
+        html, client = self.render_wizard("alice")
+        self.assertIn("UNFINISHED INFLATION", html)
+        self.assertIn("3 clips of 40", html)
+        self.assertNotIn("alice", ID._SESSIONS)                                          # asked first; nothing was built
+        self.assertTrue((d / inf.SESSION_FILE).exists())                                 # ...and nothing was deleted
+
+    def test_resuming_restores_clips_settings_and_the_review_step(self):
+        from nicegui import ui
+        from faily.modules import inflation as inf
+        from faily.ui.tabs import inflation_dialog as ID
+        make_mixed("alice")
+        ID._SESSIONS.pop("alice", None)
+        d = inf.session_dir("alice")
+        cands = [inf.InflatedCandidate("nasals", f"Saved line number {i}.", write_wav(d / f"c{i}.wav", speechish(2.0, seed=i)),
+                                       backend="f5_tts", batch="B1") for i in range(3)]
+        cands[1].accepted = False
+        inf.save_session(d, {"phase": "review", "backend": "f5_tts", "param1": 32, "param2": 1.0, "count": 40,
+                             "weights": {"nasals": 1.0}, "lines": []}, cands)
+        html, client = self.render_wizard("alice", resume="load")
+        self.assertIn("alice", ID._SESSIONS)
+        texts = {e.text for e in client.elements.values() if isinstance(getattr(e, "text", None), str)}
+        self.assertTrue({"Saved line number 0.", "Saved line number 1.", "Saved line number 2."} <= texts)
+        self.assertTrue(any(t.startswith("restored 3 clips") for t in texts))
+        self.assertIn("2 / 3 selected", " ".join(texts))                                 # the untick was remembered
+        boxes = [e for e in client.elements.values() if isinstance(e, ui.checkbox)]
+        self.assertEqual(sorted(b.value for b in boxes), [False, True, True])
+        # unticking a clip is saved (no event loop in this harness, so it is written straight away)
+        next(b for b in boxes if b.value).value = False
+        saved = inf.load_session(d)
+        self.assertEqual(sum(c.accepted for c in saved["candidates"]), 1)
+        ID._SESSIONS.pop("alice", None)
+
+    def test_discarding_starts_clean(self):
+        from faily.modules import inflation as inf
+        from faily.ui.tabs import inflation_dialog as ID
+        make_mixed("alice")
+        ID._SESSIONS.pop("alice", None)
+        d = inf.session_dir("alice")
+        inf.save_session(d, {"phase": "review"}, [inf.InflatedCandidate("nasals", "Old line here.", write_wav(d / "c.wav", speechish(1.0)))])
+        self.render_wizard("alice", resume="discard")
+        self.assertFalse((d / "c.wav").exists())
+        self.assertIsNone(inf.load_session(d))
+        self.assertIn("alice", ID._SESSIONS)
+        ID._SESSIONS.pop("alice", None)
+
+    def render_wizard(self, name, **params):
+        from urllib.parse import urlencode
+        resp = _ui_client().get(f"/wizard/{name}" + (f"?{urlencode(params)}" if params else ""))
+        self.assertEqual(resp.status_code, 200)
+        return resp.text, _UI["clients"][-1]
+
+    def test_inflation_wizard_builds_and_applies_the_preset(self):
+        from nicegui import ui
+        from faily.ui.tabs import inflation_dialog as ID
+        make_mixed("alice")
+        ID._SESSIONS.pop("alice", None)
+        resp = _ui_client().get("/wizard/alice?category=nasals&backend=f5_tts")
+        self.assertEqual(resp.status_code, 200)
+        client = _UI["clients"][-1]
+        self.assertIn("alice", ID._SESSIONS)
+        self.assertTrue(ID._session_alive(ID._SESSIONS["alice"]))
+        weights = {}
+        for el in client.elements.values():
+            if isinstance(el, ui.slider) and el.props.get("max") == 2.0:
+                weights[el.value] = weights.get(el.value, 0) + 1
+        self.assertEqual(weights[0.0], 8)                                   # 8 of the 9 categories are weighted 0
+        self.assertGreaterEqual(weights[1.0], 1)                            # the chosen one stays at 1.0 (F5's speed slider also reads 1.0)
+        ID._SESSIONS.pop("alice", None)
 
     def test_inflation_wizard_accepts_a_preset(self):
         import inspect
         from faily.ui.tabs.inflation_dialog import open_inflation_dialog
         self.assertIn("preset", inspect.signature(open_inflation_dialog).parameters)
+
+
+class TestScriptTools(unittest.TestCase):
+    """scripts/check_script_lines.py (vets new bank lines) and scripts/build_script_bank_file.py."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("csl", ROOT / "scripts" / "check_script_lines.py")
+        self.csl = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.csl)
+
+    def test_checker_flags_each_kind_of_problem(self):
+        from faily.modules.inflation import load_script_bank
+        old_line = load_script_bank()["plosives"][0]
+        fresh = "Purple bicycles lean against the old brick wall."
+        lines = [old_line, fresh, fresh, "Hi", "She ran 5km today around the park.", "A snowman \u2603 stood in the yard.",
+                 "There is no ending punctuation here", "The meeting is on 12/05/2024 at noon.", "Boarding starts at gate B14 in ten minutes."]
+        problems, stats = self.csl.check("plosives", lines)
+        reason = {text: why.split(":")[0].split(" (")[0] for text, why in problems}
+        self.assertEqual(reason[old_line], "duplicate")
+        self.assertEqual(reason["Hi"], "length")
+        self.assertEqual(reason["She ran 5km today around the park."], "digits the aligner can't read")
+        self.assertEqual(reason["The meeting is on 12/05/2024 at noon."], "digits the aligner can't read")
+        self.assertEqual(reason["A snowman \u2603 stood in the yard."], "characters")
+        self.assertEqual(reason["There is no ending punctuation here"], "ending")
+        self.assertEqual(stats["good"].count(fresh), 1)                              # the second copy is a batch duplicate
+        self.assertIn("Boarding starts at gate B14 in ten minutes.", stats["good"])  # letter+digit labels are readable
+        self.assertEqual(len(problems), 7)
+
+    def test_checker_limits_repeated_openings_and_category_lengths(self):
+        lines = [f"Pack the crate number {i} before sunrise." for i in range(12)]
+        _, stats = self.csl.check("plosives", lines)
+        self.assertEqual([o for o, _ in stats["repeated_openings"]], ["pack the crate"])
+        problems, _ = self.csl.check("pacing", ["Zebra crossing.", "Quiet, quiet, quiet, please."])
+        self.assertEqual(problems, [])                                               # pacing accepts one-word-ish lines
+        self.assertTrue(self.csl.check("plosives", ["Zebra crossing."])[0])          # other categories need 4+ words
+
+    @regression("The new script lines (about 300 per category) must stay duplicate-free, readable by the aligner, and spread "
+                "across all categories so one category can be inflated without repeating lines.",
+                "Run scripts/check_script_lines.py on the offending batch; rebuild faily/data/inflation_scripts_more.txt with "
+                "scripts/build_script_bank_file.py after fixing the per-category files.")
+    def test_bank_has_the_extra_lines_in_every_category(self):
+        from faily.modules.inflation import CATEGORIES
+        text = (ROOT / "faily/data/inflation_scripts_more.txt").read_text(encoding="utf-8")
+        counts = collections.Counter()
+        cur = None
+        for line in text.splitlines():
+            if line.startswith("## "):
+                cur = line[3:].strip()
+            elif line.strip() and not line.startswith("#"):
+                counts[cur] += 1
+        self.assertEqual(set(counts), set(CATEGORIES))
+        self.assertTrue(all(n >= 300 for n in counts.values()), dict(counts))
+
+
+class TestInflationSession(Sandboxed):
+    """The wizard saves itself as it goes so a reload / crash / restart loses nothing."""
+
+    def setUp(self):
+        super().setUp()
+        from faily.modules import inflation
+        self.inf = inflation
+
+    def cands(self, d, n=3, **kw):
+        return [self.inf.InflatedCandidate("nasals", f"Saved line number {i}.", write_wav(d / f"c{i}.wav", speechish(2.0, seed=i)),
+                                           backend="f5_tts", batch="B1", **kw) for i in range(n)]
+
+    def test_session_lives_in_the_character_folder_not_scratch(self):
+        make_char("alice")
+        d = self.inf.session_dir("alice")
+        self.assertEqual(d, P.CHARACTERS_DIR / "alice" / "inflation_session")
+        self.assertNotIn("_tmp", d.parts)
+
+    def test_roundtrip_keeps_clips_ticks_verdicts_and_settings(self):
+        make_char("alice")
+        d = self.inf.session_dir("alice")
+        c = self.cands(d)
+        c[1].accepted = False
+        c[2].verdict, c[2].note, c[2].issues = "review", "a breath between words", ["noisy"]
+        self.inf.save_session(d, {"phase": "review", "backend": "f5_tts", "param1": 32, "param2": 1.0, "count": 50,
+                                  "weights": {"nasals": 1.0}, "lines": [{"category": "nasals", "text": "More to do."}]}, c)
+        got = self.inf.load_session(d)
+        self.assertEqual([(x.text, x.accepted, x.verdict, x.backend, x.batch) for x in got["candidates"]],
+                         [("Saved line number 0.", True, "", "f5_tts", "B1"), ("Saved line number 1.", False, "", "f5_tts", "B1"),
+                          ("Saved line number 2.", True, "review", "f5_tts", "B1")])
+        self.assertEqual(got["candidates"][2].note, "a breath between words")
+        self.assertEqual(got["candidates"][2].issues, ["noisy"])
+        self.assertEqual((got["backend"], got["count"], got["phase"], got["weights"]), ("f5_tts", 50, "review", {"nasals": 1.0}))
+        self.assertEqual(got["lines"], [{"category": "nasals", "text": "More to do."}])
+        self.assertEqual(got["candidates"][0].path, d / "c0.wav")
+
+    @regression("A restored wizard must not offer clips that are gone or already in the pool (that would add duplicates).",
+                "Keep load_session dropping candidates with missing audio or committed=True.")
+    def test_load_skips_missing_audio_and_already_added_clips(self):
+        make_char("alice")
+        d = self.inf.session_dir("alice")
+        c = self.cands(d, 4)
+        c[0].committed = True
+        self.inf.save_session(d, {"phase": "review"}, c)
+        (d / "c1.wav").unlink()
+        got = self.inf.load_session(d)
+        self.assertEqual([x.text for x in got["candidates"]], ["Saved line number 2.", "Saved line number 3."])
+
+    def test_nothing_to_resume_when_empty_missing_or_corrupt(self):
+        make_char("alice")
+        d = self.inf.session_dir("alice")
+        self.assertIsNone(self.inf.load_session(d))
+        self.inf.save_session(d, {"phase": "generating"}, [])
+        self.assertIsNone(self.inf.load_session(d))                                   # settings only: no clips to resume
+        (d / self.inf.SESSION_FILE).write_text("{ not json")
+        self.assertIsNone(self.inf.load_session(d))
+
+    def test_save_is_atomic_and_clear_and_discard(self):
+        make_char("alice")
+        d = self.inf.session_dir("alice")
+        c = self.cands(d)
+        self.inf.save_session(d, {"phase": "review"}, c)
+        self.assertFalse((d / (self.inf.SESSION_FILE + ".tmp")).exists())
+        before = (d / self.inf.SESSION_FILE).read_text()
+        with mock.patch.object(Path, "replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.inf.save_session(d, {"phase": "review", "count": 999}, c)
+        self.assertEqual((d / self.inf.SESSION_FILE).read_text(), before)             # the previous save is intact
+        self.inf.clear_session(d)
+        self.assertFalse((d / self.inf.SESSION_FILE).exists())
+        self.assertTrue((d / "c0.wav").exists())                                       # clear forgets the state, keeps the audio
+        self.inf.discard_session(d)
+        self.assertFalse(d.exists())
+
+    @regression("Clips only reached the wizard when generation finished, so a crash lost everything generated so far.",
+                "Keep generate_batch calling on_clip as each clip lands, and the wizard saving from it.")
+    def test_generate_batch_reports_each_clip_as_it_lands(self):
+        make_char("alice", refs=1)
+        seen = []
+
+        def fake_generate(text, ref, progress, out_dir, backend, p1, p2, ref_text, char_name):
+            if text == "boom":
+                raise RuntimeError("synthetic failure")
+            return write_wav(Path(out_dir) / f"{len(seen)}_{abs(hash(text)) % 1000}.wav", speechish(1.5))
+
+        lines = [self.inf.ScriptLine("neutral", t) for t in ("one", "boom", "three")]
+        with mock.patch.object(self.inf, "generate", fake_generate):
+            result = asyncio.run(self.inf.generate_batch(
+                "alice", lines, "xtts_v2", 1, 1, SANDBOX / "stg", [False], lambda *a: None, lambda *a: None,
+                lambda cand: seen.append(cand.text)))
+        self.assertEqual(seen, ["one", "three"])                                       # in order, failures skipped
+        self.assertEqual([c.text for c in result], ["one", "three"])
+        self.assertTrue(all(c.backend == "xtts_v2" and c.batch for c in result))
+
+    def test_commit_marks_clips_so_a_restore_skips_them(self):
+        from faily.ui.tabs.inflation_dialog import commit_candidates
+        make_char("alice")
+        d = self.inf.session_dir("alice")
+        c = self.cands(d)
+        self.assertEqual(commit_candidates("alice", c), (3, 0))
+        self.assertTrue(all(x.committed for x in c))
+        self.assertEqual(commit_candidates("alice", c), (0, 0))                        # a second commit adds nothing
+        self.inf.save_session(d, {"phase": "review"}, c)
+        self.assertIsNone(self.inf.load_session(d))
+
+    @regression("Unfinished wizard runs must survive 'Clean up -> Scratch files'; they have their own opt-in category.",
+                "Keep inflation_session out of the 'tmp' finder and in cleanup.CATEGORIES (default off).")
+    def test_cleanup_treats_a_saved_run_separately_from_scratch(self):
+        from faily.core import cleanup as CL
+        make_char("alice")
+        d = self.inf.session_dir("alice")
+        self.inf.save_session(d, {"phase": "review"}, self.cands(d))
+        write_wav(P.TMP_DIR / "x.wav", speechish(0.5))
+        by = {c["key"]: c for c in CL.scan(OUT)}
+        self.assertEqual(by["inflation_session"]["items"], 1)
+        self.assertFalse(by["inflation_session"]["default"])
+        CL.clean(OUT, ["tmp"])
+        self.assertTrue((d / self.inf.SESSION_FILE).exists())
+        CL.clean(OUT, ["inflation_session"])
+        self.assertFalse(d.exists())
+
+
+class TestInflationWizardRobustness(Sandboxed):
+    @regression("Committing inflated clips from the wizard dropped which engine and run made them (they showed as 'unknown').",
+                "Pass backend=c.backend, batch=c.batch in inflation_dialog.commit_candidates.")
+    def test_commit_keeps_backend_and_batch_and_skips_unticked(self):
+        from faily.modules.inflation import InflatedCandidate
+        from faily.ui.tabs.inflation_dialog import commit_candidates
+        make_char("alice")
+        mk = lambda i, **kw: InflatedCandidate("plosives", f"Line number {i}.", write_wav(SANDBOX / f"w{i}.wav", speechish(2.0, seed=i)),
+                                               backend="chatterbox", batch="20261108-1200", **kw)
+        cands = [mk(1), mk(2, accepted=False), mk(3)]
+        bad = InflatedCandidate("plosives", "Missing file.", SANDBOX / "nope.wav", backend="f5_tts", batch="B")
+        self.assertEqual(commit_candidates("alice", cands + [bad]), (2, 1))
+        rows = [r for r in __import__("faily.core.refs", fromlist=["x"]).clip_rows("alice") if r["origin"] == "inflated"]
+        self.assertEqual({(r["backend"], r["batch"], r["category"]) for r in rows}, {("chatterbox", "20261108-1200", "plosives")})
+        self.assertEqual(sorted(r["transcript"] for r in rows), ["Line number 1.", "Line number 3."])
+
+    @regression("A wizard whose browser page was reloaded or dropped could not be reopened (the dialog's client is gone) and "
+                "crashed the auto-qualify step with 'The client this element belongs to has been deleted'.",
+                "Keep _session_alive() and the _ui_safe() guards around every screen update that follows a long await in "
+                "inflation_dialog (_auto_qualify), and store results on the candidates before touching the screen.")
+    def test_lost_page_is_detected_and_screen_updates_are_guarded(self):
+        from types import SimpleNamespace
+        from faily.ui.tabs import inflation_dialog as ID
+
+        class Gone:
+            @property
+            def client(self):
+                raise RuntimeError("The client this element belongs to has been deleted.")
+
+        self.assertFalse(ID._session_alive({"dlg": Gone()}))
+        self.assertTrue(ID._session_alive({"dlg": SimpleNamespace(client=object())}))
+        src = (ROOT / "faily/ui/tabs/inflation_dialog.py").read_text()
+        body = src[src.index("results = await ni_run.io_bound(_run)"):src.index("async def _qualify():")]
+        shown = body.index("def _show():")                                   # _show runs only through _ui_safe(_show)
+        unguarded = body[:shown] + body[body.index("_ui_safe(_show)"):]
+        for call in ("_render_review()", "auto_bar.set_visibility", "auto_status.set_text", "show_error(", "timer.cancel"):
+            for line in (l for l in unguarded.splitlines() if call in l):
+                self.assertIn("_ui_safe", line, f"unguarded after the long await: {line.strip()}")
+        verdicts = body.index("c.verdict, c.note = r.status, r.summary()")
+        self.assertLess(verdicts, body.index("_ui_safe(_show)"), "results must be stored before the screen is touched")
+
+    @regression("A brief stall while a heavy job runs dropped the browser page (and its open wizard) after NiceGUI's 3 s default.",
+                "Keep a generous reconnect_timeout in the ui.run(...) call in ui/app.py.")
+    def test_server_waits_longer_for_a_dropped_browser(self):
+        m = re.search(r"reconnect_timeout\s*=\s*([0-9.]+)", (ROOT / "faily/ui/app.py").read_text())
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(float(m.group(1)), 30.0)
 
 
 class TestRepoHygiene(unittest.TestCase):

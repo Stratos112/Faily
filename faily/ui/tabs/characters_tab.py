@@ -9,6 +9,7 @@ from faily.core.characters import (
     rename_ref_audio, update_ref_clip, CHARACTERS_DIR,
 )
 from faily.ui.components import (
+    SPLIT_COLUMNS,
     section_label, show_error, send_to_edit, bind_play, prime_audio, play_url,
 )
 from faily.modules.piper import (
@@ -657,8 +658,8 @@ def build_characters_tab(on_speak, on_change, initial: str | None = None):
         dlg.open()
 
     # ── layout ────────────────────────────────────────────────────────────────
-    with ui.grid(columns="2fr 3fr").classes("w-full h-full gap-0"):
-        with ui.column().classes("gap-2 p-8 border-r border-[#252525] overflow-y-auto"):
+    with ui.grid(columns=SPLIT_COLUMNS).classes("w-full h-full gap-0"):
+        with ui.column().classes("gap-2 p-6 border-r border-[#252525] overflow-y-auto overflow-x-hidden min-w-0"):
             with ui.row().classes("w-full items-center gap-2"):
                 section_label("CHARACTER LIBRARY")
                 ui.space()
@@ -671,7 +672,7 @@ def build_characters_tab(on_speak, on_change, initial: str | None = None):
             # everything in it deleted) whenever a clip is edited or added.
             dialog_host = ui.element("div").classes("hidden")
 
-        with ui.column().classes("gap-3 p-8 overflow-y-auto"):
+        with ui.column().classes("gap-3 p-6 overflow-y-auto overflow-x-hidden min-w-0"):
             right_col = ui.column().classes("w-full gap-2")
 
     _rebuild_list()

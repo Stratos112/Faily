@@ -3,15 +3,18 @@ across a phonetically/prosodically diverse script bank, to inflate their
 reference pool before Piper training. Pure logic; no UI imports.
 """
 import asyncio
+import json
 import math
 import random
 import re
+import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from faily.core.characters import build_ref_audio, F5_REF_SECONDS, clip_quality_issues, get_character
+from faily.core.characters import CHARACTERS_DIR, build_ref_audio, ref_seconds, clip_quality_issues, get_character
 from faily.modules.vc import generate
 
 _SCRIPT_BANK_PATH = Path("faily/data/inflation_scripts.txt")
@@ -75,6 +78,7 @@ class InflatedCandidate:
     note: str = ""               # what auto-qualify did / found
     backend: str = ""            # which zero-shot engine made it (kept on the clip once committed)
     batch: str = ""              # the wizard run it came from (a timestamp id)
+    committed: bool = False      # already added to the reference pool (so a restored session skips it)
 
 
 def load_script_bank(path: Path = _SCRIPT_BANK_PATH) -> dict[str, list[str]]:
@@ -280,6 +284,66 @@ def sample_lines(
     return lines
 
 
+# ── a wizard run that survives a reload or crash ─────────────────────────────
+# Generating 200+ clips takes a long time. The wizard saves what it has (the settings, the script lines, every
+# generated clip and your ticks / auto-qualify verdicts) next to the clips, so a page reload, a dropped
+# connection or a restart costs nothing: opening the wizard again offers to pick up where it stopped.
+# It lives in the character's folder, not the scratch folder, so "Clean up -> Scratch files" never eats it.
+
+SESSION_FILE = "session.json"
+
+
+def session_dir(char_name: str) -> Path:
+    return CHARACTERS_DIR / char_name / "inflation_session"
+
+
+def save_session(directory: Path, state: dict, candidates: list["InflatedCandidate"]) -> None:
+    """Write the wizard's state next to its clips. Atomic: a crash mid-write leaves the previous save intact."""
+    directory.mkdir(parents=True, exist_ok=True)
+    data = {
+        "version": 1, "saved": time.time(), **state,
+        "candidates": [{
+            "file": c.path.name, "category": c.category, "text": c.text, "issues": c.issues, "accepted": c.accepted,
+            "verdict": c.verdict, "note": c.note, "backend": c.backend, "batch": c.batch, "committed": c.committed,
+        } for c in candidates],
+    }
+    tmp = directory / (SESSION_FILE + ".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    tmp.replace(directory / SESSION_FILE)
+
+
+def load_session(directory: Path) -> dict | None:
+    """The saved wizard state with its candidates rebuilt, or None when there is nothing worth resuming.
+    Clips whose audio is gone, and clips already added to the pool, are left out."""
+    try:
+        data = json.loads((directory / SESSION_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    cands = []
+    for d in data.get("candidates", []):
+        path = directory / d["file"]
+        if d.get("committed") or not path.exists():
+            continue
+        cands.append(InflatedCandidate(
+            category=d["category"], text=d["text"], path=path, issues=d.get("issues", []),
+            accepted=d.get("accepted", True), verdict=d.get("verdict", ""), note=d.get("note", ""),
+            backend=d.get("backend", ""), batch=d.get("batch", ""),
+        ))
+    if not cands:
+        return None
+    return {**data, "candidates": cands}
+
+
+def clear_session(directory: Path) -> None:
+    """Forget the saved state (the run was added or discarded). The clip files are left for the caller to remove."""
+    (directory / SESSION_FILE).unlink(missing_ok=True)
+    (directory / (SESSION_FILE + ".tmp")).unlink(missing_ok=True)
+
+
+def discard_session(directory: Path) -> None:
+    shutil.rmtree(directory, ignore_errors=True)
+
+
 async def generate_batch(
     char_name: str,
     lines: list[ScriptLine],
@@ -290,19 +354,21 @@ async def generate_batch(
     cancel_flag: list[bool],
     on_progress: Callable[[int, int, ScriptLine], None],
     on_error: Callable[[int, ScriptLine, Exception], None],
+    on_clip: Callable[[InflatedCandidate], None] | None = None,
 ) -> list[InflatedCandidate]:
     """Sequentially generate one zero-shot clip per script line, using the
     character's own existing reference audio as the zero-shot voice
     reference. Checks cancel_flag before starting each clip (an in-flight
     generation can't be interrupted, only the next one can be skipped).
     A single clip's failure is caught and reported via on_error without
-    aborting the rest of the batch.
+    aborting the rest of the batch. on_clip(candidate), if given, is called as each clip
+    lands so a caller can show it and save it straight away.
     """
     staging_dir.mkdir(parents=True, exist_ok=True)
     candidates: list[InflatedCandidate] = []
     batch = datetime.now().strftime("%Y%m%d-%H%M%S")
     require_transcript = backend == "f5_tts"
-    max_duration = F5_REF_SECONDS if backend == "f5_tts" else None
+    max_duration = ref_seconds(backend)
 
     # Clone from the real recordings only: cloning inflated clips would compound their drift.
     with build_ref_audio(char_name, require_transcript=require_transcript, max_duration=max_duration,
@@ -317,10 +383,13 @@ async def generate_batch(
                     backend, param1, param2, ref_text, char_name,
                 )
                 issues = clip_quality_issues(path)
-                candidates.append(InflatedCandidate(
+                cand = InflatedCandidate(
                     category=line.category, text=line.text, path=path, issues=issues,
                     backend=backend, batch=batch,
-                ))
+                )
+                candidates.append(cand)
+                if on_clip:
+                    on_clip(cand)
             except Exception as exc:
                 on_error(i, line, exc)
             on_progress(i + 1, total, line)

@@ -440,16 +440,50 @@ def _parler_generate_checked(text: str, out: Path, style_prompt: str, max_new_to
     return best_wer
 
 
+_XTTS_MIN_PIECE = 3.0      # seconds; XTTS wants each reference file > 3 s
+
+
+def _split_reference(ref_path: Path, piece_seconds: float, min_seconds: float = _XTTS_MIN_PIECE):
+    """Cut a long reference into consecutive pieces of `piece_seconds` (a short tail joins the last
+    piece). Returns (paths, temp_dir_or_None); a reference that already fits comes back as itself."""
+    import numpy as np
+    info = sf.info(str(ref_path))
+    if info.duration <= piece_seconds + min_seconds:
+        return [Path(ref_path)], None
+    data, sr = sf.read(str(ref_path), dtype="float32", always_2d=False)
+    step = int(piece_seconds * sr)
+    starts = list(range(0, len(data), step))
+    if len(data) - starts[-1] < int(min_seconds * sr):
+        starts.pop()
+    bounds = list(zip(starts, starts[1:] + [len(data)]))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="xtts_ref_"))
+    paths = []
+    for i, (a, b) in enumerate(bounds):
+        path = tmp_dir / f"piece_{i:03d}.wav"
+        sf.write(str(path), np.ascontiguousarray(data[a:b]), sr)
+        paths.append(path)
+    return paths, tmp_dir
+
+
 def _xtts_generate(text, ref_path, out, temperature, speed):
     tts = manager.load("xtts_v2", _load_xtts)
-    tts.tts_to_file(
-        text=text,
-        speaker_wav=str(ref_path),
-        language="en",
-        file_path=str(out),
-        speed=speed,
-        temperature=temperature,
-    )
+    # XTTS keeps only the first max_ref_len seconds of each reference FILE, but averages the speaker
+    # embedding over every file it is given: hand it a long reference as pieces of that length.
+    cfg = getattr(getattr(getattr(tts, "synthesizer", None), "tts_model", None), "config", None)
+    piece = float(getattr(cfg, "max_ref_len", None) or 10)
+    pieces, tmp_dir = _split_reference(Path(ref_path), piece)
+    try:
+        tts.tts_to_file(
+            text=text,
+            speaker_wav=[str(p) for p in pieces] if len(pieces) > 1 else str(pieces[0]),
+            language="en",
+            file_path=str(out),
+            speed=speed,
+            temperature=temperature,
+        )
+    finally:
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _f5_short_reference(ref_path: Path, ref_text: str, limit: float = 12.0):
