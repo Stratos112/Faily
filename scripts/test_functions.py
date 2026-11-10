@@ -1490,6 +1490,20 @@ class TestVCHelpers(Sandboxed):
         self.assertEqual(self.vc._f5_short_reference(short, "keep")[1:], ("keep", None))
 
     @regression(
+        'F5 must be given a seed CPython accepts as PYTHONHASHSEED (its default draw, up to sys.maxsize, '
+        'leaked into os.environ and made every later piper_venv subprocess die: "Piper not ready — '
+        'Python runtime state: preinitialized").',
+        'Pass seed=_f5_seed() (0..2**32-1) to tts.infer in modules/vc._f5_infer.')
+    def test_f5_seed_is_valid_hashseed(self):
+        captured = {}
+        fake = mock.Mock()
+        fake.infer.side_effect = lambda **kw: captured.update(kw) or (np.zeros(2400, dtype=np.float32), 24000, None)
+        with mock.patch.object(self.vc.manager, "load", return_value=fake):
+            self.vc._f5_infer("hi", SANDBOX / "r.wav", SANDBOX / "f5_seed.wav", 8, 1.0, "ref")
+        self.assertIn("seed", captured)
+        self.assertTrue(0 <= captured["seed"] <= 2**32 - 1)
+
+    @regression(
         "FreeVC's speaker encoder is cached locally; a present file must never trigger a download.",
         'In modules/vc._freevc_speaker_encoder return the cached file when it exists and is over 1 MB.')
     def test_freevc_speaker_encoder_uses_local_copy_without_network(self):

@@ -518,6 +518,14 @@ def _f5_generate(text, ref_path, out, steps, speed, ref_text=""):
             tmp.unlink()
 
 
+def _f5_seed() -> int:
+    # F5's infer() writes its seed into os.environ["PYTHONHASHSEED"]; its default draw goes up to
+    # sys.maxsize, past CPython's 2**32-1 limit, and every Python subprocess started afterwards
+    # (piper_venv: training, diagnose) then dies at startup. Draw one that is valid.
+    import random
+    return random.randint(0, 2**32 - 1)
+
+
 def _f5_infer(text, ref_path, out, steps, speed, ref_text=""):
     tts = manager.load("f5_tts", _load_f5)
     wav, sr, _ = tts.infer(
@@ -526,6 +534,7 @@ def _f5_infer(text, ref_path, out, steps, speed, ref_text=""):
         gen_text=text,
         nfe_step=int(steps),
         speed=speed,
+        seed=_f5_seed(),
     )
     sf.write(str(out), wav, sr)
 
