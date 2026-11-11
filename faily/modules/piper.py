@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -1416,9 +1417,13 @@ def infer(
     """
     import numpy as np
     import soundfile as sf
+    import tempfile
     sentences = _sentences(text) or [text]
-    tmp_dir = out_path.parent / f"_piper_tmp_{out_path.stem}"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    # a unique scratch dir per call: two renders of the same out_path (e.g. the training dialog
+    # open in two clients after a reconnect) used to share one, and the first to finish deleted it
+    # under the other
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(tempfile.mkdtemp(prefix=f"_piper_tmp_{out_path.stem}_", dir=out_path.parent))
     pieces, sr = [], 22050
     try:
         for n, sent in enumerate(sentences):
@@ -1448,7 +1453,10 @@ def infer(
         raise RuntimeError("Piper produced only unusable audio (noise/empty) — try lowering VARIATION and PACING VARIABILITY")
     gap = np.zeros(int(sr * sentence_silence), dtype=np.float32)
     out = np.concatenate([x for p in pieces for x in (p, gap)][:-1])
-    sf.write(str(out_path), out, sr, subtype="PCM_16")
+    # write then rename, so a concurrent caller checking out_path.exists() never plays a half-written file
+    part = out_path.with_name(f".{out_path.stem}.{os.getpid()}.{threading.get_ident()}.part.wav")
+    sf.write(str(part), out, sr, subtype="PCM_16")
+    os.replace(part, out_path)
     return out_path
 
 

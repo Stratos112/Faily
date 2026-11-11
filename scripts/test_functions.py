@@ -812,6 +812,46 @@ class TestPiperHelpers(Sandboxed):
         with self.assertRaises(ValueError):
             p.frozen_modules({a: "base" for a in p.MATCH_ASPECTS})
 
+    @regression(
+        'Two concurrent piper.infer() renders of the same out_path must not share a scratch dir '
+        '(the first to finish deleted it under the other: FileNotFoundError ..._piper_tmp_preview_epoch_N/s000_0.wav).',
+        'Use a per-call tempfile.mkdtemp scratch dir in modules/piper.infer and write out_path via rename.')
+    def test_concurrent_infer_same_output(self):
+        import threading
+        out = SANDBOX / "cands" / "preview_epoch_7.wav"
+        gate = threading.Barrier(2)
+        first = threading.Event()
+        lock = threading.Lock()
+
+        def fake_raw(text, model, take, *a):
+            gate.wait(timeout=5)                         # both calls are inside their scratch dirs at once
+            with lock:
+                late = first.is_set()
+                first.set()
+            if late:
+                time.sleep(0.4)                          # the other render finishes (and cleans up) meanwhile
+            sf.write(str(take), speechish(1.0), 22050)  # like the piper CLI: no mkdir of the scratch dir
+            return take
+
+        errors = []
+
+        def run():
+            try:
+                self.piper.infer("Hello there.", SANDBOX / "m.onnx", out)
+            except Exception as exc:
+                errors.append(exc)
+
+        with mock.patch.object(self.piper, "_infer_raw", side_effect=fake_raw), \
+                mock.patch.object(self.piper, "_bad_take", return_value=None):
+            ts = [threading.Thread(target=run) for _ in range(2)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(10)
+        self.assertEqual(errors, [])
+        self.assertTrue(out.exists())
+        self.assertEqual([p.name for p in out.parent.iterdir()], [out.name])     # no scratch / .part left
+
     def test_training_clips_use_the_active_flag(self):
         chain = [{"source": "", "active": True}, {"source": "inflated", "active": False}, {"source": "import"}]
         kept = self.piper.training_clips(chain)
