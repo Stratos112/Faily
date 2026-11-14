@@ -852,6 +852,54 @@ class TestPiperHelpers(Sandboxed):
         self.assertTrue(out.exists())
         self.assertEqual([p.name for p in out.parent.iterdir()], [out.name])     # no scratch / .part left
 
+    @regression(
+        'Every Piper model trained from Amy had a grainy "bit-crushed" tone: Faily fine-tuned from the old '
+        'amy checkpoint (epoch=6679, now 404 upstream), while rhasspy had retrained the voice (MRD + SDP) '
+        'and the preview .onnx was already the new, clean one.',
+        'BASE_VOICES amy/ryan/hfc_female point at the current checkpoints with "convert": True '
+        '(scripts/convert_piper_checkpoint.py), and base_voice_ready/base_voice_paths use ckpt_filename, '
+        'not whatever *.ckpt is in the folder.')
+    def test_base_voice_current_checkpoint(self):
+        p = self.piper
+        for key in ("amy", "ryan", "hfc_female"):
+            v = p.BASE_VOICES[key]
+            self.assertTrue(v.get("convert"), key)
+            self.assertTrue(v["ckpt_url"].endswith("/" + v["ckpt_filename"]), key)
+        self.assertNotIn("6679", p.BASE_VOICES["amy"]["ckpt_url"])
+        with mock.patch.object(p, "PIPER_CKPTS", SANDBOX / "ckpts"):
+            d = p.base_voice_dir("amy"); d.mkdir(parents=True)
+            (d / "en_US-amy-medium.onnx.json").write_text("{}")
+            (d / "epoch=6679-step=1554200.ckpt").write_text("old")       # superseded download
+            (d / (p.BASE_VOICES["amy"]["ckpt_filename"] + ".upstream")).write_text("raw")
+            self.assertFalse(p.base_voice_ready("amy"))                      # old / unconverted don't count
+            (d / p.BASE_VOICES["amy"]["ckpt_filename"]).write_text("new")
+            self.assertTrue(p.base_voice_ready("amy"))
+            self.assertEqual(p.base_voice_paths("amy")[0].name, p.BASE_VOICES["amy"]["ckpt_filename"])
+
+    def test_convert_lightning2_checkpoint(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("convert_ckpt", ROOT / "scripts" / "convert_piper_checkpoint.py")
+        conv = importlib.util.module_from_spec(spec); spec.loader.exec_module(conv)
+        new = {
+            "epoch": 1999, "global_step": 164000, "pytorch-lightning_version": "2.6.6",
+            "state_dict": {"model_g.dec.conv_pre.weight": 1, "model_d.discriminators.0.w": 2,
+                           "model_mrd.discriminators.0.w": 3},
+            "loops": {"fit_loop": {}}, "callbacks": {"x": 1}, "optimizer_states": [{"a": 1}, {"b": 2}],
+            "lr_schedulers": [{}, {}], "hparams_name": "kwargs",
+            "hyper_parameters": {"hidden_channels": 192, "use_mrd": True, "_instantiator": "lightning.x"},
+        }
+        self.assertTrue(conv.is_lightning2(new))
+        out = conv.convert(new)
+        self.assertFalse(conv.is_lightning2(out))
+        self.assertEqual(set(out["state_dict"]), {"model_g.dec.conv_pre.weight", "model_d.discriminators.0.w"})
+        self.assertEqual((out["optimizer_states"], out["lr_schedulers"]), ([], []))   # keys must exist for Lightning 1.7
+        self.assertEqual((out["epoch"], out["global_step"]), (1999, 164000))
+        # Lightning 1.7 restarts at epoch 0 unless the fit loop's processed counter is restored too
+        self.assertEqual(out["loops"]["fit_loop"]["epoch_progress"]["current"]["processed"], 1999)
+        self.assertEqual(out["loops"]["fit_loop"]["epoch_progress"]["current"]["completed"], 1999)
+        self.assertNotIn("_instantiator", out["hyper_parameters"])
+        self.assertEqual(out["hyper_parameters"]["hidden_channels"], 192)
+
     def test_training_clips_use_the_active_flag(self):
         chain = [{"source": "", "active": True}, {"source": "inflated", "active": False}, {"source": "import"}]
         kept = self.piper.training_clips(chain)

@@ -36,6 +36,12 @@ _SR           = 22050
 # as-is so existing installs need no migration. Every other voice downloads
 # on demand into its own piper_checkpoints/{key}/ subfolder the first time
 # it's actually selected for training.
+#
+# "convert": rhasspy retrained amy / ryan / hfc_female with the newer Piper training code
+# (piper1-gpl, Lightning 2, "with MRD and SDP") and replaced their checkpoints; the old ones
+# 404 now and had a grainy "bit-crushed" vocoder tone that every fine-tune inherited (the
+# preview .onnx was already the new voice). Those are converted after download into a form
+# our piper_train can resume (scripts/convert_piper_checkpoint.py).
 BASE_VOICES: dict[str, dict] = {
     "lessac": {
         "label": "Lessac (default)",
@@ -49,19 +55,21 @@ BASE_VOICES: dict[str, dict] = {
     "ryan": {
         "label": "Ryan",
         "desc": "Deeper American male voice.",
-        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/ryan/medium/epoch=4641-step=3104302.ckpt",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/ryan/medium/epoch=1499-step=1380000.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx.json",
         "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx",
-        "ckpt_filename": "epoch=4641-step=3104302.ckpt",
+        "ckpt_filename": "epoch=1499-step=1380000.ckpt",
+        "convert": True,
         "cfg_filename": "en_US-ryan-medium.onnx.json",
     },
     "amy": {
         "label": "Amy",
         "desc": "American female voice, different timbre from Lessac.",
-        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/amy/medium/epoch=6679-step=1554200.ckpt",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/amy/medium/epoch=1999-step=164000.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json",
         "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx",
-        "ckpt_filename": "epoch=6679-step=1554200.ckpt",
+        "ckpt_filename": "epoch=1999-step=164000.ckpt",
+        "convert": True,
         "cfg_filename": "en_US-amy-medium.onnx.json",
     },
     "hfc_male": {
@@ -76,10 +84,11 @@ BASE_VOICES: dict[str, dict] = {
     "hfc_female": {
         "label": "HFC Female",
         "desc": "Home Assistant community female voice.",
-        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/hfc_female/medium/epoch=2868-step=1575188.ckpt",
+        "ckpt_url": "https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/en/en_US/hfc_female/medium/epoch=999-step=760000.ckpt",
         "cfg_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
         "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx",
-        "ckpt_filename": "epoch=2868-step=1575188.ckpt",
+        "ckpt_filename": "epoch=999-step=760000.ckpt",
+        "convert": True,
         "cfg_filename": "en_US-hfc_female-medium.onnx.json",
     },
 }
@@ -99,14 +108,17 @@ def base_voice_ready(key: str) -> bool:
     """True if this base voice's checkpoint + config are already on disk."""
     if key not in BASE_VOICES:
         return False
+    # the current checkpoint specifically: a superseded one left over from an older download
+    # (e.g. amy's epoch=6679) doesn't count, so the voice re-downloads
     d = base_voice_dir(key)
-    return bool(list(d.glob("*.ckpt"))) and bool(list(d.glob("*.onnx.json"))) if d.exists() else False
+    return (d / BASE_VOICES[key]["ckpt_filename"]).exists() and bool(list(d.glob("*.onnx.json"))) if d.exists() else False
 
 
 def base_voice_paths(key: str) -> tuple[Path, Path]:
     """Returns (ckpt_path, cfg_path) for an already-downloaded base voice."""
     d = base_voice_dir(key)
-    ckpts = sorted(d.glob("*.ckpt")) if d.exists() else []
+    current = d / BASE_VOICES[key]["ckpt_filename"] if key in BASE_VOICES else None
+    ckpts = [current] if current and current.exists() else (sorted(d.glob("*.ckpt")) if d.exists() else [])
     cfgs = sorted(d.glob("*.onnx.json")) if d.exists() else []
     if not ckpts or not cfgs:
         raise FileNotFoundError(f"Base voice '{key}' isn't downloaded yet")
@@ -155,6 +167,19 @@ def _download_with_progress(url: str, dest: Path, label: str, log_cb) -> None:
     tmp.rename(dest)
 
 
+def _convert_checkpoint(src: Path, dest: Path) -> None:
+    """Lightning-2 base checkpoint -> one our piper_train resumes (needs torch: piper venv)."""
+    tmp = dest.with_name(dest.name + ".part")
+    r = subprocess.run(
+        [str(_python()), str(_PROJECT_ROOT / "scripts" / "convert_piper_checkpoint.py"), str(src), str(tmp)],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"Couldn't convert {src.name}: {(r.stderr or r.stdout).strip()[-500:]}")
+    tmp.rename(dest)
+
+
 async def download_base_voice(key: str, log_cb) -> None:
     """Download a base voice's checkpoint + config on demand (~800 MB total),
     skipping any files already present."""
@@ -169,7 +194,16 @@ async def download_base_voice(key: str, log_cb) -> None:
 
     if not ckpt_dest.exists():
         log_cb(f"Downloading {voice['label']} checkpoint (~800 MB)…")
-        await asyncio.to_thread(_download_with_progress, voice["ckpt_url"], ckpt_dest, ckpt_dest.name, log_cb)
+        if voice.get("convert"):
+            # downloaded under a name that doesn't match *.ckpt, then converted into place
+            raw = dest_dir / (ckpt_dest.name + ".upstream")
+            if not raw.exists():
+                await asyncio.to_thread(_download_with_progress, voice["ckpt_url"], raw, ckpt_dest.name, log_cb)
+            log_cb(f"Converting {voice['label']} checkpoint for piper_train…")
+            await asyncio.to_thread(_convert_checkpoint, raw, ckpt_dest)
+            raw.unlink()
+        else:
+            await asyncio.to_thread(_download_with_progress, voice["ckpt_url"], ckpt_dest, ckpt_dest.name, log_cb)
     else:
         log_cb(f"{voice['label']} checkpoint already present")
 
