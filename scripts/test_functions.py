@@ -2951,6 +2951,12 @@ def _ui_client():
             choice = load_session(session_dir(name)) if resume == "load" else ("discard" if resume == "discard" else None)
             open_inflation_dialog(name, lambda: None, preset={"category": category or None, "backend": backend or None}, resume=choice)
 
+        @ui.page("/progress")
+        def progress():
+            from faily.ui.training_charts import history_chart
+            _UI["clients"].append(ui.context.client)
+            _UI["update_chart"] = history_chart(_UI.get("history") or {}, mark_epoch=2009)
+
         ui.run_with(app, storage_secret="faily-test")
         _UI["client"] = TestClient(app)
     return _UI["client"]
@@ -3412,6 +3418,30 @@ class TestTrainingProgress(Sandboxed):
         self.assertLessEqual(pitch["yAxis"]["min"], 197.0)               # reference lines stay on screen
         self.assertGreaterEqual(pitch["yAxis"]["max"], 250.0)
         self.assertTrue(TC.chart_options({}, "parts")["title"]["text"])  # an empty graph says why
+
+    def test_progress_chart_renders_and_switches(self):
+        from nicegui import ui
+        _UI["history"] = {
+            "loss": {"epochs": [2000, 2001], "gen": [50.0, 49.0], "val": [60.0, 59.0],
+                     "parts": {"loss_mel": [30.0, 29.0], "loss_kl": [2.0, 1.9]}, "trend": ""},
+            "checkpoints": [{"epoch": 2004, "pitch": 230.0}, {"epoch": 2009, "pitch": 240.0}],
+            "reference": {"base": {"pitch": 197.0, "label": "Amy"}, "target": {"pitch": 250.0}}}
+        self.assertEqual(_ui_client().get("/progress").status_code, 200)
+        client = _UI["clients"][-1]
+
+        def charts():
+            return [el for el in client.elements.values() if isinstance(el, ui.echart)]
+        picker = next(el for el in client.elements.values() if isinstance(el, ui.toggle))
+        self.assertIn("pitch", picker.options)
+        self.assertEqual(len(charts()), 1)
+        self.assertEqual(len(charts()[0].options["series"]), 4)          # loss: raw + smoothed x 2
+        picker.set_value("pitch")
+        self.assertEqual(len(charts()), 1)                                 # rebuilt, not stacked
+        self.assertEqual(charts()[0].options["series"][0]["data"], [[2004, 230.0], [2009, 240.0]])
+        _UI["update_chart"]({**_UI["history"], "checkpoints": _UI["history"]["checkpoints"] + [{"epoch": 2014, "pitch": 245.0}]})
+        self.assertEqual(charts()[0].options["series"][0]["data"][-1], [2014, 245.0])
+        picker.set_value("parts")
+        self.assertEqual([s["name"] for s in charts()[0].options["series"]], ["mel", "prior (KL)"])
 
     def test_loss_parts_patch_is_installed_by_setup(self):
         self.assertIn("patch_piper_train_loss_parts.py", (ROOT / "scripts/setup_linux.sh").read_text())
