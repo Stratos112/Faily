@@ -13,11 +13,12 @@ _PART_COLOURS = ["#f59e0b", "#38bdf8", "#a78bfa", "#34d399", "#f472b6", "#94a3b8
 CHARTS: dict[str, tuple[str, str]] = {
     "loss": ("LOSS", "Generator (amber) and validation (blue) loss; faint = per epoch, bold = 10-epoch average. "
              "Lower is better, but it flattens long before the voice stops changing — check the measures."),
-    "parts": ("LOSS PARTS", "The generator loss split into its terms, plus the discriminator's (log scale). "
-              "With rhythm or pronunciation on Base Model, the duration and prior terms can't go down. "
-              "Only runs trained after this was added have the parts."),
+    # one graph per loss term, each on its own scale (they differ by 10-50x)
+    **{tag: (label.upper(), f"Loss part: {what}. Faint = per epoch, bold = 5-epoch average. "
+             "Only runs trained after the parts were logged have these.")
+       for tag, (label, what) in LOSS_PARTS.items()},
     "pronunciation": ("PRONUNCIATION", "Share of words Whisper hears right when the model reads 16 sentences "
-                      "it never trained on (%). Scored when the run ends."),
+                      "it never trained on (%). Scored as each checkpoint comes in."),
     **{k: (v[0], v[2] + (f" ({v[1]})" if v[1] else "")) for k, v in METRICS.items()},
 }
 _UNITS = {"pronunciation": "%", **{k: v[1] for k, v in METRICS.items()}}
@@ -79,25 +80,30 @@ def loss_chart_options(loss: dict, mark_epoch: int | None = None) -> dict:
     }
 
 
-def _parts_options(loss: dict, mark_epoch: int | None) -> dict:
-    ep, parts = loss.get("epochs") or [], loss.get("parts") or {}
-    series = []
-    for i, (tag, vals) in enumerate(parts.items()):
-        label = LOSS_PARTS.get(tag, (tag, ""))[0]
-        sm = smooth(vals, 5)
-        series.append({
-            "name": label, "type": "line", "showSymbol": False, "connectNulls": True,
-            "data": [[e, round(v, 4) if v and v > 0 else None] for e, v in zip(ep, sm)],
-            "lineStyle": {"color": _PART_COLOURS[i % len(_PART_COLOURS)], "width": 2},
-            "itemStyle": {"color": _PART_COLOURS[i % len(_PART_COLOURS)]},
-        })
-    if series and mark_epoch is not None:
-        series[0]["markLine"] = {"symbol": "none", "silent": True, "data": _saved_line(mark_epoch)}
+PART_WINDOW = 5      # epochs averaged into a loss part's bold line
+
+
+def _part_options(loss: dict, tag: str, mark_epoch: int | None) -> dict:
+    """One loss term on its own linear scale: per epoch (faint) + PART_WINDOW-epoch average (bold)."""
+    ep, vals = loss.get("epochs") or [], (loss.get("parts") or {}).get(tag) or []
+    colour = _PART_COLOURS[list(LOSS_PARTS).index(tag) % len(_PART_COLOURS)]
+
+    def series(data, bold):
+        return {
+            "name": LOSS_PARTS[tag][0], "type": "line", "showSymbol": False, "connectNulls": True,
+            "data": [[e, None if v is None else round(v, 4)] for e, v in zip(ep, data)],
+            "lineStyle": {"color": colour, "width": 2 if bold else 1, "opacity": 1 if bold else 0.25},
+            "itemStyle": {"color": colour}, "silent": not bold,
+        }
+
+    bold = series(smooth(vals, PART_WINDOW), True)
+    if mark_epoch is not None:
+        bold["markLine"] = {"symbol": "none", "silent": True, "data": _saved_line(mark_epoch)}
     return {
-        **_base("" if series else "no loss parts logged for this run"),
-        "legend": {"show": True, "data": [s["name"] for s in series], "textStyle": {"color": "#888"}, "top": 0},
-        "yAxis": {"type": "log", "name": "", "splitLine": {"lineStyle": {"color": "#1a1a1a"}}},
-        "series": series or [{"type": "line", "data": []}],
+        **_base("" if vals else "not logged for this run"),
+        "legend": {"show": False},
+        "yAxis": {"type": "value", "scale": True, "name": "", "splitLine": {"lineStyle": {"color": "#1a1a1a"}}},
+        "series": [series(vals, False), bold],
     }
 
 
@@ -122,9 +128,8 @@ def _metric_options(history: dict, key: str, mark_epoch: int | None) -> dict:
         lo, hi = min(values), max(values)
         pad = (hi - lo) * 0.15 or max(abs(hi) * 0.05, 1.0)
         axis.update(min=round(lo - pad, 2), max=round(hi + pad, 2))
-    empty = ("scored when the run ends" if key == "pronunciation" else "measured as each checkpoint comes in")
     return {
-        **_base("" if pts else f"no checkpoints yet — {empty}"),
+        **_base("" if pts else "no checkpoints yet — measured as each one comes in"),
         "legend": {"show": False},
         "yAxis": axis,
         "series": [{
@@ -140,30 +145,101 @@ def chart_options(history: dict, key: str, mark_epoch: int | None = None) -> dic
     loss = history.get("loss") or {}
     if key == "loss":
         return loss_chart_options(loss, mark_epoch)
-    if key == "parts":
-        return _parts_options(loss, mark_epoch)
+    if key in LOSS_PARTS:
+        return _part_options(loss, key, mark_epoch)
     return _metric_options(history, key, mark_epoch)
 
 
-def history_chart(history: dict | None = None, mark_epoch: int | None = None, height: int = 240):
-    """A graph selector + the chosen graph. Returns update(history) to redraw with new data."""
+# Generator modules a loss part can't improve through when they are frozen (MATCH on Base Model).
+_PART_FROZEN = {"loss_dur": ("dp", "rhythm is on Base Model, so the duration predictor is frozen and this "
+                             "can't go down — a flat line is expected")}
+
+
+def describe(history: dict, key: str) -> str:
+    """The text under graph `key`: what it shows, plus a note when this run's settings explain its shape."""
+    text = CHARTS[key][1]
+    module, note = _PART_FROZEN.get(key, (None, ""))
+    frozen = ((history.get("run") or {}).get("frozen") or "").split(",")
+    return f"{text} Here {note}." if module and module in frozen else text
+
+
+# The selector: graphs in groups, each entry with its latest value (and the target in grey).
+GROUPS: list[tuple[str, list[str]]] = [
+    ("LOSS", ["loss", *LOSS_PARTS]),
+    ("QUALITY", ["pronunciation", "match"]),
+    ("VOICE", ["wps", "pitch", "pitch_range", "centroid", "loudness", "noise"]),
+]
+_NAMES = {"loss": "Total", **{t: v[0][0].upper() + v[0][1:] for t, v in LOSS_PARTS.items()},
+          "pronunciation": "Pronunciation", "match": "Voice match",
+          "wps": "Speaking rate", "pitch": "Pitch", "pitch_range": "Pitch range", "centroid": "Brightness",
+          "loudness": "Loudness", "noise": "Background"}
+_SHORT_UNITS = {"pronunciation": "%", "match": "%", "wps": "w/s", "pitch": "Hz", "pitch_range": "st",
+                "centroid": "Hz", "loudness": "dB", "noise": "dB"}
+
+
+def _fmt(v: float, key: str) -> str:
+    if key in ("wps", "pitch_range"):
+        return f"{v:.1f}"
+    return f"{v:.0f}" if abs(v) >= 10 else f"{v:.1f}"
+
+
+def latest(history: dict, key: str) -> tuple[str, str]:
+    """(latest value, target) as short text for the selector; "" where there is none."""
+    if key == "loss":
+        gen = [v for v in smooth((history.get("loss") or {}).get("gen") or []) if v is not None]
+        return (f"{gen[-1]:.1f}" if gen else "", "")
+    if key in LOSS_PARTS:
+        part = [v for v in smooth(((history.get("loss") or {}).get("parts") or {}).get(key) or [], PART_WINDOW)
+                if v is not None]
+        return (_fmt(part[-1], key) if part else "", "")
+    vals = [r[key] for r in history.get("checkpoints") or [] if r.get(key) is not None]
+    target = ((history.get("reference") or {}).get("target") or {}).get(key)
+    unit = _SHORT_UNITS.get(key, "")
+    now = f"{_fmt(vals[-1], key)} {unit}".strip() if vals else ""
+    return now, (f"→ {_fmt(target, key)}" if target is not None and key != "match" else "")
+
+
+def history_chart(history: dict | None = None, mark_epoch: int | None = None, height: int = 260):
+    """Graph list (left, grouped, with latest values) + the chosen graph (right). Returns
+    update(history) to redraw with new data; update.select(key) switches graph."""
     state = {"h": history or {}, "key": "loss", "chart": None}
-    with ui.column().classes("w-full gap-1"):
-        picker = ui.toggle({k: v[0] for k, v in CHARTS.items()}, value="loss").props(
-            "dense no-caps unelevated toggle-color=amber text-color=grey-6"
-        ).classes("flex-wrap font-mono text-[10px]")
-        desc = ui.label("").classes("text-[#555] font-mono text-[10px] leading-snug")
-        box = ui.element("div").classes("w-full")
+    with ui.row().classes("w-full gap-3 flex-nowrap items-stretch"):
+        nav = ui.column().classes("w-48 shrink-0 gap-0")
+        with ui.column().classes("flex-grow min-w-0 gap-1"):
+            box = ui.element("div").classes("w-full")
+            desc = ui.label("").classes("text-[#555] font-mono text-[10px] leading-snug")
+
+    def draw_nav():
+        nav.clear()
+        with nav:
+            for group, keys in GROUPS:
+                ui.label(group).classes("text-[#444] font-mono text-[9px] tracking-widest mt-1 mb-0.5 px-2")
+                for key in keys:
+                    on = key == state["key"]
+                    now, target = latest(state["h"], key)
+                    with ui.row().classes(
+                        "w-full items-baseline gap-1 flex-nowrap px-2 py-0.5 cursor-pointer rounded-sm border-l-2 "
+                        + ("border-amber-500 bg-[#1a1500]" if on else "border-transparent hover:bg-[#111]")
+                    ) as row:
+                        ui.label(_NAMES[key]).classes(
+                            "font-mono text-[10px] flex-grow truncate " + ("text-amber-400" if on else "text-[#888]"))
+                        if now:
+                            ui.label(now).classes("font-mono text-[10px] shrink-0 " + ("text-amber-400" if on else "text-[#bbb]"))
+                        if target:
+                            ui.label(target).classes("font-mono text-[9px] text-[#4a4a4a] shrink-0")
+                    row.on("click", lambda k=key: select(k))
 
     def build():
         box.clear()
         with box:
             state["chart"] = ui.echart(chart_options(state["h"], state["key"], mark_epoch)).classes(
                 "w-full").style(f"height:{height}px")
-        desc.set_text(CHARTS[state["key"]][1])
+        desc.set_text(describe(state["h"], state["key"]))
 
     def update(h: dict):
         state["h"] = h
+        draw_nav()
+        desc.set_text(describe(h, state["key"]))
         opts = chart_options(h, state["key"], mark_epoch)
         chart = state["chart"]
         if chart is None or len(opts["series"]) != len(chart.options.get("series", [])):
@@ -173,10 +249,12 @@ def history_chart(history: dict | None = None, mark_epoch: int | None = None, he
         chart.options.update(opts)
         chart.update()
 
-    def pick(e):
-        state["key"] = e.value
+    def select(key: str):
+        state["key"] = key
+        draw_nav()
         build()
 
-    picker.on_value_change(pick)
+    update.select = select
+    draw_nav()
     build()
     return update

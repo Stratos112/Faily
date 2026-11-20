@@ -771,6 +771,28 @@ def _write_status(char_dir: Path, **fields) -> None:
     tmp.replace(path)
 
 
+_LOG_FILE = "piper_training.log"
+
+
+def training_log_path(char_dir: Path) -> Path:
+    """The run's full log, one line per log_cb call. Started fresh by each run
+    (start_log) and kept afterwards, so it survives a reload or server restart."""
+    return char_dir / _LOG_FILE
+
+
+def start_log(char_dir: Path) -> None:
+    char_dir.mkdir(parents=True, exist_ok=True)
+    training_log_path(char_dir).write_text("", encoding="utf-8")
+
+
+def append_log(char_dir: Path, line: str) -> None:
+    try:
+        with training_log_path(char_dir).open("a", encoding="utf-8") as f:
+            f.write(line.rstrip("\n") + "\n")
+    except OSError:
+        pass        # the log is a convenience; never break a run over it
+
+
 def read_training_status(char_dir: Path) -> dict | None:
     """Current training status, or None if this character never trained.
     A run recorded as active by a previous server process is reported as
@@ -999,7 +1021,10 @@ class _CandidateExporter:
     and it is a few seconds old. Live exports run on the CPU (CUDA hidden from the
     exporter) so they don't take GPU memory from training, use their own process
     slot (proc_ref is the trainer's, which "stop" kills), and log "Preparing…"
-    rather than "Exporting…" — the latter flips the run's status to "exporting"."""
+    rather than "Exporting…" — the latter flips the run's status to "exporting". Each live
+    candidate is then measured (voice_metrics) and its pronunciation scored (Whisper, on the
+    GPU next to training: a few seconds per checkpoint), so the graphs and the audition list
+    fill in while the run goes on rather than after it."""
 
     POLL = 10.0
     SETTLE = 5.0
@@ -1011,6 +1036,7 @@ class _CandidateExporter:
         self.failed: set[Path] = set()
         self._sizes: dict[Path, int] = {}
         self._stop = asyncio.Event()
+        self._whisper = asyncio.Lock()      # one Whisper job at a time (the base voice is scored from its own task)
 
     def _settled(self, ckpt: Path) -> bool:
         try:
@@ -1035,6 +1061,7 @@ class _CandidateExporter:
         if live:
             self.status(candidates=len(list(self.out_dir.glob("epoch_*.onnx"))))
             await self.measure(onnx_path)
+            await self.score(onnx_path, f"epoch {epoch}")
 
     async def measure(self, onnx: Path) -> None:
         """voice_metrics for a candidate (CPU synthesis + analysis, ~5 s), cached beside it."""
@@ -1043,6 +1070,22 @@ class _CandidateExporter:
             await asyncio.to_thread(VM.measure_model, onnx)
         except Exception as exc:
             self.log_cb(f"(couldn't measure {onnx.name}: {exc})")
+
+    async def score(self, onnx: Path, what: str) -> None:
+        """Pronunciation score (modules/pronunciation.py), cached beside the .onnx."""
+        from faily.modules.pronunciation import cached_score, score_model
+        if cached_score(onnx):
+            return
+        async with self._whisper:
+            if cached_score(onnx):
+                return
+            self.log_cb(f"Scoring pronunciation — {what}…")
+            try:
+                sc = await asyncio.to_thread(score_model, onnx)
+            except Exception as exc:
+                self.log_cb(f"(couldn't score {what}: {exc})")
+                return
+            self.log_cb(f"Pronunciation — {what}: {sc['accuracy']:.0%}")
 
     async def watch(self) -> None:
         while not self._stop.is_set():
@@ -1079,7 +1122,7 @@ def _write_reference_metrics(out_dir: Path, clips: list[dict], base_onnx: Path |
     from faily.modules import voice_metrics as VM
     target = VM.measure_clips([(Path(c["audio"]), c.get("transcript", "")) for c in clips])
     base = VM.measure_model(base_onnx) if base_onnx and base_onnx.exists() else {}
-    ref = {"base": {**base, "label": base_label}, "target": target}
+    ref = {"base": {**base, "label": base_label, "onnx": str(base_onnx) if base_onnx else None}, "target": target}
     (out_dir / REFERENCE_METRICS).write_text(json.dumps(ref))
 
 
@@ -1090,6 +1133,7 @@ def training_history(char_dir: Path) -> dict:
                    match to the training clips, %) and "pronunciation" (%, once scored)
       reference:   {"base": {...}, "target": {...}} in the same terms (base also gets
                    "match" and, once scored, "pronunciation"; target "match" = its ceiling)
+      run:         the run's settings from the status file (frozen modules etc.; {} if none)
     Small (no spectra): this is what a saved model keeps. Blocking; call from a thread."""
     from faily.modules import voice_metrics as VM
     from faily.modules.pronunciation import cached_score
@@ -1111,17 +1155,20 @@ def training_history(char_dir: Path) -> dict:
     reference = {}
     if ref:
         base, target = ref.get("base") or {}, ref.get("target") or {}
+        base_score = cached_score(Path(base["onnx"])) if base.get("onnx") else None
         reference = {
             "base": {**{k: base.get(k) for k in keys}, "label": base.get("label"),
                      "match": VM.voice_match(base.get("ltas"), target_ltas),
-                     "pronunciation": base.get("pronunciation")},
+                     "pronunciation": round(base_score["accuracy"] * 100, 1) if base_score
+                     else base.get("pronunciation")},
             "target": {**{k: target.get(k) for k in keys}, "match": target.get("match_ceiling")},
         }
     try:
         loss = read_loss_history(char_dir)
     except Exception:
         loss = {"epochs": [], "gen": [], "val": [], "parts": {}, "trend": ""}
-    return {"loss": loss, "checkpoints": rows, "reference": reference}
+    return {"loss": loss, "checkpoints": rows, "reference": reference,
+            "run": (read_training_status(char_dir) or {}).get("run") or {}}
 
 
 def checkpoint_interval(max_epochs: int) -> int:
@@ -1200,9 +1247,22 @@ async def train(
         )
     except BaseException as exc:
         _write_status(char_dir, state="error", message=str(exc)[-2000:] or type(exc).__name__)
+        if isinstance(exc, Exception):        # not on cancellation (server shutting down)
+            await _write_report(char_dir, log_cb)
         raise
     _write_status(char_dir, state="ready", candidates=len(result), message="")
+    await _write_report(char_dir, log_cb)
     return result
+
+
+async def _write_report(char_dir: Path, log_cb) -> None:
+    """training_report.write_report: graphs as PNGs, history, log and a summary of the run."""
+    from faily.modules import training_report
+    try:
+        out = await asyncio.to_thread(training_report.write_report, char_dir)
+        log_cb(f"Run report written to {out}")
+    except Exception as exc:
+        log_cb(f"(couldn't write the run report: {exc})")
 
 
 async def _train(
@@ -1460,6 +1520,8 @@ async def _train(
     base_onnx = sample_onnx_path(base_voice) if sample_ready(base_voice) else None
     ref_task = asyncio.create_task(asyncio.to_thread(
         _write_reference_metrics, candidates_dir, usable, base_onnx, voice_label))
+    # where pronunciation starts: scored now, next to the checkpoints, not after the run
+    base_task = asyncio.create_task(exporter.score(base_onnx, "base voice")) if base_onnx else None
     try:
         await _stream([
             py, "-m", "piper_train",
@@ -1488,6 +1550,10 @@ async def _train(
             # died that way with no traceback at all. Costs nothing otherwise.
             "PYTHONFAULTHANDLER": "1",
         })
+    except BaseException:
+        if base_task:
+            base_task.cancel()
+        raise
     finally:
         poller.cancel()
         await exporter.stop(watcher)          # lets a conversion in flight finish
@@ -1511,40 +1577,31 @@ async def _train(
 
     candidates = list_candidates(char_dir)
     log_cb(f"✓  Exported {len(candidates)} checkpoint candidate(s) for preview")
-    await _measure_and_score(candidates, candidates_dir, exporter, ref_task, base_onnx, log_cb, status)
+    await _measure_and_score(candidates, exporter, ref_task, base_task, base_onnx, log_cb, status)
     return candidates
 
 
-async def _measure_and_score(candidates, candidates_dir: Path, exporter, ref_task, base_onnx, log_cb, status) -> None:
-    """After a run: finish the progress measures. Signal measures for any candidate the live
-    exporter didn't get to, then pronunciation for every candidate and the base voice
-    (Whisper on the GPU, which training no longer needs). Failures only cost a graph point."""
+async def _measure_and_score(candidates, exporter, ref_task, base_task, base_onnx, log_cb, status) -> None:
+    """After a run: finish what the live exporter didn't get to (the last checkpoint, a stop-early
+    one, any it fell behind on): signal measures, then pronunciation for those candidates and
+    the base voice. Already-scored ones are cached. Failures only cost a graph point."""
     from faily.modules import voice_metrics as VM
-    from faily.modules.pronunciation import score_model
-    try:
-        await ref_task
-    except Exception as exc:
-        log_cb(f"(couldn't measure the reference clips / base voice: {exc})")
+    from faily.modules.pronunciation import cached_score
+    for task, what in ((ref_task, "the reference clips / base voice"), (base_task, "the base voice")):
+        try:
+            if task:
+                await task
+        except Exception as exc:
+            log_cb(f"(couldn't measure {what}: {exc})")
     for epoch, onnx in candidates:
         if not VM.cached(onnx):
             status(state="exporting", message=f"Measuring checkpoint — epoch {epoch}…")
             await exporter.measure(onnx)
     jobs = [(f"epoch {e}", o) for e, o in candidates] + ([("base voice", base_onnx)] if base_onnx else [])
-    for i, (what, onnx) in enumerate(jobs, 1):
-        status(state="exporting", message=f"Scoring pronunciation — {what} ({i}/{len(jobs)})…")
-        try:
-            sc = await asyncio.to_thread(score_model, onnx)
-        except Exception as exc:
-            log_cb(f"(couldn't score {what}: {exc})")
-            continue
-        if what == "base voice":
-            ref_path = candidates_dir / REFERENCE_METRICS
-            try:
-                ref = json.loads(ref_path.read_text())
-                ref.setdefault("base", {})["pronunciation"] = round(sc["accuracy"] * 100, 1)
-                ref_path.write_text(json.dumps(ref))
-            except (OSError, ValueError):
-                pass
+    todo = [(what, onnx) for what, onnx in jobs if not cached_score(onnx)]
+    for i, (what, onnx) in enumerate(todo, 1):
+        status(state="exporting", message=f"Scoring pronunciation — {what} ({i}/{len(todo)})…")
+        await exporter.score(onnx, what)
     try:
         from faily.modules.asr import unload
         unload()

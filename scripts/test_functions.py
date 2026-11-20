@@ -2951,6 +2951,12 @@ def _ui_client():
             choice = load_session(session_dir(name)) if resume == "load" else ("discard" if resume == "discard" else None)
             open_inflation_dialog(name, lambda: None, preset={"category": category or None, "backend": backend or None}, resume=choice)
 
+        @ui.page("/training/{name}")
+        def training(name: str):
+            from faily.ui.tabs.piper_training_dialog import open_training_dialog
+            _UI["clients"].append(ui.context.client)
+            open_training_dialog(name, lambda: None)
+
         @ui.page("/progress")
         def progress():
             from faily.ui.training_charts import history_chart
@@ -3356,6 +3362,8 @@ class TestCandidateExporter(Sandboxed):
         self.assertEqual(statuses, [{"candidates": 1}])
         self.assertTrue(any(l.startswith("Preparing checkpoint (epoch 2004)") for l in logs))
         self.assertFalse(any(l.startswith("Exporting checkpoint (epoch 2004)") for l in logs))   # would flip status
+        self.assertTrue(any("epoch 2004" in l and "scor" in l for l in logs))     # pronunciation tried live (fake onnx fails)
+        self.assertFalse(any("epoch 2009" in l and "scor" in l for l in logs))    # after the run: _measure_and_score's job
         self.assertEqual(P.list_candidates(SANDBOX), [(2004, out / "epoch_02004.onnx"), (2009, out / "epoch_02009.onnx")])
 
 
@@ -3396,10 +3404,20 @@ class TestTrainingProgress(Sandboxed):
             (cand / f"epoch_{ep:05d}.metrics.json").write_text(json.dumps(
                 {"pitch": pitch, "wps": 3.0, "pitch_range": 4.0, "centroid": 1500.0, "loudness": -16.0,
                  "noise": -50.0, "ltas": ltas, "sentences": VM._sentences_hash()}))
+        base_onnx = SANDBOX / "amy.onnx"
+        base_onnx.write_text("x")
+        from faily.modules import pronunciation as PR
+        base_onnx.with_suffix(".score.json").write_text(json.dumps(
+            {"accuracy": 0.987, "words_per_sec": 3.0, "worst": [], "sentences": PR._sentences_hash()}))
         (cand / P.REFERENCE_METRICS).write_text(json.dumps({
-            "base": {"pitch": 197.0, "label": "Amy", "ltas": [0.0] * 32 + [1.0] * 32},
+            "base": {"pitch": 197.0, "label": "Amy", "ltas": [0.0] * 32 + [1.0] * 32, "onnx": str(base_onnx)},
             "target": {"pitch": 250.0, "ltas": ltas, "match_ceiling": 99.5}}))
+        P._write_status(cdir, state="ready", run={"frozen": "dp,enc_p", "max_epochs": 10})
         h = P.training_history(cdir)
+        self.assertEqual(h["reference"]["base"]["pronunciation"], 98.7)    # scored at the start of the run
+        self.assertEqual(h["run"]["frozen"], "dp,enc_p")
+        self.assertIn("frozen", TC.describe(h, "loss_dur"))              # explains the flat duration loss
+        self.assertNotIn("frozen", TC.describe({}, "loss_dur"))
         self.assertEqual([r["epoch"] for r in h["checkpoints"]], [2004, 2009])
         self.assertEqual(h["checkpoints"][1]["pitch"], 230.0)
         self.assertEqual(h["checkpoints"][0]["match"], 100.0)          # same spectrum as the target
@@ -3417,7 +3435,7 @@ class TestTrainingProgress(Sandboxed):
         self.assertEqual(sorted(l["yAxis"] for l in lines if "yAxis" in l), [197.0, 250.0])
         self.assertLessEqual(pitch["yAxis"]["min"], 197.0)               # reference lines stay on screen
         self.assertGreaterEqual(pitch["yAxis"]["max"], 250.0)
-        self.assertTrue(TC.chart_options({}, "parts")["title"]["text"])  # an empty graph says why
+        self.assertTrue(TC.chart_options({}, "loss_mel")["title"]["text"])  # an empty graph says why
 
     def test_progress_chart_renders_and_switches(self):
         from nicegui import ui
@@ -3431,20 +3449,103 @@ class TestTrainingProgress(Sandboxed):
 
         def charts():
             return [el for el in client.elements.values() if isinstance(el, ui.echart)]
-        picker = next(el for el in client.elements.values() if isinstance(el, ui.toggle))
-        self.assertIn("pitch", picker.options)
+        from faily.ui import training_charts as TC
+        self.assertEqual(sorted(k for _, ks in TC.GROUPS for k in ks), sorted(TC.CHARTS))   # every graph is listed once
+        labels = [el.text for el in client.elements.values() if isinstance(el, ui.label)]
+        self.assertIn("Pitch", labels)
+        self.assertIn("240 Hz", labels)                                    # latest value beside its name
+        self.assertIn("→ 250", labels)                                     # and the target
         self.assertEqual(len(charts()), 1)
         self.assertEqual(len(charts()[0].options["series"]), 4)          # loss: raw + smoothed x 2
-        picker.set_value("pitch")
+        _UI["update_chart"].select("pitch")
         self.assertEqual(len(charts()), 1)                                 # rebuilt, not stacked
         self.assertEqual(charts()[0].options["series"][0]["data"], [[2004, 230.0], [2009, 240.0]])
         _UI["update_chart"]({**_UI["history"], "checkpoints": _UI["history"]["checkpoints"] + [{"epoch": 2014, "pitch": 245.0}]})
         self.assertEqual(charts()[0].options["series"][0]["data"][-1], [2014, 245.0])
-        picker.set_value("parts")
-        self.assertEqual([s["name"] for s in charts()[0].options["series"]], ["mel", "prior (KL)"])
+        self.assertIn("Mel", labels)                                       # each loss part is its own graph
+        self.assertIn("30", labels)                                        # with its latest (averaged) value: 29.5
+        _UI["update_chart"].select("loss_kl")
+        self.assertEqual(len(charts()), 1)
+        kl = charts()[0].options
+        self.assertEqual(kl["yAxis"]["type"], "value")                     # own linear scale, not a shared log axis
+        self.assertEqual([s["data"] for s in kl["series"]], [[[2000, 2.0], [2001, 1.9]], [[2000, 2.0], [2001, 1.95]]])
 
     def test_loss_parts_patch_is_installed_by_setup(self):
         self.assertIn("patch_piper_train_loss_parts.py", (ROOT / "scripts/setup_linux.sh").read_text())
+
+
+class TestTrainingRunRecord(Sandboxed):
+    """What a Piper run leaves behind: the log file (piper.start_log/append_log), the report
+    written when it stops (modules/training_report.py), and the dialog's tabs + log view."""
+
+    def _run_on_disk(self, cdir):
+        from faily.modules import piper as P
+        from faily.modules import voice_metrics as VM
+        cand = cdir / "piper_candidates"
+        cand.mkdir(parents=True)
+        for ep, pitch in ((2004, 210.0), (2009, 230.0)):
+            (cand / f"epoch_{ep:05d}.onnx").write_text("x")
+            (cand / f"epoch_{ep:05d}.metrics.json").write_text(json.dumps(
+                {"pitch": pitch, "wps": 3.0, "ltas": [1.0] * 64, "sentences": VM._sentences_hash()}))
+        P._write_status(cdir, state="ready", epoch=2009, candidates=2,
+                        run={"base_voice_label": "Amy", "frozen": "dp,enc_p", "max_epochs": 10})
+        P.start_log(cdir)
+        P.append_log(cdir, "epoch 2004 done  [gen 40.0]")
+        P.append_log(cdir, "epoch 2005 done  [gen 39.0]\n")
+
+    def test_log_file_is_restarted_per_run(self):
+        from faily.modules import piper as P
+        cdir = C.CHARACTERS_DIR / "alice"
+        self._run_on_disk(cdir)
+        self.assertEqual(P.training_log_path(cdir).read_text().splitlines(),
+                         ["epoch 2004 done  [gen 40.0]", "epoch 2005 done  [gen 39.0]"])
+        P.start_log(cdir)
+        self.assertEqual(P.training_log_path(cdir).read_text(), "")
+
+    def test_report_has_every_graph_and_the_history(self):
+        from faily.modules import training_report as R
+        cdir = C.CHARACTERS_DIR / "alice"
+        self._run_on_disk(cdir)
+        stale = R.report_dir(cdir) / "old.png"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("x")
+        out = R.write_report(cdir)
+        names = {p.name for p in out.iterdir()}
+        self.assertNotIn("old.png", names)                                 # the previous run's report is replaced
+        for key, _, _ in R._graphs():
+            self.assertIn(f"{key}.png", names)
+        for f in ("overview.png", "history.json", "status.json", "log.txt", "summary.txt", "epochs.csv"):
+            self.assertIn(f, names)
+        self.assertEqual((out / "loss.png").read_bytes()[:4], b"\x89PNG")
+        self.assertIn("epoch 2005 done", (out / "log.txt").read_text())
+        summary = (out / "summary.txt").read_text()
+        self.assertIn("frozen: dp,enc_p", summary)
+        self.assertIn("2009", summary)
+        rows = (out / "epochs.csv").read_text().splitlines()
+        self.assertTrue(rows[0].startswith("epoch,total_gen,total_val"))
+        self.assertEqual(len(set(rows[0].split(","))), len(rows[0].split(",")))   # no duplicate columns
+        self.assertEqual([r.split(",")[0] for r in rows[1:]], ["2004", "2009"])
+        self.assertEqual(json.loads((out / "history.json").read_text())["checkpoints"][1]["pitch"], 230.0)
+
+    def test_dialog_has_tabs_and_shows_the_saved_log(self):
+        from nicegui import ui
+        cdir = C.CHARACTERS_DIR / "alice"
+        self._run_on_disk(cdir)
+        self.assertEqual(_ui_client().get("/training/alice").status_code, 200)
+        client = _UI["clients"][-1]
+        tabs = [el for el in client.elements.values() if isinstance(el, ui.tab)]
+        self.assertEqual([el.props.get("name") for el in tabs], ["PROGRESS", "CHECKPOINTS", "LOG"])
+        panels = next(el for el in client.elements.values() if isinstance(el, ui.tab_panels))
+        self.assertEqual(panels.value, "CHECKPOINTS")                       # a finished run opens on the pick
+        log = next(el for el in client.elements.values() if isinstance(el, ui.log))
+        lines = [c.text for c in log.default_slot.children]               # read at open; a timer tails it after
+        self.assertEqual(lines, ["epoch 2004 done  [gen 40.0]", "epoch 2005 done  [gen 39.0]"])
+
+    def test_train_writes_the_report_when_it_stops(self):
+        import inspect
+        from faily.modules import piper as P
+        src = inspect.getsource(P.train)
+        self.assertEqual(src.count("await _write_report("), 2)            # finished/stopped, and failed
 
 
 class TestCheckpointInterval(unittest.TestCase):

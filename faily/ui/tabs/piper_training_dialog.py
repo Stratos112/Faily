@@ -14,10 +14,11 @@ from nicegui import background_tasks, run as ni_run, ui
 from faily.core.characters import CHARACTERS_DIR
 from faily.core.model_manager import manager
 from faily.modules.piper import (
-    BASE_VOICES, _write_status, base_voice_ready, download_base_voice,
-    infer, list_candidates, promote_candidate,
-    read_training_status, request_stop, train, training_history, training_in_progress,
+    BASE_VOICES, _write_status, append_log, base_voice_ready, download_base_voice,
+    infer, list_candidates, promote_candidate, read_training_status, request_stop,
+    start_log, train, training_history, training_in_progress, training_log_path,
 )
+from faily.modules.pronunciation import cached_score
 from faily.ui.components import output_url, show_error
 from faily.ui.training_charts import history_chart
 
@@ -25,7 +26,8 @@ _DEFAULT_PREVIEW = "Hello, this is a test of the trained voice."
 _STALL_SECS = 300
 
 # name -> {"log": [...], "proc": [Popen|None], "task": Task|None}. In-memory,
-# so it lasts as long as the server process; the status file outlives it.
+# so it lasts as long as the server process; the status file and the log file
+# (piper.training_log_path, what the dialog shows) outlive it.
 _SESSIONS: dict[str, dict] = {}
 
 
@@ -44,7 +46,11 @@ async def _run_session(
     max_epochs: int = 1000,
 ) -> None:
     char_dir = CHARACTERS_DIR / name
-    log = sess["log"].append
+
+    def log(line: str):
+        sess["log"].append(line)
+        append_log(char_dir, line)
+
     try:
         # piper_train is a separate OS process; any TTS/VC model still resident
         # here just competes with it for the same physical VRAM.
@@ -83,6 +89,7 @@ def start_training(
         return False
     sess = {"log": [], "proc": [None], "task": None}
     _SESSIONS[name] = sess
+    start_log(CHARACTERS_DIR / name)
     _write_status(
         CHARACTERS_DIR / name, state="preparing", started=time.time(), message="", stopping=False,
         epoch=None, target=None, start_epoch=None, fraction=0.0, eta=None,
@@ -99,11 +106,13 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
     the run was started by this browser tab, another one, or before a reload."""
     char_dir = CHARACTERS_DIR / name
     sess = _SESSIONS.get(name)
-    cursor = [0]
     state = {"picker": False, "previewing": False, "chart_at": 0.0, "charting": False,
-             "shown": set(), "score_rows": [], "save_btns": []}
+             "shown": set(), "score_rows": [], "scored": set(), "save_btns": [], "log_pos": 0, "log_note": False}
+    first = (read_training_status(char_dir) or {}).get("state")
+    start_tab = ("CHECKPOINTS" if first in ("ready", "done") else
+                 "LOG" if first in ("preparing", "error", "interrupted", None) else "PROGRESS")
 
-    with ui.dialog().props("persistent").classes("w-full max-w-3xl") as dlg, ui.card().classes(
+    with ui.dialog().props("persistent").classes("w-full max-w-4xl") as dlg, ui.card().classes(
         "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
     ):
         ui.label(f"TRAINING  {name}").classes("text-white font-mono text-xs tracking-widest")
@@ -111,22 +120,48 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         bar = ui.linear_progress(value=0, show_value=False).props("color=amber track-color=grey-10")
         detail_lbl = ui.label("").classes("text-[#555] font-mono text-[10px]")
         warn_lbl = ui.label("").classes("text-amber-500 font-mono text-[10px]")
-        with ui.column().classes("w-full gap-1") as chart_box:
-            ui.label("PROGRESS").classes("text-[#444] font-mono text-[10px] tracking-widest")
-            update_chart = history_chart()
-            trend_lbl = ui.label("").classes("text-[#888] font-mono text-[10px]")
-        chart_box.set_visibility(False)
-        log = ui.log(max_lines=2000).classes(
-            "w-full font-mono text-[10px] rounded border border-[#1a1a1a]"
-        ).style("height:300px; background:#050505")
-        if sess is None:
-            log.push("(No live log: this run started before the server last restarted "
-                     "or was never started from here. Progress above is still tracked.)")
+        with ui.tabs().props("dense no-caps align=left active-color=amber indicator-color=amber").classes(
+            "w-full text-[#888] font-mono border-b border-[#1a1a1a]"
+        ) as tabs:
+            ui.tab("PROGRESS")
+            ui.tab("CHECKPOINTS")
+            ui.tab("LOG")
+        with ui.tab_panels(tabs, value=start_tab).props("animated=false").classes("w-full bg-transparent"):
+            with ui.tab_panel("PROGRESS").classes("p-0 gap-1"):
+                chart_wait = ui.label("Graphs appear once the first epoch is logged.").classes(
+                    "text-[#555] font-mono text-[10px]")
+                with ui.column().classes("w-full gap-1") as chart_box:
+                    update_chart = history_chart()
+                    trend_lbl = ui.label("").classes("text-[#888] font-mono text-[10px]")
+                chart_box.set_visibility(False)
+            with ui.tab_panel("CHECKPOINTS").classes("p-0 gap-2"):
+                ui.label(
+                    "Each saved checkpoint is a full, independent snapshot — the last one "
+                    "isn't always the best-sounding. Listen, then SAVE & USE your favourite, or "
+                    "SAVE several to compare later in the MODELS tab. Unsaved ones are discarded "
+                    "when you train again. They show up here while training runs (every 5 epochs) "
+                    "and their pronunciation is scored as they come in; saving unlocks when the run "
+                    "ends (or is stopped)."
+                ).classes("text-[#444] font-mono text-[10px] leading-snug")
+                ui.label(
+                    "PREVIEW LINE — spoken by each checkpoint as it comes in. Edit it any time; "
+                    "checkpoints already previewed keep their take."
+                ).classes("text-[#444] font-mono text-[10px] leading-snug")
+                preview_input = (
+                    ui.input(value=_DEFAULT_PREVIEW).props("outlined dark dense")
+                    .classes("w-full font-mono text-[11px]")
+                )
+                picker_note = ui.label("No checkpoints yet.").classes("text-[#666] font-mono text-[10px]")
+                candidates_col = ui.column().classes("w-full gap-1")
+            with ui.tab_panel("LOG").classes("p-0 gap-1"):
+                log = ui.log(max_lines=5000).classes(
+                    "w-full font-mono text-[10px] rounded border border-[#1a1a1a]"
+                ).style("height:420px; background:#050505")
+                ui.button(
+                    "Copy log", icon="content_copy",
+                    on_click=lambda: ui.clipboard.write(_read_log()),
+                ).props("flat dense color=amber").classes("self-end")
         with ui.row().classes("w-full justify-end gap-2"):
-            ui.button(
-                "Copy log", icon="content_copy",
-                on_click=lambda: ui.clipboard.write("\n".join(sess["log"]) if sess else ""),
-            ).props("flat dense color=amber")
             stop_btn = ui.button("STOP EARLY", on_click=lambda: _stop()).props(
                 "flat dense color=negative"
             ).tooltip(
@@ -137,28 +172,51 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                 "flat dense color=grey"
             ).tooltip("Training keeps running — reopen from the character page")
 
-        ui.separator().classes("opacity-20")
-        ui.label(
-            "PREVIEW LINE — spoken by each checkpoint as it comes in. Edit it any time; "
-            "checkpoints already previewed keep their take."
-        ).classes("text-[#444] font-mono text-[10px] leading-snug")
-        preview_input = (
-            ui.input(value=_DEFAULT_PREVIEW).props("outlined dark dense")
-            .classes("w-full font-mono text-[11px]")
-        )
-        with ui.column().classes("w-full gap-2") as picker_section:
-            ui.separator().classes("opacity-20")
-            ui.label("PICK A CHECKPOINT").classes("text-amber-400 font-mono text-[10px] tracking-widest")
-            ui.label(
-                "Each saved checkpoint is a full, independent snapshot — the last one "
-                "isn't always the best-sounding. Listen, then SAVE & USE your favourite, or "
-                "SAVE several to compare later in the MODELS tab. Unsaved ones are discarded "
-                "when you train again. They show up here while training runs (every 5 epochs); "
-                "saving and the pronunciation scores unlock when the run ends (or is stopped)."
-            ).classes("text-[#444] font-mono text-[10px] leading-snug")
-            picker_note = ui.label("").classes("text-[#666] font-mono text-[10px]")
-            candidates_col = ui.column().classes("w-full gap-1")
-        picker_section.set_visibility(False)
+    def _read_log() -> str:
+        try:
+            return training_log_path(char_dir).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return "\n".join(sess["log"]) if sess else ""
+
+    def _tail_log():
+        """Push the log file's new complete lines (it is rewritten when a new run starts)."""
+        path = training_log_path(char_dir)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            if not state["log_note"]:
+                state["log_note"] = True
+                log.push("(No log saved for this run — older runs kept it only in memory.)")
+            return
+        if size < state["log_pos"]:
+            log.clear()
+            state["log_pos"] = 0
+        if size == state["log_pos"]:
+            return
+        with path.open("rb") as f:
+            f.seek(state["log_pos"])
+            chunk = f.read(size - state["log_pos"])
+        complete = chunk[:chunk.rfind(b"\n") + 1]         # a line still being written waits for the next tick
+        state["log_pos"] += len(complete)
+        for line in complete.decode("utf-8", errors="replace").splitlines():
+            log.push(line)
+
+    def _show_score(lbl: ui.label, r: dict, best: bool = False):
+        acc = r["accuracy"]
+        lbl.set_text(f"pronunciation {acc:.0%} · {r['words_per_sec']:.1f} words/s" + ("  ★ best" if best else ""))
+        lbl.classes(replace="font-mono text-[10px] shrink-0 w-52 " + (
+            "text-green-400" if acc >= 0.95 else "text-amber-400" if acc >= 0.85 else "text-red-400"))
+        tip = "Share of words a speech recogniser gets right on 16 sentences the model never trained on (base voice ≈ 99%)."
+        if r["worst"]:
+            tip += "  Examples that went wrong: " + " | ".join(f"“{w['heard'][:60]}”" for w in r["worst"][:3])
+        lbl.tooltip(tip)
+
+    def _live_scores():
+        """Fill in scores the training run has cached since the rows were drawn."""
+        for epoch, onnx, lbl in state["score_rows"]:
+            if epoch not in state["scored"] and (r := cached_score(onnx)):
+                state["scored"].add(epoch)
+                _show_score(lbl, r)
 
     async def _save(onnx: Path, activate: bool, row_btns: list):
         """Save a candidate as a model (kept with its checkpoint, see core/piper_models.py)."""
@@ -179,31 +237,28 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         on_done()
 
     async def _score_all(rows: list[tuple[int, Path, ui.label]]):
-        """Pronunciation score per candidate (see modules/pronunciation.py)."""
+        """Pronunciation score per candidate (see modules/pronunciation.py). The run scores
+        them as they come in, so this is mostly cache hits; it fills any gap and marks the best."""
         from faily.modules.pronunciation import score_model
-        best = None
+        scores = []
         for epoch, onnx, lbl in rows:
-            _set_status(f"Scoring pronunciation — epoch {epoch}…", "text-[#888]")
-            try:
-                r = await ni_run.io_bound(score_model, onnx)
-            except Exception as exc:
-                lbl.set_text("score unavailable")
-                lbl.tooltip(str(exc)[-300:])
-                continue
-            if r is None:        # run.io_bound returns None when cancelled / shutting down
-                return
-            acc = r["accuracy"]
-            lbl.set_text(f"pronunciation {acc:.0%} · {r['words_per_sec']:.1f} words/s")
-            lbl.classes(replace="font-mono text-[10px] shrink-0 w-52 " + (
-                "text-green-400" if acc >= 0.95 else "text-amber-400" if acc >= 0.85 else "text-red-400"))
-            tip = "Share of words a speech recogniser gets right on 16 sentences the model never trained on (base voice ≈ 99%)."
-            if r["worst"]:
-                tip += "  Examples that went wrong: " + " | ".join(f"“{w['heard'][:60]}”" for w in r["worst"][:3])
-            lbl.tooltip(tip)
-            if best is None or acc > best[0]:
-                best = (acc, lbl)
-        if best and len(rows) > 1:
-            best[1].set_text(best[1].text + "  ★ best")
+            r = cached_score(onnx)
+            if r is None:
+                _set_status(f"Scoring pronunciation — epoch {epoch}…", "text-[#888]")
+                try:
+                    r = await ni_run.io_bound(score_model, onnx)
+                except Exception as exc:
+                    lbl.set_text("score unavailable")
+                    lbl.tooltip(str(exc)[-300:])
+                    continue
+                if r is None:        # run.io_bound returns None when cancelled / shutting down
+                    return
+            state["scored"].add(epoch)
+            _show_score(lbl, r)
+            scores.append((r["accuracy"], lbl, r))
+        if len(scores) > 1:
+            acc, lbl, r = max(scores, key=lambda s: s[0])
+            _show_score(lbl, r, best=True)
         try:
             from faily.modules.asr import unload
             unload()
@@ -212,8 +267,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
 
     async def _previews(final: bool):
         """Add a row for every candidate not shown yet. While training runs (final=False) the
-        rows can only be listened to; once it has ended, SAVE unlocks and every row is scored
-        (Whisper on the GPU would slow training down, so scoring waits)."""
+        rows can only be listened to, and their pronunciation shows up as the run scores it
+        (_live_scores); once it has ended, SAVE unlocks and any unscored row is scored."""
         state["previewing"] = True
         try:
             text = preview_input.value.strip() or _DEFAULT_PREVIEW
@@ -230,6 +285,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                         continue
                     finally:
                         picker_note.set_text("")
+                if not state["shown"]:
+                    picker_note.set_text("")          # "No checkpoints yet."
                 state["shown"].add(epoch)
                 with candidates_col:
                     with ui.row().classes(
@@ -237,7 +294,7 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                         "border border-[#1e1e1e] hover:border-[#333]"
                     ):
                         ui.label(f"epoch {epoch}").classes("text-[#888] font-mono text-[10px] w-20 shrink-0")
-                        score_lbl = ui.label("scoring…" if final else "scored when the run ends").classes(
+                        score_lbl = ui.label("scoring…").classes(
                             "text-[#555] font-mono text-[10px] shrink-0 w-52")
                         state["score_rows"].append((epoch, onnx, score_lbl))
                         ui.audio(output_url(wav)).classes("flex-grow").props("controls")
@@ -257,24 +314,27 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
             if final:
                 for b in state["save_btns"]:
                     b.enable()
-                for _, _, lbl in state["score_rows"]:
-                    lbl.set_text("scoring…")
                 state["picker"] = True
                 await _score_all(state["score_rows"])
         finally:
             state["previewing"] = False
+
+    def _note(line: str):
+        if sess:
+            sess["log"].append(line)
+        append_log(char_dir, line)
 
     def _stop():
         st = read_training_status(char_dir) or {}
         proc = sess["proc"][0] if sess else None
         if st.get("stopping") and proc:
             proc.terminate()   # second press: don't wait for the epoch
-            sess["log"].append("Killed — checkpoints since the last periodic save are lost.")
+            _note("Killed — checkpoints since the last periodic save are lost.")
         elif st.get("state") == "training" and request_stop(char_dir):
             ui.notify("Stopping after this epoch — a checkpoint of it will be saved", timeout=5000)
         elif proc:
             proc.terminate()
-            sess["log"].append(
+            _note(
                 "Stopped immediately (this trainer can't stop gracefully) — work since the "
                 "last periodic checkpoint is lost."
             )
@@ -292,6 +352,7 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                 update_chart(hist)
                 trend_lbl.set_text(hist["loss"]["trend"])
                 chart_box.set_visibility(True)
+                chart_wait.set_visibility(False)
         except Exception:
             pass   # the graph is a convenience; never break the dialog over it
         finally:
@@ -302,10 +363,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         status_lbl.classes(replace=f"font-mono text-[11px] {color}")
 
     async def _tick():
-        if sess:
-            for line in sess["log"][cursor[0]:]:
-                log.push(line)
-            cursor[0] = len(sess["log"])
+        _tail_log()
+        _live_scores()
         st = read_training_status(char_dir) or {}
         s = st.get("state", "none")
         active = s in ("preparing", "training", "exporting")
@@ -314,7 +373,6 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         if s in ("training", "exporting", "ready", "error"):
             await _refresh_chart()
         if s in ("training", "exporting") and st.get("candidates") and not state["previewing"]:
-            picker_section.set_visibility(True)
             state["previewing"] = True            # claimed now: the task starts on the next loop turn
             background_tasks.create(_previews(final=False))
         warn_lbl.set_text("")
@@ -346,12 +404,11 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
             bar.set_value(1.0)
             bar.props(remove="indeterminate")
             detail_lbl.set_text("")
-            picker_section.set_visibility(True)
             if not state["picker"] and not state["previewing"]:
                 state["previewing"] = True        # claimed now: the task starts on the next loop turn
                 background_tasks.create(_previews(final=True))
             if state["picker"]:
-                _set_status(f"✓ {st.get('candidates', 0)} checkpoint(s) ready — pick one below", "text-green-400")
+                _set_status(f"✓ {st.get('candidates', 0)} checkpoint(s) ready — pick one on CHECKPOINTS", "text-green-400")
         elif s == "done":
             _set_status("✓ finished — model installed", "text-green-400")
         elif s == "error":
@@ -367,6 +424,7 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         if s != "preparing":
             bar.props(remove="indeterminate")
 
+    _tail_log()             # the log so far, now rather than on the first tick
     ui.timer(1.0, _tick)
     dlg.open()
 
