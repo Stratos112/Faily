@@ -21,7 +21,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 # words per line allowed in each category
-WORDS = {"pacing": (1, 45), "intonation": (1, 14), "numbers": (4, 18)}
+WORDS = {"pacing": (1, 45), "intonation": (1, 14), "numbers": (4, 18),
+         "conversation": (3, 26), "everyday": (4, 28),
+         **{k: (3, 20) for k in ("angry", "sad", "joyful", "fearful", "surprised", "tender")}}
 DEFAULT_WORDS = (4, 16)
 MAX_SAME_OPENING = 8                       # at most this many lines may share their first three words
 _ALLOWED = re.compile(r"^[A-Za-z0-9 .,;:!?'\"\-—…$%&()/’“”]+$")

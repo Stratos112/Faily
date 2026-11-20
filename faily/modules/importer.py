@@ -103,6 +103,38 @@ def discard_stage(stage: str) -> None:
         shutil.rmtree(C.CHARACTERS_DIR / stage, ignore_errors=True)
 
 
+def draft_name() -> str:
+    """A name for a character still being put together (ADD CHARACTER dialog). Nothing is
+    created yet: the first commit_stage(stage, draft, is_new=True) creates it, and it stays
+    hidden (and is purged with the stages if abandoned) until promote_draft()."""
+    purge_old_stages()
+    return f"{STAGE_PREFIX}new_{uuid.uuid4().hex[:8]}"
+
+
+def check_character_name(name: str) -> str:
+    """The stripped name, or ValueError if it can't be a character folder."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Enter a character name")
+    if name.startswith("_") or name in (".", "..") or any(ch in name for ch in '/\\:*?"<>|'):
+        raise ValueError(f"“{name}” can't be used as a character name")
+    if C.get_character(name) is not None:
+        raise FileExistsError(f"A character called “{name}” already exists")
+    return name
+
+
+def promote_draft(draft: str, name: str) -> str:
+    """Turn the hidden draft character into the visible character `name`. Returns the name."""
+    if not draft.startswith(STAGE_PREFIX) or C.get_character(draft) is None:
+        raise FileNotFoundError("That draft has no clips yet")
+    name = check_character_name(name)
+    (C.CHARACTERS_DIR / draft).rename(C.CHARACTERS_DIR / name)
+    cfg = C.get_character(name)
+    cfg["name"] = name
+    C._cfg(name).write_text(json.dumps(cfg, indent=2))
+    return name
+
+
 def commit_stage(stage: str, target: str, is_new: bool) -> dict:
     """Move the staged clips into character `target`.
     New character: its primary reference is the first clip and the rest are ref clips.

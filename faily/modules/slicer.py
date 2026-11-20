@@ -1,6 +1,6 @@
 """Split a long recording into clip-sized slices at natural pauses.
 
-Used by the CLONE tab's "split & qualify" import: the slices become a character's
+Used by the "split & qualify" import: the slices become a character's
 reference clips. Cuts go in the middle of pauses, so every slice keeps some
 silence at both ends (the trim check later tightens it), and a cut never lands
 inside a word unless a stretch has no pause at all for far longer than a slice

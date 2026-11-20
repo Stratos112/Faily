@@ -141,7 +141,7 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
         return
     chain = get_ref_chain(char_name)
     if not chain:
-        ui.notify("No ref clips — add clips from CLONE or TUNE first", type="warning")
+        ui.notify("No ref clips — add clips in the REFERENCES tab first", type="warning")
         return
 
     try:
@@ -172,7 +172,10 @@ def open_inflation_dialog(char_name: str, on_committed: Callable[[], None], pres
     first_backend = preset.get("backend") if preset.get("backend") in BACKENDS else "chatterbox"
     if first_backend == "f5_tts" and not has_transcripts:
         first_backend = "chatterbox"
-    _weights: dict[str, list[float]] = {k: [1.0 if (only_cat is None or k == only_cat) else 0.0] for k in CATEGORIES}
+    _weights: dict[str, list[float]] = {
+        k: [(info.get("default_weight", 1.0) if only_cat is None else 1.0 if k == only_cat else 0.0)]
+        for k, info in CATEGORIES.items()
+    }
     _count: list[int] = [int(preset.get("count") or 200)]
     _backend: list[str] = [first_backend]
     _param1: list[float] = [BACKENDS[first_backend]["param1"]["default"]]

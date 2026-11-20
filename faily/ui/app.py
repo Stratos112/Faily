@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from nicegui import app, ui
 from faily.ui.tabs.foley_tab import build_foley_tab
-from faily.ui.tabs.vc_tab import build_vc_tab
 from faily.ui.tabs.speak_tab import build_speak_tab
 from faily.ui.tabs.edit_tab import build_edit_tab
 from faily.ui.tabs.daw_tab import build_daw_tab
@@ -225,8 +224,7 @@ def run():
             ).tooltip("Settings")
 
         with ui.tabs().classes("w-full") as tabs:
-            chars_tab = ui.tab("CHARACTERS", icon="manage_accounts").classes("pipeline-tab pipeline-first")
-            vc_tab    = ui.tab("CLONE",      icon="mic").classes("pipeline-tab pipeline-last")
+            chars_tab = ui.tab("CHARACTERS", icon="manage_accounts").classes("pipeline-tab pipeline-first pipeline-last")
             speak_tab = ui.tab("SPEAK",      icon="spatial_audio").classes("speak-main-tab")
             edit_tab  = ui.tab("EDIT",       icon="tune").classes("pipeline-tab pipeline-first")
             daw_tab   = ui.tab("DAW",        icon="piano").classes("pipeline-tab")
@@ -236,7 +234,6 @@ def run():
         _speak_refresh: list = [lambda: None]
         _speak_select:  list = [lambda name: None]
         _chars_refresh: list = [lambda: None]
-        _vc_refresh:    list = [lambda: None]
 
         def _on_tab_change(e):
             if e.value == "SPEAK":
@@ -253,12 +250,8 @@ def run():
         def _on_char_change():
             """Called when characters are added/deleted."""
             _speak_refresh[0]()
-            _vc_refresh[0]()
 
         with ui.tab_panels(tabs, value=speak_tab, on_change=_on_tab_change).classes("w-full flex-grow"):
-            with ui.tab_panel(vc_tab):
-                _vc_refresh[0] = build_vc_tab(on_characters_changed=lambda: _on_char_change())
-
             with ui.tab_panel(chars_tab):
                 _chars_refresh[0] = build_characters_tab(
                     on_speak=_on_speak,

@@ -10,8 +10,7 @@ One pipeline: create a character, generate its voice, layer in sound, polish, an
 
 | Tab | What it does |
 |---|---|
-| **CHARACTERS** | Character library — browse/manage everyone you've built, train a character-specific Piper voice model |
-| **CLONE** | Zero-shot voice cloning from a short reference clip — where new characters start |
+| **CHARACTERS** | Character library — ADD CHARACTER (upload recordings → split & qualify → try the voice zero-shot → save), browse/manage everyone you've built, train a character-specific Piper voice model |
 | **SPEAK** | Generate lines — expression engine (style-driven delivery + voice conversion) or a trained Piper model, whichever the character has |
 | **FOLEY** | Text-prompted sound effect generation |
 | **EDIT** | Trim, pitch-shift, speed-adjust, denoise, and mix any generated clip |
@@ -82,8 +81,7 @@ Set these under `environment:` in `docker-compose.yml`, for example:
 - **New FOLEY backends** — before adding one, confirm it installs via `scripts/setup_linux.sh` on the cu128 stack and actually run a generation with it. Tango 2 and AudioGen were already tried and dropped for failing this.
 - **Promote-to-ref-pool prominence** — saving a good generation back into a character's reference pool already works from any clip; surface it more (e.g. auto-suggest after favoriting).
 - **RVC-trained-model voice conversion** — a lighter-weight trained-model path than a full Piper fine-tune; worth prioritizing if Piper's data requirements (30–200+ clips for good results) prove too heavy for most characters.
-- **YouTube URL scraper** — paste a link in CLONE, pull reference audio automatically instead of manual upload.
-- **CLONE / CHARACTERS split** — character management (save/delete/list) currently lives partly in CLONE; it belongs in CHARACTERS so CLONE can focus purely on the cloning/auditioning process.
+- **YouTube URL scraper** — paste a link in ADD CHARACTER, pull reference audio automatically instead of manual upload.
 
 ---
 

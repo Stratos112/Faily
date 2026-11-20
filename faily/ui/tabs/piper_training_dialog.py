@@ -18,7 +18,7 @@ from faily.modules.piper import (
     infer, list_candidates, promote_candidate, read_loss_history,
     read_training_status, request_stop, train, training_in_progress,
 )
-from faily.ui.components import show_error
+from faily.ui.components import output_url, show_error
 
 _DEFAULT_PREVIEW = "Hello, this is a test of the trained voice."
 _STALL_SECS = 300
@@ -264,7 +264,6 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                     except Exception as exc:
                         show_error(exc)
                         continue
-                rel = wav.relative_to(Path("outputs"))
                 with candidates_col:
                     with ui.row().classes(
                         "w-full items-center gap-2 px-3 py-1 rounded "
@@ -273,7 +272,7 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                         ui.label(f"epoch {epoch}").classes("text-[#888] font-mono text-[10px] w-20 shrink-0")
                         score_lbl = ui.label("scoring…").classes("text-[#555] font-mono text-[10px] shrink-0 w-52")
                         score_rows.append((epoch, onnx, score_lbl))
-                        ui.audio(f"/outputs/{rel.as_posix()}").classes("flex-grow").props("controls")
+                        ui.audio(output_url(wav)).classes("flex-grow").props("controls")
                         btns = []
                         btns.append(ui.button(
                             "SAVE & USE", icon="check", on_click=lambda p=onnx, b=btns: _save(p, True, b),

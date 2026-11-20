@@ -3,6 +3,7 @@ import asyncio
 import json
 import traceback
 from pathlib import Path
+from urllib.parse import quote
 from nicegui import ui
 
 _LBL = "text-[#555] font-mono text-[10px] tracking-widest"
@@ -221,9 +222,10 @@ def prime_audio(btn) -> None:
 def output_url(path: Path) -> str:
     """URL for a file under outputs/, stamped with its modification time. Files
     get regenerated under the same name (same text, different model); without the
-    stamp the browser keeps showing/playing the previous copy."""
+    stamp the browser keeps showing/playing the previous copy. The path is
+    percent-encoded: a character called "e#2" would otherwise end the URL at "#"."""
     p = Path(path)
-    rel = p.relative_to(Path("outputs")).as_posix()
+    rel = quote(p.relative_to(Path("outputs")).as_posix())
     try:
         return f"/outputs/{rel}?v={p.stat().st_mtime_ns}"
     except OSError:
@@ -270,8 +272,7 @@ def preview_meter(player: ui.audio):
         path = preview.get("path")
         if path and ready > _last_ready[0] + 0.05:
             _last_ready[0] = ready
-            rel = Path(path).relative_to(Path("outputs")).as_posix()
-            url = f"/outputs/{rel}?t={ready:.2f}"
+            url = f"{output_url(Path(path)).split('?')[0]}?t={ready:.2f}"
             ui.run_javascript(f"""
                 try {{
                     const el = getElement({player.id}).$el ?? getElement({player.id});

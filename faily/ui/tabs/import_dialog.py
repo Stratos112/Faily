@@ -1,6 +1,6 @@
-"""CLONE tab: "split & qualify" import. Slices a recording at its pauses, then hands the
-slices to the qualify review (qualify_dialog) with Whisper's transcripts
-pre-filled, and finally adds the survivors to a new or existing character."""
+""""Split & qualify" import (ADD CHARACTER, REFERENCES, Edit). Slices a recording at its
+pauses, then hands the slices to the qualify review (qualify_dialog) with Whisper's
+transcripts pre-filled, and finally adds the survivors to a new or existing character."""
 import shutil
 import uuid
 from pathlib import Path
@@ -23,11 +23,13 @@ _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 def open_import_dialog(
     source: Path, default_name: str, host, on_added=lambda: None,
     fixed_target: str | None = None, delete_source: bool = False,
-    remove_original=None,
+    remove_original=None, target_label: str | None = None,
 ) -> None:
     """host: a long-lived element to create the review dialog under (this dialog is
     closed before the review opens, and a dialog nested in a closed one would vanish).
-    fixed_target: add the slices to this existing character and don't ask where.
+    fixed_target: add the slices to this character and don't ask where (if it doesn't
+    exist yet, the first commit creates it — the ADD CHARACTER dialog's hidden draft).
+    target_label: what to call fixed_target on screen (default: its name).
     delete_source: `source` is a temporary upload — remove it once it has been sliced
     (or the dialog is cancelled).
     remove_original: a function that takes the long clip out of its character — when given,
@@ -50,7 +52,7 @@ def open_import_dialog(
             "adjust. Nothing is added to a character until you confirm at the end."
         ).classes("text-[#888] font-mono text-[11px] leading-snug")
 
-        ui.label(f"ADDING TO  {fixed_target}" if fixed_target else "ADD THE CLIPS TO").classes(_LBL)
+        ui.label(f"ADDING TO  {target_label or fixed_target}" if fixed_target else "ADD THE CLIPS TO").classes(_LBL)
         target_kind = ui.radio(
             {"new": "A new character", "existing": "An existing character"},
             value="new" if default_name or not bases else "existing",
@@ -113,7 +115,7 @@ def open_import_dialog(
             source.unlink(missing_ok=True)
 
     async def _go():
-        is_new = target_kind.value == "new" and not fixed_target
+        is_new = get_character(fixed_target) is None if fixed_target else target_kind.value == "new"
         target = fixed_target or ((name_in.value or "").strip() if is_new else existing_sel.value)
         if not target:
             ui.notify("Choose a character name first", type="warning")

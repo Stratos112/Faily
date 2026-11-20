@@ -1,6 +1,7 @@
 import shutil
 import time
 from pathlib import Path
+from urllib.parse import quote
 from faily.core.paths import TMP_DIR
 from nicegui import ui, run as ni_run
 from faily.modules.edit import apply_edits, audio_info
@@ -8,7 +9,7 @@ from faily.core.characters import (
     list_characters, get_character, add_ref_clip, add_clip_to_character,
     CHARACTERS_DIR, list_character_clips, list_character_favorites,
 )
-from faily.ui.components import SPLIT_COLUMNS, section_label, show_error
+from faily.ui.components import SPLIT_COLUMNS, output_url, section_label, show_error
 from faily.ui.tabs.import_dialog import open_import_dialog
 
 _BTN = "font-mono tracking-widest"
@@ -122,10 +123,9 @@ def build_edit_tab():
         _src[0] = path
         _preview[0] = None
         try:
-            rel = path.relative_to(Path("outputs"))
-            url = f"/outputs/{rel.as_posix()}"
+            url = output_url(path)
         except ValueError:
-            url = f"/outputs/misc/_tmp/edit/{path.name}"
+            url = f"/outputs/misc/_tmp/edit/{quote(path.name)}"
         src_player.set_source(url)
         src_now_playing.set_text(f"▶  {path.stem}")
         try:

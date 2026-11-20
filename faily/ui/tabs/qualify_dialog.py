@@ -12,6 +12,7 @@ import html
 import shutil
 import time
 from pathlib import Path
+from urllib.parse import quote
 from faily.core.paths import TMP_DIR
 
 from nicegui import run as ni_run, ui
@@ -32,7 +33,7 @@ _SECTION_OK = "w-full gap-1 rounded border border-[#1d3a26] bg-[#0d1a12] p-3"   
 
 
 def _url(path: Path) -> str:
-    return "/outputs/" + path.relative_to(Path("outputs")).as_posix()
+    return "/outputs/" + quote(path.relative_to(Path("outputs")).as_posix())
 
 
 def _headline(suggestions: dict[str, dict], clip: K.Clip, staging: bool) -> str:

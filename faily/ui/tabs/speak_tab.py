@@ -16,7 +16,7 @@ from faily.core.paths import history_dir
 from faily.ui.components import (
     SPLIT_COLUMNS,
     output_panel, section_label, show_error, model_picker, preview_meter,
-    prime_audio, play_url, ref_mode_toggle, ref_live_only, ref_counts_text,
+    prime_audio, play_url, output_url, ref_mode_toggle, ref_live_only, ref_counts_text,
 )
 
 _BTN = "font-mono tracking-widest"
@@ -105,8 +105,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
                 path = get_ref_path(char_state[0])
                 if path is None:
                     ui.notify("No reference audio for this character", type="warning"); return
-            rel = path.relative_to(Path("outputs"))
-            play_url(f"/outputs/{rel.as_posix()}")
+            play_url(output_url(path))
         except Exception as exc:
             show_error(exc)
         finally:
@@ -122,7 +121,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         if not get_ref_chain(char_state[0], live_only=ref_live_only()):
             ui.notify("This character has no recordings to clone from — switch to “Recordings + inflated”, "
                       "or add recordings" if ref_live_only() else
-                      "Character has no reference audio — save from CLONE first", type="warning"); return
+                      "Character has no reference audio — add clips in CHARACTERS first", type="warning"); return
         gen_btn.disable()
         n = _candidates[0]
         results: list[tuple[Path, str]] = []
@@ -180,7 +179,7 @@ def _build_expression(char_state: list[str], _out: dict, _current_char: list[str
         svc_row.set_visibility(key == "seedvc")
 
     with ui.column().classes("gap-3 p-5 overflow-y-auto w-full h-full"):
-        _section_row("CHARACTER", "The voice to speak in. Characters are created in the CLONE tab.")
+        _section_row("CHARACTER", "The voice to speak in. Characters are created with ADD CHARACTER on the CHARACTERS tab.")
         char_select = (
             ui.select(options=_all_chars(), value=_NO_CHAR, on_change=lambda e: _update_info(e.value))
             .props("outlined dark dense").classes("w-full")
@@ -613,7 +612,7 @@ def _build_oneshot(char_state: list[str], _out: dict, _current_char: list[str]):
         )
         ref_mode_toggle(lambda: _update_info(char_state[0]) if char_state[0] != _NO_CHAR else None)
 
-        _section_row("BACKEND", "Voice cloning engine — same options as the CLONE tab.")
+        _section_row("BACKEND", "Voice cloning engine.")
         model_picker(BACKENDS, "xtts_v2", _on_backend)
 
         params_col = ui.column().classes("w-full gap-4")

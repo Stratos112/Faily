@@ -58,6 +58,47 @@ CATEGORIES: dict[str, dict] = {
         "label": "Neutral / Everyday Register",
         "desc": "Plain, unmarked conversational sentences — the diversity control group.",
     },
+    "conversation": {
+        "label": "Natural Conversation",
+        "desc": "Replies and reactions as said to someone in the room — contractions, hedges, trailing off.",
+    },
+    "everyday": {
+        "label": "Everyday Talk",
+        "desc": "Errands, phone calls, plans, thinking aloud, self-corrections — how people actually talk.",
+    },
+    # Emotions: the wording carries the feeling, so a zero-shot engine (Chatterbox's exaggeration
+    # especially) has something to act. Off by default ("default_weight"): Piper has no emotion
+    # control, and a mostly-emotional set pulls every line toward an averaged delivery.
+    "angry": {
+        "label": "Anger & Frustration",
+        "desc": "Irritated, fed up, furious — sharp stress, louder, clipped phrasing.",
+        "default_weight": 0.0,
+    },
+    "sad": {
+        "label": "Sadness & Disappointment",
+        "desc": "Hurt, grief, letdown, resignation — slower, lower, falling pitch.",
+        "default_weight": 0.0,
+    },
+    "joyful": {
+        "label": "Joy & Excitement",
+        "desc": "Delight, pride, good news, laughing it off — bright, fast, wide pitch range.",
+        "default_weight": 0.0,
+    },
+    "fearful": {
+        "label": "Fear & Nervousness",
+        "desc": "Worry, dread, panic, nerves — tense, hurried, breathy, unsure.",
+        "default_weight": 0.0,
+    },
+    "surprised": {
+        "label": "Surprise & Disbelief",
+        "desc": "Shock, disbelief, amazement — sudden pitch jumps and stressed words.",
+        "default_weight": 0.0,
+    },
+    "tender": {
+        "label": "Warmth & Tenderness",
+        "desc": "Comfort, affection, reassurance — soft, slow, close.",
+        "default_weight": 0.0,
+    },
 }
 
 

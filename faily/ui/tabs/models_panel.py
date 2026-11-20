@@ -15,7 +15,7 @@ from faily.modules.piper import (
     DEFAULT_MATCH, MATCH_ASPECTS, MATCH_CHOICES, infer,
 )
 from faily.modules.pronunciation import cached_score, score_model
-from faily.ui.components import play_url, show_error
+from faily.ui.components import output_url, play_url, show_error
 
 _LBL = "text-[#444] font-mono text-[10px] tracking-widest"
 _VAL = "text-[#aaa] font-mono text-[11px] [overflow-wrap:anywhere]"
@@ -63,7 +63,7 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
         except Exception as exc:
             show_error(exc)
             return
-        play_url(f"/outputs/{out.relative_to(Path('outputs')).as_posix()}?t={int(time.time() * 1000)}")
+        play_url(output_url(out))
 
     def use(m: dict):
         PM.set_active(name, m["id"])

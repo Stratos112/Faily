@@ -10,7 +10,7 @@ from faily.core.characters import (
 )
 from faily.ui.components import (
     SPLIT_COLUMNS,
-    section_label, show_error, send_to_edit, bind_play, prime_audio, play_url,
+    section_label, show_error, send_to_edit, output_url, bind_play, prime_audio, play_url,
 )
 from faily.modules.piper import (
     BASE_VOICES, MATCH_ASPECTS, MATCH_CHOICES, training_clips, frozen_modules,
@@ -27,6 +27,7 @@ from faily.ui.tabs.refs_hub import build_refs_hub
 from faily.ui.tabs.training_data_panel import build_activation_panel
 from faily.ui.tabs.qualify_dialog import open_qualify_dialog
 from faily.ui.tabs.import_dialog import open_import_dialog
+from faily.ui.tabs.new_character_dialog import open_new_character_dialog
 from faily.ui.tabs.models_panel import build_models_panel
 from faily.ui.tabs.piper_training_dialog import (
     open_training_dialog, start_training, training_status_chip,
@@ -91,7 +92,7 @@ def build_characters_tab(on_speak, on_change, initial: str | None = None):
 
         with left_col:
             if not roots and not children:
-                ui.label("No characters yet — save one from the CLONE tab.").classes(
+                ui.label("No characters yet — ADD CHARACTER below starts one.").classes(
                     "text-[#444] font-mono text-[10px] px-1 py-4"
                 )
                 return
@@ -215,8 +216,7 @@ def build_characters_tab(on_speak, on_change, initial: str | None = None):
             )
 
         for clip in clips:
-            rel = clip.relative_to(Path("outputs"))
-            url = f"/outputs/{rel.as_posix()}"
+            url = output_url(clip)
 
             with ui.row().classes(
                 "w-full items-center gap-1 px-2 py-1 rounded "
@@ -460,8 +460,7 @@ def build_characters_tab(on_speak, on_change, initial: str | None = None):
                         preview_btn.disable()
                         try:
                             path = await generate_base_voice_sample(key)
-                            rel = path.relative_to(Path("outputs"))
-                            play_url(f"/outputs/{rel.as_posix()}")
+                            play_url(output_url(path))
                         except Exception as exc:
                             show_error(exc)
                         finally:
@@ -668,6 +667,18 @@ def build_characters_tab(on_speak, on_change, initial: str | None = None):
                     on_click=lambda: (_rebuild_list(), _rebuild_detail()),
                 ).props("flat dense color=grey").tooltip("Reload")
             left_col = ui.column().classes("w-full gap-1 mt-2")
+
+            def _on_new_saved(name: str):
+                _select(name)
+                on_change()
+
+            ui.button(
+                "ADD CHARACTER", icon="person_add",
+                on_click=lambda: open_new_character_dialog(dialog_host, on_saved=_on_new_saved),
+            ).props("flat dense color=amber").classes(f"{_BTN} text-[10px] mt-1").tooltip(
+                "Upload recordings of a voice, split & qualify them, try the voice zero-shot, then save it "
+                "as a character."
+            )
             # Long-lived parent for the split-and-qualify dialogs: right_col is rebuilt (and
             # everything in it deleted) whenever a clip is edited or added.
             dialog_host = ui.element("div").classes("hidden")

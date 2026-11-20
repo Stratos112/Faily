@@ -1273,6 +1273,27 @@ class TestImporter(Sandboxed):
         self.I.discard_stage("alice")
         self.assertIsNotNone(C.get_character("alice"))
 
+    def test_draft_character_build_and_promote(self):
+        draft = self.I.draft_name()
+        self.assertTrue(draft.startswith(self.I.STAGE_PREFIX))
+        with self.assertRaises(FileNotFoundError):
+            self.I.promote_draft(draft, "fresh")                   # nothing committed yet
+        stage, _ = self._staged(2)
+        self.I.commit_stage(stage, draft, is_new=True)             # first upload creates the draft
+        stage2, _ = self._staged(2)
+        self.I.commit_stage(stage2, draft, is_new=False)           # later uploads add to it
+        self.assertEqual(C.list_characters(), [])                  # still hidden
+        make_char("alice")
+        for bad in ("", "  ", "_x", "a/b", "alice"):
+            with self.assertRaises((ValueError, FileExistsError)):
+                self.I.promote_draft(draft, bad)
+        self.assertEqual(self.I.promote_draft(draft, " fresh "), "fresh")
+        self.assertIsNone(C.get_character(draft))
+        fresh = C.get_character("fresh")
+        self.assertEqual(fresh["name"], "fresh")
+        self.assertEqual(len(C.get_ref_chain("fresh")), 4)
+        self.assertEqual(sorted(c["name"] for c in C.list_characters()), ["alice", "fresh"])
+
     def test_purge_old_stages(self):
         stage, _ = self._staged()
         old = time.time() - 3 * 86400
@@ -3132,7 +3153,7 @@ class TestHubUi(Sandboxed):
     def test_every_two_pane_tab_shares_the_split(self):
         from faily.ui import components
         self.assertTrue(components.SPLIT_COLUMNS.endswith("2fr"))
-        for tab in ("characters", "speak", "tune", "vc", "edit", "foley"):
+        for tab in ("characters", "speak", "tune", "edit", "foley"):
             src = (ROOT / f"faily/ui/tabs/{tab}_tab.py").read_text()
             self.assertIn("ui.grid(columns=SPLIT_COLUMNS)", src, tab)
             self.assertNotIn('columns="2fr 3fr"', src, tab)
@@ -3235,8 +3256,22 @@ class TestHubUi(Sandboxed):
         for el in client.elements.values():
             if isinstance(el, ui.slider) and el.props.get("max") == 2.0:
                 weights[el.value] = weights.get(el.value, 0) + 1
-        self.assertEqual(weights[0.0], 8)                                   # 8 of the 9 categories are weighted 0
+        self.assertEqual(weights[0.0], len(ID.CATEGORIES) - 1)               # every category but the chosen one is weighted 0
         self.assertGreaterEqual(weights[1.0], 1)                            # the chosen one stays at 1.0 (F5's speed slider also reads 1.0)
+        ID._SESSIONS.pop("alice", None)
+
+    def test_inflation_wizard_leaves_emotion_categories_off_by_default(self):
+        from nicegui import ui
+        from faily.ui.tabs import inflation_dialog as ID
+        make_mixed("alice")
+        ID._SESSIONS.pop("alice", None)
+        self.assertEqual(_ui_client().get("/wizard/alice").status_code, 200)
+        client = _UI["clients"][-1]
+        zero = sum(1 for el in client.elements.values()
+                   if isinstance(el, ui.slider) and el.props.get("max") == 2.0 and el.value == 0.0)
+        off = {k for k, info in ID.CATEGORIES.items() if info.get("default_weight", 1.0) == 0.0}
+        self.assertEqual(off, {"angry", "sad", "joyful", "fearful", "surprised", "tender"})
+        self.assertEqual(zero, len(off))
         ID._SESSIONS.pop("alice", None)
 
     def test_inflation_wizard_accepts_a_preset(self):
@@ -3294,8 +3329,13 @@ class TestScriptTools(unittest.TestCase):
                 cur = line[3:].strip()
             elif line.strip() and not line.startswith("#"):
                 counts[cur] += 1
-        self.assertEqual(set(counts), set(CATEGORIES))
+        self.assertTrue(set(counts) <= set(CATEGORIES), set(counts) - set(CATEGORIES))
         self.assertTrue(all(n >= 300 for n in counts.values()), dict(counts))
+        # every category (incl. those added in their own file, e.g. inflation_scripts_emotions.txt) has plenty
+        from faily.modules.inflation import load_script_bank
+        bank = load_script_bank()
+        self.assertEqual(set(bank), set(CATEGORIES))
+        self.assertTrue(all(len(bank[k]) >= 500 for k in CATEGORIES), {k: len(v) for k, v in bank.items()})
 
 
 class TestInflationSession(Sandboxed):

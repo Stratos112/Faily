@@ -43,7 +43,7 @@ def build_tune_tab():
         char = get_character(name)
         chain = get_ref_chain(name)
         ancestry = f"↳ {char['parent']}" if char and "parent" in char else "base character"
-        ref_label = ref_counts_text(name) if chain else "⚠  no reference audio — save from CLONE tab"
+        ref_label = ref_counts_text(name) if chain else "⚠  no reference audio — add clips in CHARACTERS"
         char_info.set_text(f"{ancestry}  ·  {ref_label}")
 
     def _on_char(e):
@@ -63,7 +63,7 @@ def build_tune_tab():
             ui.notify("Enter a line to speak", type="warning")
             return
         if not get_ref_chain(_char_name[0], live_only=ref_live_only()):
-            ui.notify("Character has no reference audio — save it from the CLONE tab first", type="warning")
+            ui.notify("Character has no reference audio — add clips to it in CHARACTERS first", type="warning")
             return
 
         gen_btn.disable()
@@ -111,7 +111,7 @@ def build_tune_tab():
 
             _section_row(
                 "CHARACTER",
-                "The voice to speak in. Characters are created in the CLONE tab. "
+                "The voice to speak in. Characters are created with ADD CHARACTER on the CHARACTERS tab. "
                 "Their reference audio is used by FreeVC in stage 2.",
             )
             char_select = (
