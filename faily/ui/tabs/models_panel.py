@@ -141,6 +141,11 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                 row("BATCH", f"{m['batch']} (micro-batch × accumulation) · validation split {m.get('validation_split')}")
             row("LOSS", (f"generator {loss['gen']} · validation {loss['val']} (around epoch {loss['epoch']})"
                          if loss.get("gen") is not None else "not available"))
+            hist = PM.load_training_history(m)
+            if hist:
+                from faily.ui.training_charts import history_chart
+                ui.label("TRAINING PROGRESS — the whole run this model was saved from").classes(_LBL + " mt-1")
+                history_chart(hist, mark_epoch=hist.get("saved_epoch", m.get("epoch")), height=220)
             row("PRONUNCIATION", (f"{sc['accuracy']:.1%} of words right · {sc['words_per_sec']} words/s"
                                   if sc else "not scored yet"))
             if sc and sc.get("worst"):
@@ -213,7 +218,7 @@ def build_models_panel(name: str, on_change, rebuild, train) -> None:
                 format="%.2e", min=1e-7, max=1e-3, step=1e-5,
             ).props("outlined dark dense").classes("w-48 font-mono")
             epochs = ui.number(
-                label="Epochs", value=(m.get("max_epochs") or get_piper_epochs()), format="%d", min=1, max=100000, step=100,
+                label="Epochs", value=(m.get("max_epochs") or get_piper_epochs()), format="%d", min=1, max=100000, step=1,
             ).props("outlined dark dense").classes("w-48 font-mono")
             toggles = {}
             for a, info in MATCH_ASPECTS.items():

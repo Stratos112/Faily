@@ -862,14 +862,28 @@ def request_stop(char_dir: Path) -> bool:
     return True
 
 
+# The generator loss's terms as logged by patch_piper_train_loss_parts.py, plus the
+# discriminator's own loss: tag -> (label, what it means).
+LOSS_PARTS: dict[str, tuple[str, str]] = {
+    "loss_mel": ("mel", "how far the output's spectrum is from the clip's"),
+    "loss_kl": ("prior (KL)", "how well the text side predicts the audio's sound"),
+    "loss_dur": ("duration", "how far the predicted sound lengths are from the clip's"),
+    "loss_fm": ("feature match", "how close the discriminator finds the output's features"),
+    "loss_gen": ("adversarial", "how well the output fools the discriminator"),
+    "loss_disc_all": ("discriminator", "the discriminator's own loss (real vs generated)"),
+}
+
+
 def read_loss_history(char_dir: Path, max_points: int = 400) -> dict:
     """Loss curves for the character's most recent training, from the
     TensorBoard events piper_train writes. Returns
-    {"epochs": [...], "gen": [...], "val": [...], "trend": str} with one entry
-    per epoch (or per bucket of epochs when there are more than max_points);
-    gen/val entries are None where that loss wasn't logged. Blocking —
+    {"epochs": [...], "gen": [...], "val": [...], "parts": {tag: [...]}, "trend": str}
+    with one entry per epoch (or per bucket of epochs when there are more than
+    max_points); entries are None where that loss wasn't logged. "parts" are the
+    generator loss's terms (LOSS_PARTS; logged by patch_piper_train_loss_parts.py,
+    so absent for runs before it) plus the discriminator's loss. Blocking —
     TensorBoard parsing; call from a worker thread."""
-    empty = {"epochs": [], "gen": [], "val": [], "trend": ""}
+    empty = {"epochs": [], "gen": [], "val": [], "parts": {}, "trend": ""}
     try:
         from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
     except ImportError:
@@ -879,7 +893,7 @@ def read_loss_history(char_dir: Path, max_points: int = 400) -> dict:
     log_root = char_dir / "piper_train" / "lightning_logs"
     steps: list[int] = []
     step_epoch: list[float] = []
-    raw: dict[str, list[tuple[int, float]]] = {"loss_gen_all": [], "val_loss": []}
+    raw: dict[str, list[tuple[int, float]]] = {"loss_gen_all": [], "val_loss": [], **{t: [] for t in LOSS_PARTS}}
     # A resumed run adds a new version_N; stitch them in order.
     for vdir in sorted(log_root.glob("version_*"), key=lambda p: int(p.name.split("_")[1])):
         for f in sorted(vdir.glob("events.out.tfevents.*")):
@@ -912,11 +926,14 @@ def read_loss_history(char_dir: Path, max_points: int = 400) -> dict:
 
     bucket = max(1, -(-len(all_epochs) // max_points))
     epochs, gen, val = [], [], []
+    parts: dict[str, list] = {t: [] for t in LOSS_PARTS if per_epoch[t]}
     for i in range(0, len(all_epochs), bucket):
         group = all_epochs[i:i + bucket]
         epochs.append(group[-1])
         gen.append(mean([v for e in group for v in per_epoch["loss_gen_all"].get(e, [])]))
         val.append(mean([v for e in group for v in per_epoch["val_loss"].get(e, [])]))
+        for t in parts:
+            parts[t].append(mean([v for e in group for v in per_epoch[t].get(e, [])]))
 
     # Is it still improving? Mean of the last 50 epochs vs. the 50 before them.
     def window(tag, lo, hi):
@@ -930,7 +947,7 @@ def read_loss_history(char_dir: Path, max_points: int = 400) -> dict:
             trend.append(f"{label} {now:.1f} ({now - before:+.2f} vs previous 50 epochs)")
         elif now is not None:
             trend.append(f"{label} {now:.1f}")
-    return {"epochs": epochs, "gen": gen, "val": val, "trend": "  ·  ".join(trend)}
+    return {"epochs": epochs, "gen": gen, "val": val, "parts": parts, "trend": "  ·  ".join(trend)}
 
 
 def training_in_progress(characters_dir: Path) -> str | None:
@@ -967,6 +984,151 @@ def drop_overlong_clips(clips: list[dict]) -> tuple[list[dict], list[dict]]:
     limit = refs.long_threshold([{"seconds": s} for _, s in secs])
     kept = [c for c, s in secs if s <= limit]
     return kept, [c for c, s in secs if s > limit]
+
+
+CHECKPOINT_EVERY = 5        # epochs between audition checkpoints
+MAX_CHECKPOINTS = 20        # longer runs space them out so the disk holds at most about this many
+
+
+class _CandidateExporter:
+    """Turns each checkpoint piper_train saves into an auditionable candidate
+    (piper_candidates/epoch_NNNNN.onnx) WHILE training runs, so they can be
+    listened to as they come in instead of all at the end.
+
+    A checkpoint counts as written once its size has held still across two polls
+    and it is a few seconds old. Live exports run on the CPU (CUDA hidden from the
+    exporter) so they don't take GPU memory from training, use their own process
+    slot (proc_ref is the trainer's, which "stop" kills), and log "Preparing…"
+    rather than "Exporting…" — the latter flips the run's status to "exporting"."""
+
+    POLL = 10.0
+    SETTLE = 5.0
+
+    def __init__(self, py: str, train_dir: Path, out_dir: Path, base_cfg: Path, log_cb, status):
+        self.py, self.train_dir, self.out_dir, self.base_cfg = py, train_dir, out_dir, base_cfg
+        self.log_cb, self.status = log_cb, status
+        self.done: set[Path] = set()
+        self.failed: set[Path] = set()
+        self._sizes: dict[Path, int] = {}
+        self._stop = asyncio.Event()
+
+    def _settled(self, ckpt: Path) -> bool:
+        try:
+            st = ckpt.stat()
+        except OSError:
+            return False
+        prev, self._sizes[ckpt] = self._sizes.get(ckpt), st.st_size
+        return prev == st.st_size and time.time() - st.st_mtime > self.SETTLE
+
+    async def export(self, ckpt: Path, proc_ref: list, live: bool) -> None:
+        m = re.search(r"epoch=(\d+)", ckpt.name)
+        epoch = int(m.group(1)) if m else 0
+        onnx_path = self.out_dir / f"epoch_{epoch:05d}.onnx"
+        tmp = onnx_path.with_name(f".{onnx_path.name}.part")
+        verb = "Preparing checkpoint (epoch {}) for audition…" if live else "Exporting checkpoint (epoch {}) to ONNX…"
+        self.log_cb(verb.format(epoch))
+        await _stream([self.py, "-m", "piper_train.export_onnx", str(ckpt), str(tmp)], self.log_cb, proc_ref,
+                      extra_env={"CUDA_VISIBLE_DEVICES": ""} if live else None)
+        shutil.copy2(str(self.base_cfg), str(onnx_path.with_suffix(".onnx.json")))
+        tmp.replace(onnx_path)          # the dialog lists *.onnx: only ever a finished file
+        self.done.add(ckpt)
+        if live:
+            self.status(candidates=len(list(self.out_dir.glob("epoch_*.onnx"))))
+            await self.measure(onnx_path)
+
+    async def measure(self, onnx: Path) -> None:
+        """voice_metrics for a candidate (CPU synthesis + analysis, ~5 s), cached beside it."""
+        from faily.modules import voice_metrics as VM
+        try:
+            await asyncio.to_thread(VM.measure_model, onnx)
+        except Exception as exc:
+            self.log_cb(f"(couldn't measure {onnx.name}: {exc})")
+
+    async def watch(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), self.POLL)
+                return
+            except asyncio.TimeoutError:
+                pass
+            for ckpt in sorted(self.train_dir.rglob("*.ckpt"), key=lambda p: p.stat().st_mtime):
+                if ckpt in self.done or ckpt in self.failed or not self._settled(ckpt):
+                    continue
+                try:
+                    await self.export(ckpt, [None], live=True)
+                except Exception as exc:          # retried once training has finished
+                    self.failed.add(ckpt)
+                    self.log_cb(f"(couldn't prepare {ckpt.name} yet: {exc}; will retry at the end)")
+                if self._stop.is_set():
+                    return
+
+    async def stop(self, task: asyncio.Task) -> None:
+        self._stop.set()
+        try:
+            await task
+        except Exception:
+            pass
+
+
+REFERENCE_METRICS = "reference_metrics.json"
+
+
+def _write_reference_metrics(out_dir: Path, clips: list[dict], base_onnx: Path | None, base_label: str) -> None:
+    """Where a run starts (the base voice) and what it trains toward (its clips), in
+    voice_metrics terms, for the progress graphs. Blocking; run in a thread."""
+    from faily.modules import voice_metrics as VM
+    target = VM.measure_clips([(Path(c["audio"]), c.get("transcript", "")) for c in clips])
+    base = VM.measure_model(base_onnx) if base_onnx and base_onnx.exists() else {}
+    ref = {"base": {**base, "label": base_label}, "target": target}
+    (out_dir / REFERENCE_METRICS).write_text(json.dumps(ref))
+
+
+def training_history(char_dir: Path) -> dict:
+    """Everything the progress graphs show for the character's latest run:
+      loss:        read_loss_history() (total + parts per epoch)
+      checkpoints: one row per candidate: epoch, the voice_metrics values, "match" (voice
+                   match to the training clips, %) and "pronunciation" (%, once scored)
+      reference:   {"base": {...}, "target": {...}} in the same terms (base also gets
+                   "match" and, once scored, "pronunciation"; target "match" = its ceiling)
+    Small (no spectra): this is what a saved model keeps. Blocking; call from a thread."""
+    from faily.modules import voice_metrics as VM
+    from faily.modules.pronunciation import cached_score
+
+    cand_dir = char_dir / "piper_candidates"
+    try:
+        ref = json.loads((cand_dir / REFERENCE_METRICS).read_text())
+    except (OSError, ValueError):
+        ref = {}
+    target_ltas = (ref.get("target") or {}).get("ltas")
+    keys = [k for k in VM.METRICS if k != "match"]
+    rows = []
+    for epoch, onnx in list_candidates(char_dir):
+        m = VM.cached(onnx) or {}
+        sc = cached_score(onnx)
+        rows.append({"epoch": epoch, **{k: m.get(k) for k in keys},
+                     "match": VM.voice_match(m.get("ltas"), target_ltas),
+                     "pronunciation": round(sc["accuracy"] * 100, 1) if sc else None})
+    reference = {}
+    if ref:
+        base, target = ref.get("base") or {}, ref.get("target") or {}
+        reference = {
+            "base": {**{k: base.get(k) for k in keys}, "label": base.get("label"),
+                     "match": VM.voice_match(base.get("ltas"), target_ltas),
+                     "pronunciation": base.get("pronunciation")},
+            "target": {**{k: target.get(k) for k in keys}, "match": target.get("match_ceiling")},
+        }
+    try:
+        loss = read_loss_history(char_dir)
+    except Exception:
+        loss = {"epochs": [], "gen": [], "val": [], "parts": {}, "trend": ""}
+    return {"loss": loss, "checkpoints": rows, "reference": reference}
+
+
+def checkpoint_interval(max_epochs: int) -> int:
+    """Epochs between saved checkpoints: every CHECKPOINT_EVERY, or once at the end of a
+    shorter run, and wider on long runs so they keep at most ~MAX_CHECKPOINTS."""
+    n = max(1, int(max_epochs))
+    return max(min(CHECKPOINT_EVERY, n), -(-n // MAX_CHECKPOINTS))
 
 
 async def train(
@@ -1131,6 +1293,13 @@ async def _train(
     if train_dir.exists():
         shutil.rmtree(train_dir)
     train_dir.mkdir(parents=True, exist_ok=True)
+    # The previous run's unsaved candidates go too: this run's checkpoints land here as
+    # they are saved (see _CandidateExporter), and theirs can't be saved any more anyway
+    # (their checkpoints were in train_dir).
+    candidates_dir = char_dir / "piper_candidates"
+    if candidates_dir.exists():
+        shutil.rmtree(candidates_dir)
+    candidates_dir.mkdir(parents=True)
     log_cb(f"Dataset dir: {dataset_dir}")
     log_cb(f"Train dir: {train_dir}")
 
@@ -1219,7 +1388,7 @@ async def _train(
     # epoch (2164 for lessac), so an unaligned target ends with no checkpoint
     # for the final stretch (and a short run saves nothing at all). Round the
     # target up to the next multiple so the last epoch is always saved.
-    ckpt_every = min(100, max_epochs)
+    ckpt_every = checkpoint_interval(max_epochs)
     target_epochs = -(-target_epochs // ckpt_every) * ckpt_every
 
     # piper_train.vits.lightning._load_datasets does:
@@ -1286,6 +1455,11 @@ async def _train(
         + (f"  (frozen: {freeze})" if freeze else "")
     )
     poller = asyncio.create_task(_poll_progress(train_dir / "progress.json", progress_cb, log_cb))
+    exporter = _CandidateExporter(py, train_dir, candidates_dir, base_cfg, log_cb, status)
+    watcher = asyncio.create_task(exporter.watch())
+    base_onnx = sample_onnx_path(base_voice) if sample_ready(base_voice) else None
+    ref_task = asyncio.create_task(asyncio.to_thread(
+        _write_reference_metrics, candidates_dir, usable, base_onnx, voice_label))
     try:
         await _stream([
             py, "-m", "piper_train",
@@ -1316,6 +1490,7 @@ async def _train(
         })
     finally:
         poller.cancel()
+        await exporter.stop(watcher)          # lets a conversion in flight finish
     log_cb("Training done")
 
     ckpts = sorted(train_dir.rglob("*.ckpt"), key=lambda p: p.stat().st_mtime)
@@ -1324,34 +1499,57 @@ async def _train(
         raise RuntimeError("Training finished but no checkpoint was written")
 
     # Each saved checkpoint is a complete, independent snapshot of the model
-    # at that epoch — not a merge of earlier ones. With a tiny dataset and no
-    # validation split, the LAST checkpoint isn't necessarily the best-sounding
-    # one (it can overfit past a point that sounded more natural). Export every
-    # saved checkpoint to its own ONNX file so the caller can preview and pick.
-    # Capped as a safety net — --checkpoint-epochs 100 means a normal run only
-    # produces a handful; this just guards against pathologically long runs.
-    ckpts = ckpts[-20:]
+    # at that epoch — not a merge of earlier ones. The LAST checkpoint isn't
+    # necessarily the best-sounding one (it can overfit past a point that
+    # sounded more natural), so every one is exported to its own ONNX file to
+    # preview and pick. Most were already exported while training ran; this
+    # catches the last one (and a stop-early one). Capped as a safety net —
+    # checkpoint_interval() already spaces the saves so a run keeps about 20.
+    for ckpt in ckpts[-20:]:
+        if ckpt not in exporter.done:
+            await exporter.export(ckpt, proc_ref, live=False)
 
-    candidates_dir = char_dir / "piper_candidates"
-    if candidates_dir.exists():
-        shutil.rmtree(candidates_dir)
-    candidates_dir.mkdir(parents=True)
-
-    candidates: list[tuple[int, Path]] = []
-    for ckpt in ckpts:
-        m = re.search(r"epoch=(\d+)", ckpt.name)
-        epoch = int(m.group(1)) if m else 0
-        onnx_path = candidates_dir / f"epoch_{epoch:05d}.onnx"
-        log_cb(f"Exporting checkpoint (epoch {epoch}) to ONNX…")
-        await _stream([
-            py, "-m", "piper_train.export_onnx",
-            str(ckpt), str(onnx_path),
-        ], log_cb, proc_ref)
-        shutil.copy2(str(base_cfg), str(onnx_path.with_suffix(".onnx.json")))
-        candidates.append((epoch, onnx_path))
-
+    candidates = list_candidates(char_dir)
     log_cb(f"✓  Exported {len(candidates)} checkpoint candidate(s) for preview")
+    await _measure_and_score(candidates, candidates_dir, exporter, ref_task, base_onnx, log_cb, status)
     return candidates
+
+
+async def _measure_and_score(candidates, candidates_dir: Path, exporter, ref_task, base_onnx, log_cb, status) -> None:
+    """After a run: finish the progress measures. Signal measures for any candidate the live
+    exporter didn't get to, then pronunciation for every candidate and the base voice
+    (Whisper on the GPU, which training no longer needs). Failures only cost a graph point."""
+    from faily.modules import voice_metrics as VM
+    from faily.modules.pronunciation import score_model
+    try:
+        await ref_task
+    except Exception as exc:
+        log_cb(f"(couldn't measure the reference clips / base voice: {exc})")
+    for epoch, onnx in candidates:
+        if not VM.cached(onnx):
+            status(state="exporting", message=f"Measuring checkpoint — epoch {epoch}…")
+            await exporter.measure(onnx)
+    jobs = [(f"epoch {e}", o) for e, o in candidates] + ([("base voice", base_onnx)] if base_onnx else [])
+    for i, (what, onnx) in enumerate(jobs, 1):
+        status(state="exporting", message=f"Scoring pronunciation — {what} ({i}/{len(jobs)})…")
+        try:
+            sc = await asyncio.to_thread(score_model, onnx)
+        except Exception as exc:
+            log_cb(f"(couldn't score {what}: {exc})")
+            continue
+        if what == "base voice":
+            ref_path = candidates_dir / REFERENCE_METRICS
+            try:
+                ref = json.loads(ref_path.read_text())
+                ref.setdefault("base", {})["pronunciation"] = round(sc["accuracy"] * 100, 1)
+                ref_path.write_text(json.dumps(ref))
+            except (OSError, ValueError):
+                pass
+    try:
+        from faily.modules.asr import unload
+        unload()
+    except Exception:
+        pass
 
 
 def loss_at_epoch(char_dir: Path, epoch: int, window: int = 5) -> dict:
@@ -1392,8 +1590,15 @@ def promote_candidate(char_dir: Path, onnx: Path, activate: bool = True) -> dict
         meta["loss"] = loss_at_epoch(char_dir, epoch)
     except Exception:
         pass
+    try:
+        # the whole run (not cut at the saved epoch, so it shows what came after it too);
+        # DETAILS marks `saved_epoch` on the graphs
+        history = {**training_history(char_dir), "saved_epoch": epoch}
+    except Exception:
+        history = None
     replace = run.get("replace_id")
-    saved = PM.save_model(name, onnx=onnx, ckpt=ckpt, meta=meta, activate=activate, replace_id=replace)
+    saved = PM.save_model(name, onnx=onnx, ckpt=ckpt, meta=meta, activate=activate, replace_id=replace,
+                          history=history)
     if replace:       # the first save takes the replaced model's place; later ones are new models
         _write_status(char_dir, run={**run, "replace_id": None})
     _write_status(char_dir, state="done", message="")

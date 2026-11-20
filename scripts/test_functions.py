@@ -696,7 +696,7 @@ class TestCleanup(Sandboxed):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestSettings(Sandboxed):
     def test_defaults(self):
-        self.assertEqual(S.get_piper_epochs(), 1000)
+        self.assertEqual(S.get_piper_epochs(), 10)
         self.assertEqual(S.get_zero_shot_reference(), "all")
         self.assertAlmostEqual(S.get_piper_learning_rate(), 5e-5)
 
@@ -712,7 +712,7 @@ class TestSettings(Sandboxed):
 
     def test_corrupt_file_falls_back_to_defaults(self):
         S._SETTINGS_FILE.write_text("{{{")
-        self.assertEqual(S.load_settings()["piper_epochs"], 1000)
+        self.assertEqual(S.load_settings()["piper_epochs"], 10)
 
     def test_hf_token(self):
         from faily.core import hf_token as H
@@ -749,6 +749,23 @@ class TestPiperModels(Sandboxed):
         self.assertEqual(m2["id"], "m002")
         self.assertFalse(m2["active"])
         self.assertEqual([x["id"] for x in PM.list_models("alice")], ["m002", "m001"])   # newest first
+
+    def test_training_history_saved_with_model(self):
+        make_char("alice")
+        hist = {"loss": {"epochs": [2000, 2001, 2002], "gen": [50.0, 48.0, 47.5], "val": [60.0, None, 58.0],
+                         "parts": {"loss_mel": [30.0, 29.0, 28.5]}, "trend": ""},
+                "checkpoints": [{"epoch": 2001, "pitch": 240.0, "match": 88.0, "pronunciation": 91.0}],
+                "reference": {"base": {"pitch": 197.0, "label": "Amy"}, "target": {"pitch": 250.0}},
+                "saved_epoch": 2001}
+        m = PM.save_model("alice", onnx=self._fake_model("1")[0], ckpt=None, meta={"epoch": 2001}, history=hist)
+        self.assertEqual(PM.load_training_history(m), hist)
+        self.assertNotIn("checkpoints", m)                               # kept out of meta.json
+        m2 = PM.save_model("alice", onnx=self._fake_model("2")[0], ckpt=None, meta={})
+        self.assertIsNone(PM.load_training_history(m2))                  # older / imported models: nothing
+        old = {"epochs": [1, 2], "gen": [3.0, 2.0], "val": [4.0, 3.0], "trend": "", "saved_epoch": 2}
+        (Path(m2["dir"]) / "loss_history.json").write_text(json.dumps(old))   # the short-lived loss-only file
+        self.assertEqual(PM.load_training_history(m2)["loss"]["gen"], [3.0, 2.0])
+        self.assertEqual(PM.load_training_history(m2)["saved_epoch"], 2)
 
     def test_set_active_and_missing(self):
         make_char("alice")
@@ -3278,6 +3295,143 @@ class TestHubUi(Sandboxed):
         import inspect
         from faily.ui.tabs.inflation_dialog import open_inflation_dialog
         self.assertIn("preset", inspect.signature(open_inflation_dialog).parameters)
+
+
+class TestCandidateExporter(Sandboxed):
+    """piper._CandidateExporter turns checkpoints into audition candidates while training runs."""
+
+    def test_exports_settled_checkpoints_live_and_the_rest_at_the_end(self):
+        import asyncio
+        from faily.modules import piper as P
+        fake = SANDBOX / "fakepkg" / "piper_train"
+        fake.mkdir(parents=True)
+        (fake / "__init__.py").write_text("")
+        (fake / "export_onnx.py").write_text(
+            "import os, sys\nopen(sys.argv[2], 'w').write('onnx ' + os.environ.get('CUDA_VISIBLE_DEVICES', 'gpu'))\n")
+        ckdir = SANDBOX / "piper_train" / "lightning_logs" / "version_0" / "checkpoints"
+        ckdir.mkdir(parents=True)
+        out = SANDBOX / "piper_candidates"
+        out.mkdir()
+        cfg = SANDBOX / "base.onnx.json"
+        cfg.write_text("{}")
+        first = ckdir / "epoch=2004-step=10.ckpt"
+        first.write_text("ckpt")
+        os.utime(first, (time.time() - 60, time.time() - 60))
+        statuses, logs = [], []
+        old_pp = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = str(SANDBOX / "fakepkg")
+        try:
+            async def run():
+                ex = P._CandidateExporter(sys.executable, SANDBOX / "piper_train", out, cfg, logs.append,
+                                          lambda **kw: statuses.append(kw))
+                ex.POLL = 0.05
+                task = asyncio.create_task(ex.watch())
+                for _ in range(200):
+                    if first in ex.done:
+                        break
+                    await asyncio.sleep(0.05)
+                second = ckdir / "epoch=2009-step=20.ckpt"      # just written: not settled yet
+                second.write_text("ckpt")
+                await asyncio.sleep(0.3)
+                self.assertNotIn(second, ex.done)
+                await ex.stop(task)
+                await ex.export(second, [None], live=False)     # what train() does after the run
+                return ex
+            ex = asyncio.run(run())
+        finally:
+            if old_pp is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = old_pp
+        self.assertEqual(sorted(p.name for p in out.iterdir()),
+                         ["epoch_02004.onnx", "epoch_02004.onnx.json", "epoch_02009.onnx", "epoch_02009.onnx.json"])
+        self.assertEqual((out / "epoch_02004.onnx").read_text(), "onnx ")        # live export: CUDA hidden
+        self.assertEqual((out / "epoch_02009.onnx").read_text(), "onnx gpu")     # final export: untouched env
+        self.assertEqual(statuses, [{"candidates": 1}])
+        self.assertTrue(any(l.startswith("Preparing checkpoint (epoch 2004)") for l in logs))
+        self.assertFalse(any(l.startswith("Exporting checkpoint (epoch 2004)") for l in logs))   # would flip status
+        self.assertEqual(P.list_candidates(SANDBOX), [(2004, out / "epoch_02004.onnx"), (2009, out / "epoch_02009.onnx")])
+
+
+class TestTrainingProgress(Sandboxed):
+    """The progress graphs: voice_metrics, piper.training_history and ui/training_charts."""
+
+    def test_measure_audio_on_a_known_signal(self):
+        import numpy as np
+        from faily.modules import voice_metrics as VM
+        sr = 22050
+        t = np.arange(int(sr * 2.0)) / sr
+        voice = sum(0.3 / k * np.sin(2 * np.pi * 220 * k * t) for k in range(1, 6))       # 220 Hz "vowel"
+        rng = np.random.default_rng(0)
+        x = np.concatenate([np.zeros(sr // 2), voice, np.zeros(sr // 2)]).astype(np.float32)
+        x += (rng.standard_normal(len(x)) * 10 ** (-60 / 20)).astype(np.float32)     # quiet hiss
+        m = VM.measure_audio(x, sr, "one two three four")
+        self.assertAlmostEqual(m["pitch"], 220, delta=6)
+        self.assertLess(m["pitch_range"], 1.0)                           # a steady tone barely moves
+        self.assertAlmostEqual(m["dur"], 2.0, delta=0.15)                # edge silence not counted
+        self.assertLess(m["noise"], -30)
+        self.assertTrue(400 < m["centroid"] < 2000)
+        s = VM.summarize([m, m])
+        self.assertAlmostEqual(s["wps"], 2.0, delta=0.2)
+        self.assertEqual(VM.voice_match(s["ltas"], s["ltas"]), 100.0)
+        self.assertIsNone(VM.voice_match(None, s["ltas"]))
+        self.assertIsNone(VM.measure_audio(np.zeros(100, dtype=np.float32), sr))
+
+    def test_training_history_and_every_chart(self):
+        from faily.modules import piper as P
+        from faily.modules import voice_metrics as VM
+        from faily.ui import training_charts as TC
+        cdir = C.CHARACTERS_DIR / "alice"
+        cand = cdir / "piper_candidates"
+        cand.mkdir(parents=True)
+        ltas = [float(i % 7) for i in range(64)]
+        for ep, pitch in ((2004, 210.0), (2009, 230.0)):
+            (cand / f"epoch_{ep:05d}.onnx").write_text("x")
+            (cand / f"epoch_{ep:05d}.metrics.json").write_text(json.dumps(
+                {"pitch": pitch, "wps": 3.0, "pitch_range": 4.0, "centroid": 1500.0, "loudness": -16.0,
+                 "noise": -50.0, "ltas": ltas, "sentences": VM._sentences_hash()}))
+        (cand / P.REFERENCE_METRICS).write_text(json.dumps({
+            "base": {"pitch": 197.0, "label": "Amy", "ltas": [0.0] * 32 + [1.0] * 32},
+            "target": {"pitch": 250.0, "ltas": ltas, "match_ceiling": 99.5}}))
+        h = P.training_history(cdir)
+        self.assertEqual([r["epoch"] for r in h["checkpoints"]], [2004, 2009])
+        self.assertEqual(h["checkpoints"][1]["pitch"], 230.0)
+        self.assertEqual(h["checkpoints"][0]["match"], 100.0)          # same spectrum as the target
+        self.assertIsNone(h["checkpoints"][0]["pronunciation"])         # not scored yet
+        self.assertEqual(h["reference"]["target"]["match"], 99.5)
+        self.assertEqual(h["reference"]["base"]["label"], "Amy")
+        self.assertNotIn("ltas", json.dumps(h))                         # small enough to keep with a model
+        for key in TC.CHARTS:
+            opts = TC.chart_options(h, key, mark_epoch=2009)
+            json.dumps(opts)
+            self.assertTrue(opts["series"], key)
+        pitch = TC.chart_options(h, "pitch", mark_epoch=2009)
+        lines = pitch["series"][0]["markLine"]["data"]
+        self.assertIn({"xAxis": 2009}, [{"xAxis": l["xAxis"]} for l in lines if "xAxis" in l])
+        self.assertEqual(sorted(l["yAxis"] for l in lines if "yAxis" in l), [197.0, 250.0])
+        self.assertLessEqual(pitch["yAxis"]["min"], 197.0)               # reference lines stay on screen
+        self.assertGreaterEqual(pitch["yAxis"]["max"], 250.0)
+        self.assertTrue(TC.chart_options({}, "parts")["title"]["text"])  # an empty graph says why
+
+    def test_loss_parts_patch_is_installed_by_setup(self):
+        self.assertIn("patch_piper_train_loss_parts.py", (ROOT / "scripts/setup_linux.sh").read_text())
+
+
+class TestCheckpointInterval(unittest.TestCase):
+    """How often a Piper run saves an audition checkpoint (piper.checkpoint_interval)."""
+
+    def test_every_five_epochs_capped_at_about_twenty(self):
+        from faily.modules.piper import checkpoint_interval
+        self.assertEqual(checkpoint_interval(3), 3)            # shorter than 5: once, at the end
+        self.assertEqual(checkpoint_interval(10), 5)
+        self.assertEqual(checkpoint_interval(50), 5)
+        self.assertEqual(checkpoint_interval(100), 5)
+        self.assertEqual(checkpoint_interval(200), 10)         # 20 checkpoints, not 40
+        for n in (1, 7, 50, 333, 5000):
+            self.assertLessEqual(-(-n // checkpoint_interval(n)), 21, n)
+
+    def test_keep_checkpoints_patch_is_installed_by_setup(self):
+        self.assertIn("patch_piper_train_keep_checkpoints.py", (ROOT / "scripts/setup_linux.sh").read_text())
 
 
 class TestScriptTools(unittest.TestCase):

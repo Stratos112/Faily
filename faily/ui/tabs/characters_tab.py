@@ -443,12 +443,13 @@ def build_characters_tab(on_speak, on_change, initial: str | None = None):
                             "text-[#3a3a3a] cursor-help"
                         ).tooltip(
                             "How many additional epochs to fine-tune for, counted from the "
-                            "starting checkpoint. A checkpoint is saved for audition every "
-                            "100 epochs (or just once at the end if you ask for fewer than 100), "
-                            "so you can pick an earlier one if later ones overfit. You can also stop early at any time."
+                            "starting checkpoint. A fine-tune usually settles within tens of epochs. "
+                            "A checkpoint is saved for audition every 5 epochs (spaced wider on runs "
+                            "over 100 epochs), so you can pick an earlier one if later ones overfit. "
+                            "You can also stop early at any time — that saves one too."
                         )
                     epochs_input = (
-                        ui.number(value=get_piper_epochs(), format="%d", min=1, max=100000, step=100,
+                        ui.number(value=get_piper_epochs(), format="%d", min=1, max=100000, step=1,
                                   on_change=_on_epochs_change)
                         .props("outlined dark dense").classes("w-48 mb-2 font-mono")
                     )

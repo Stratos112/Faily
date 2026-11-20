@@ -28,7 +28,8 @@ _DEFAULTS: dict = {
     # smoother late-stage convergence.
     "piper_learning_rate": 5e-5,
     # How many MORE epochs a training run fine-tunes for (on top of the checkpoint's own).
-    "piper_epochs": 1000,
+    # Fine-tunes on ~2 h of clips converge in tens of epochs, not hundreds.
+    "piper_epochs": 10,
     # Per aspect: "base" = keep the base voice's, "reference" = learn from the
     # clips. See modules/piper.MATCH_ASPECTS.
     "piper_match_timbre": "reference",

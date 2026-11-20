@@ -15,10 +15,11 @@ from faily.core.characters import CHARACTERS_DIR
 from faily.core.model_manager import manager
 from faily.modules.piper import (
     BASE_VOICES, _write_status, base_voice_ready, download_base_voice,
-    infer, list_candidates, promote_candidate, read_loss_history,
-    read_training_status, request_stop, train, training_in_progress,
+    infer, list_candidates, promote_candidate,
+    read_training_status, request_stop, train, training_history, training_in_progress,
 )
 from faily.ui.components import output_url, show_error
+from faily.ui.training_charts import history_chart
 
 _DEFAULT_PREVIEW = "Hello, this is a test of the trained voice."
 _STALL_SECS = 300
@@ -26,48 +27,6 @@ _STALL_SECS = 300
 # name -> {"log": [...], "proc": [Popen|None], "task": Task|None}. In-memory,
 # so it lasts as long as the server process; the status file outlives it.
 _SESSIONS: dict[str, dict] = {}
-
-
-def _smooth(xs: list, window: int = 10) -> list:
-    """Trailing mean, skipping gaps (None)."""
-    out = []
-    for i in range(len(xs)):
-        vals = [v for v in xs[max(0, i - window + 1):i + 1] if v is not None]
-        out.append(sum(vals) / len(vals) if vals else None)
-    return out
-
-
-def _loss_chart_options(hist: dict) -> dict:
-    ep = hist["epochs"]
-
-    def series(name, data, color, smooth):
-        pts = [[e, None if v is None else round(v, 3)] for e, v in zip(ep, data)]
-        return {
-            "name": name, "type": "line", "data": pts, "showSymbol": False,
-            "connectNulls": True, "smooth": False,
-            "lineStyle": {"color": color, "width": 2 if smooth else 1, "opacity": 1 if smooth else 0.25},
-            "itemStyle": {"color": color},
-            "silent": not smooth,
-        }
-
-    return {
-        "backgroundColor": "transparent",
-        "textStyle": {"color": "#888", "fontFamily": "monospace"},
-        "animation": False,
-        "grid": {"left": 44, "right": 16, "top": 28, "bottom": 28},
-        "legend": {"data": ["generator", "validation"], "textStyle": {"color": "#888"}, "top": 0},
-        "tooltip": {"trigger": "axis"},
-        "xAxis": {"type": "value", "scale": True, "name": "epoch", "nameLocation": "middle",
-                  "nameGap": 22, "splitLine": {"show": False}},
-        "yAxis": {"type": "value", "scale": True, "splitLine": {"lineStyle": {"color": "#1a1a1a"}}},
-        "series": [
-            series("generator", hist["gen"], "#f59e0b", False),
-            series("validation", hist["val"], "#38bdf8", False),
-            # same names so the legend toggles raw + smoothed together
-            {**series("generator", _smooth(hist["gen"]), "#f59e0b", True), "name": "generator"},
-            {**series("validation", _smooth(hist["val"]), "#38bdf8", True), "name": "validation"},
-        ],
-    }
 
 
 def _fmt_eta(secs: float | None) -> str:
@@ -141,7 +100,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
     char_dir = CHARACTERS_DIR / name
     sess = _SESSIONS.get(name)
     cursor = [0]
-    state = {"picker": False, "previewing": False, "chart_at": 0.0, "charting": False}
+    state = {"picker": False, "previewing": False, "chart_at": 0.0, "charting": False,
+             "shown": set(), "score_rows": [], "save_btns": []}
 
     with ui.dialog().props("persistent").classes("w-full max-w-3xl") as dlg, ui.card().classes(
         "bg-[#0d0d0d] border border-[#252525] w-full gap-3 p-5"
@@ -152,10 +112,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         detail_lbl = ui.label("").classes("text-[#555] font-mono text-[10px]")
         warn_lbl = ui.label("").classes("text-amber-500 font-mono text-[10px]")
         with ui.column().classes("w-full gap-1") as chart_box:
-            ui.label("LOSS — lower is better; faint = per epoch, bold = 10-epoch average").classes(
-                "text-[#444] font-mono text-[10px] tracking-widest"
-            )
-            loss_chart = ui.echart({"series": []}).classes("w-full").style("height:220px")
+            ui.label("PROGRESS").classes("text-[#444] font-mono text-[10px] tracking-widest")
+            update_chart = history_chart()
             trend_lbl = ui.label("").classes("text-[#888] font-mono text-[10px]")
         chart_box.set_visibility(False)
         log = ui.log(max_lines=2000).classes(
@@ -181,8 +139,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
 
         ui.separator().classes("opacity-20")
         ui.label(
-            "PREVIEW LINE — used to audition each saved checkpoint once training "
-            "finishes. Edit it any time before then."
+            "PREVIEW LINE — spoken by each checkpoint as it comes in. Edit it any time; "
+            "checkpoints already previewed keep their take."
         ).classes("text-[#444] font-mono text-[10px] leading-snug")
         preview_input = (
             ui.input(value=_DEFAULT_PREVIEW).props("outlined dark dense")
@@ -195,8 +153,10 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                 "Each saved checkpoint is a full, independent snapshot — the last one "
                 "isn't always the best-sounding. Listen, then SAVE & USE your favourite, or "
                 "SAVE several to compare later in the MODELS tab. Unsaved ones are discarded "
-                "when you train again."
+                "when you train again. They show up here while training runs (every 5 epochs); "
+                "saving and the pronunciation scores unlock when the run ends (or is stopped)."
             ).classes("text-[#444] font-mono text-[10px] leading-snug")
+            picker_note = ui.label("").classes("text-[#666] font-mono text-[10px]")
             candidates_col = ui.column().classes("w-full gap-1")
         picker_section.set_visibility(False)
 
@@ -250,28 +210,36 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         except Exception:
             pass
 
-    async def _previews():
+    async def _previews(final: bool):
+        """Add a row for every candidate not shown yet. While training runs (final=False) the
+        rows can only be listened to; once it has ended, SAVE unlocks and every row is scored
+        (Whisper on the GPU would slow training down, so scoring waits)."""
         state["previewing"] = True
-        score_rows: list[tuple[int, Path, ui.label]] = []
         try:
             text = preview_input.value.strip() or _DEFAULT_PREVIEW
             for epoch, onnx in list_candidates(char_dir):
+                if epoch in state["shown"]:
+                    continue
                 wav = onnx.with_name(f"preview_epoch_{epoch}.wav")
                 if not wav.exists():
-                    status_lbl.set_text(f"Generating preview — epoch {epoch}…")
+                    picker_note.set_text(f"Generating preview — epoch {epoch}…")
                     try:
                         await ni_run.io_bound(infer, text, onnx, wav)
                     except Exception as exc:
                         show_error(exc)
                         continue
+                    finally:
+                        picker_note.set_text("")
+                state["shown"].add(epoch)
                 with candidates_col:
                     with ui.row().classes(
                         "w-full items-center gap-2 px-3 py-1 rounded "
                         "border border-[#1e1e1e] hover:border-[#333]"
                     ):
                         ui.label(f"epoch {epoch}").classes("text-[#888] font-mono text-[10px] w-20 shrink-0")
-                        score_lbl = ui.label("scoring…").classes("text-[#555] font-mono text-[10px] shrink-0 w-52")
-                        score_rows.append((epoch, onnx, score_lbl))
+                        score_lbl = ui.label("scoring…" if final else "scored when the run ends").classes(
+                            "text-[#555] font-mono text-[10px] shrink-0 w-52")
+                        state["score_rows"].append((epoch, onnx, score_lbl))
                         ui.audio(output_url(wav)).classes("flex-grow").props("controls")
                         btns = []
                         btns.append(ui.button(
@@ -282,8 +250,17 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                         ).props("flat dense color=grey").classes("font-mono text-[10px] shrink-0").tooltip(
                             "Keep this as a model without making it the character's voice"
                         ))
-            state["picker"] = True
-            await _score_all(score_rows)
+                        state["save_btns"] += btns
+                        if not final:
+                            for b in btns:
+                                b.disable()
+            if final:
+                for b in state["save_btns"]:
+                    b.enable()
+                for _, _, lbl in state["score_rows"]:
+                    lbl.set_text("scoring…")
+                state["picker"] = True
+                await _score_all(state["score_rows"])
         finally:
             state["previewing"] = False
 
@@ -309,13 +286,11 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
             return
         state["charting"] = True
         try:
-            hist = await ni_run.io_bound(read_loss_history, char_dir)
+            hist = await ni_run.io_bound(training_history, char_dir)
             state["chart_at"] = time.time()
-            if hist["epochs"]:
-                loss_chart.options.clear()
-                loss_chart.options.update(_loss_chart_options(hist))
-                loss_chart.update()
-                trend_lbl.set_text(hist["trend"])
+            if hist["loss"]["epochs"] or hist["checkpoints"]:
+                update_chart(hist)
+                trend_lbl.set_text(hist["loss"]["trend"])
                 chart_box.set_visibility(True)
         except Exception:
             pass   # the graph is a convenience; never break the dialog over it
@@ -338,6 +313,10 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         stop_btn.set_text("KILL NOW" if st.get("stopping") else "STOP EARLY")
         if s in ("training", "exporting", "ready", "error"):
             await _refresh_chart()
+        if s in ("training", "exporting") and st.get("candidates") and not state["previewing"]:
+            picker_section.set_visibility(True)
+            state["previewing"] = True            # claimed now: the task starts on the next loop turn
+            background_tasks.create(_previews(final=False))
         warn_lbl.set_text("")
         if s == "training":
             ep, tgt = st.get("epoch"), st.get("target")
@@ -369,8 +348,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
             detail_lbl.set_text("")
             picker_section.set_visibility(True)
             if not state["picker"] and not state["previewing"]:
-                candidates_col.clear()
-                await _previews()
+                state["previewing"] = True        # claimed now: the task starts on the next loop turn
+                background_tasks.create(_previews(final=True))
             if state["picker"]:
                 _set_status(f"✓ {st.get('candidates', 0)} checkpoint(s) ready — pick one below", "text-green-400")
         elif s == "done":

@@ -101,11 +101,18 @@ def next_default_name(name: str) -> str:
     return f"Model {len(list_models(name)) + 1}"
 
 
+TRAINING_HISTORY = "training_history.json"
+_OLD_LOSS_HISTORY = "loss_history.json"      # loss curves only, saved for a short while before the measures
+
+
 def save_model(name: str, *, onnx: Path, ckpt: Path | None, meta: dict,
-               activate: bool = True, replace_id: str | None = None) -> dict:
+               activate: bool = True, replace_id: str | None = None, history: dict | None = None) -> dict:
     """Copy a trained model (and its checkpoint) into the registry.
     replace_id: delete that model afterwards and let the new one take its place
-    (name carried over unless meta already has one). Returns the saved entry."""
+    (name carried over unless meta already has one). Returns the saved entry.
+    history: the training run's progress (piper.training_history: loss curves, per-checkpoint
+    measures, reference values, saved_epoch), kept in training_history.json beside meta.json
+    so listing models stays cheap."""
     old = get_model(name, replace_id) if replace_id else None
     mid = _next_id(name)
     d = models_root(name) / mid
@@ -127,6 +134,8 @@ def save_model(name: str, *, onnx: Path, ckpt: Path | None, meta: dict,
             meta["parent"] = old.get("parent")
         meta.setdefault("name", next_default_name(name))
         _meta_path(d).write_text(json.dumps(meta, indent=2, default=str))
+        if history and ((history.get("loss") or {}).get("epochs") or history.get("checkpoints")):
+            (d / TRAINING_HISTORY).write_text(json.dumps(history))
     except Exception:
         shutil.rmtree(d, ignore_errors=True)
         raise
@@ -136,6 +145,21 @@ def save_model(name: str, *, onnx: Path, ckpt: Path | None, meta: dict,
     if activate or was_active:
         set_active(name, mid)
     return get_model(name, mid)
+
+
+def load_training_history(model: dict) -> dict | None:
+    """The training progress saved with a model (see save_model), or None for models saved
+    before it was kept / imported ones. An older loss-only file comes back in the same shape."""
+    d = Path(model["dir"])
+    try:
+        if (d / TRAINING_HISTORY).exists():
+            return json.loads((d / TRAINING_HISTORY).read_text())
+        if (d / _OLD_LOSS_HISTORY).exists():
+            old = json.loads((d / _OLD_LOSS_HISTORY).read_text())
+            return {"loss": old, "checkpoints": [], "reference": {}, "saved_epoch": old.get("saved_epoch")}
+    except Exception:
+        return None
+    return None
 
 
 def update_meta(char: str, model_id: str, /, **fields) -> None:
