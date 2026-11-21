@@ -148,6 +148,26 @@ def _coqui_env():
     import os
     os.environ.setdefault("COQUI_TOS_AGREED", "1")
     os.environ.setdefault("TTS_HOME", str((VC_MODELS_DIR / "coqui").resolve()))
+    _import_coqui_without_torchcodec()
+
+
+def _import_coqui_without_torchcodec():
+    # coqui-tts refuses to import on torch >= 2.9 unless transformers reports
+    # torchcodec as installed. setup_linux.sh deliberately leaves torchcodec out
+    # (and it only loads with system FFmpeg libs). Coqui reads audio through
+    # torchaudio.load, which _patch_torchaudio() has already swapped for soundfile.
+    # So report it as present only while TTS's __init__ runs, and restore the real
+    # check afterwards so transformers doesn't try to use torchcodec anywhere else.
+    import sys
+    if "TTS" in sys.modules:
+        return
+    import transformers.utils.import_utils as iu
+    real = iu.is_torchcodec_available
+    iu.is_torchcodec_available = lambda: True
+    try:
+        import TTS  # noqa: F401
+    finally:
+        iu.is_torchcodec_available = real
 
 
 def _load_xtts():
@@ -791,9 +811,8 @@ def _load_seedvc():
         _bv.BigVGAN._faily_patched = True
 
     # Seed-VC downloads its weights with cache_dir="./checkpoints", i.e.
-    # relative to wherever the app was started — in the container that's
-    # /app/checkpoints, outside every volume, so it'd re-download on each
-    # container recreate. Redirect into models/ (a volume). Must happen before
+    # relative to wherever the app was started, so it'd land outside models/
+    # and re-download whenever the app starts from another folder. Redirect into models/. Must happen before
     # seed_vc_wrapper is imported: it binds the function by name.
     import hf_utils as _hf
     if not getattr(_hf, "_faily_patched", False):

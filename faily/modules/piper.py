@@ -31,7 +31,7 @@ _SR           = 22050
 # publishes has both — some directories only have the exported .onnx, not the
 # training checkpoint needed to resume fine-tuning from.
 #
-# "lessac" is special: it's the one setup (entrypoint.sh) already downloads
+# "lessac" is special: it's the one `setup_linux.sh data` already downloads
 # unconditionally into piper_checkpoints/ (flat, no subfolder) — kept exactly
 # as-is so existing installs need no migration. Every other voice downloads
 # on demand into its own piper_checkpoints/{key}/ subfolder the first time

@@ -20,20 +20,20 @@ One pipeline: create a character, generate its voice, layer in sound, polish, an
 
 ## Setup
 
-Faily runs headless on a Linux box with an NVIDIA GPU and is used from a browser.
+Faily runs headless on a Linux machine with an NVIDIA GPU and is used from a browser. It is developed and run inside a shared VS Code dev container (one container for all projects in `~/projects`; Faily is just a folder in it, with the GPU passed through via `--gpus=all`). Any Debian/Ubuntu machine works the same way.
 
 **Requirements**
 - NVIDIA GPU, 8 GB+ VRAM (Blackwell / RTX 50xx supported: everything runs on CUDA 12.8 builds)
-- ~40 GB of disk for the image/venvs plus downloaded models
-- Docker with the NVIDIA Container Toolkit (Docker Desktop on Windows works: WSL2 backend, GPU passthrough), **or** a bare Debian/Ubuntu machine for the direct install
+- ~40 GB of disk for the venvs plus downloaded models
 
-**Run with Docker (recommended)**
+**Install and run**
 ```bash
-docker compose up --build -d     # first build downloads ~20 GB
+bash scripts/setup_linux.sh      # apt packages, uv, both venvs, data; rerunnable
+python3 main.py                  # re-launches itself under .venv/bin/python
 ```
-Open `http://<server>:7842`. Stop with `docker compose down`; logs with `docker compose logs -f`.
+Open `http://localhost:7842` (the dev container forwards port 7842). Stop with Ctrl+C.
 
-Everything worth keeping lives in bind-mounted folders next to `docker-compose.yml`, so rebuilding the image loses nothing:
+The script can also run single phases (`system`, `main`, `piper`, `app`, `data`); see its header. It ends with a summary of any backend that failed to install. Everything lives inside the project folder, so rebuilding the dev container loses nothing:
 
 | Folder | Contents |
 |---|---|
@@ -41,15 +41,9 @@ Everything worth keeping lives in bind-mounted folders next to `docker-compose.y
 | `models/` | downloaded model weights (HuggingFace cache in `models/hf`, Coqui in `models/vc/coqui`, Seed-VC repo + weights) |
 | `piper_checkpoints/` | Piper base voices for training |
 | `config/` | settings + saved HF token |
+| `.venv/`, `piper_venv/`, `.python/` | the two virtualenvs and the uv-managed Pythons they run on |
 
-On first start the container clones Seed-VC and downloads the Piper base checkpoint (~800 MB). Models download on first use.
-
-**Run directly (no Docker)**
-```bash
-bash scripts/setup_linux.sh      # apt packages, uv, both venvs, data; rerunnable
-.venv/bin/python main.py
-```
-The script can also run single phases (`system`, `main`, `piper`, `app`, `data`); see its header. It ends with a summary of any backend that failed to install.
+The `data` phase clones Seed-VC and downloads the Piper base checkpoint (~800 MB). Models download on first use.
 
 **Tests**
 ```bash
@@ -63,12 +57,7 @@ bash scripts/test_faily.sh       # syntax/import checks + starts the server and 
 - `FAILY_PASSWORD` / `FAILY_USER`: turn on a browser login (HTTP Basic auth; user defaults to `faily`). Off when unset.
 - `FAILY_VRAM_RESERVE_GB`: before loading a model, Faily unloads the least recently used ones until this much VRAM is free (default `6`). Lower it to keep more models warm; raise it if you run other GPU work alongside.
 
-Set these under `environment:` in `docker-compose.yml`, for example:
-```yaml
-    environment:
-      - FAILY_PASSWORD=change-me
-      - HF_TOKEN=hf_...
-```
+Set them in the shell before starting, for example `FAILY_PASSWORD=change-me python3 main.py`.
 
 **Security:** By default Faily has no login. Anyone who can reach port 7842 can use it, including uploading files and running GPU jobs. That's fine on a trusted home network. Otherwise, set `FAILY_PASSWORD`. If the server is reachable from the internet, also put it behind a TLS reverse proxy (e.g. Caddy or nginx). Basic auth over plain HTTP sends the password in cleartext.
 

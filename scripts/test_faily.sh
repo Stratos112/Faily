@@ -9,8 +9,8 @@ set -euo pipefail
 
 PORT=7842
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# App venv for the live checks (/app/.venv in the image, ./.venv in a dev
-# checkout); system python3 is enough for the static checks.
+# App venv for the live checks (./.venv); system python3 is enough for the
+# static checks.
 if [ -x "$ROOT/.venv/bin/python" ]; then PY="$ROOT/.venv/bin/python"; else PY="python3"; fi
 LOGFILE="/tmp/faily_test_$(date +%Y%m%d_%H%M%S).log"
 PASS=0

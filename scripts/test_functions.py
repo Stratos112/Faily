@@ -1917,6 +1917,7 @@ class TestRegressions(Sandboxed):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")                  # coqui's import is noisy
+                self.vc._coqui_env()                             # same order as _load_freevc
                 from TTS.vc.models import freevc as fv
         except Exception as exc:                                  # noqa: BLE001
             self.skipTest(f"coqui TTS not importable here: {exc}")
@@ -2090,6 +2091,23 @@ class TestRegressions(Sandboxed):
         sf.write(buf, speechish(1.0, sr=22050), 22050, format="WAV")
         out = au.ffmpeg_read(buf.getvalue(), 16000)
         self.assertAlmostEqual(len(out) / 16000, 1.0, delta=0.02)
+
+    @regression("coqui-tts refuses to import on torch >= 2.9 when torchcodec is absent, and setup_linux.sh uninstalls torchcodec.",
+                "Keep vc._import_coqui_without_torchcodec() (called from _coqui_env) reporting torchcodec as present only during coqui's import.")
+    def test_coqui_imports_without_torchcodec(self):
+        import importlib.util
+        import sys
+        import transformers.utils.import_utils as iu
+        if importlib.util.find_spec("TTS") is None:
+            self.skipTest("coqui-tts not installed")
+        real = iu.is_torchcodec_available
+        self.vc._patch_xtts_transformers()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.vc._coqui_env()
+        self.assertIn("TTS", sys.modules, "coqui-tts failed to import: XTTS v2 / FreeVC unusable")
+        self.assertIs(iu.is_torchcodec_available, real,
+                      "transformers' torchcodec check must be restored after coqui's import")
 
     @regression("coqui-tts imports pytorch_utils.isin_mps_friendly, which transformers 5 removed.",
                 "Keep _patch_xtts_transformers() (modules/vc.py) restoring pytorch_utils.isin_mps_friendly before TTS loads.")
@@ -3540,6 +3558,26 @@ class TestTrainingRunRecord(Sandboxed):
         log = next(el for el in client.elements.values() if isinstance(el, ui.log))
         lines = [c.text for c in log.default_slot.children]               # read at open; a timer tails it after
         self.assertEqual(lines, ["epoch 2004 done  [gen 40.0]", "epoch 2005 done  [gen 39.0]"])
+
+    def test_whisper_length_warning_is_filtered(self):
+        import logging
+        import faily.modules.asr  # noqa: F401  (installs the filter)
+        log = logging.getLogger("transformers.generation.utils")
+        rec = lambda msg: logging.LogRecord(log.name, logging.WARNING, __file__, 1, msg, None, None)
+        self.assertFalse(log.filter(rec("Both `max_new_tokens` (=220) and `max_length`(=448) seem to have been set.")))
+        self.assertTrue(log.filter(rec("some other warning")))                # only that one is dropped
+
+    @regression(
+        "Scoring a checkpoint row crashed the background preview task: `label.tooltip()` creates an "
+        "element, and a background task has no slot (\"The current slot cannot be determined\").",
+        "Create each row's tooltip with the row (`score_lbl.tip`) and only `tip.set_text()` it later.",
+    )
+    def test_score_rows_do_not_create_elements_later(self):
+        import inspect
+        from faily.ui.tabs import piper_training_dialog as D
+        src = inspect.getsource(D.open_training_dialog)
+        self.assertNotIn("lbl.tooltip(", src)
+        self.assertIn("score_lbl.tip = ui.tooltip(", src)
 
     def test_train_writes_the_report_when_it_stops(self):
         import inspect

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # setup_linux.sh — the one install path for Faily on Linux.
 #
-# Used both by the Dockerfile (one phase per layer, so layers cache) and
-# directly in a dev box / bare server (no args = every phase). Every phase is
-# idempotent — rerunning skips what's already done.
+# Run in the dev container (or any Debian/Ubuntu box) from the project folder;
+# no args = every phase. Every phase is idempotent — rerunning skips what's
+# already done.
 #
 #   bash scripts/setup_linux.sh                 # system main piper app data
 #   bash scripts/setup_linux.sh main piper      # just those phases
@@ -13,8 +13,7 @@
 #   main    .venv (Python 3.14): torch cu128, core deps, cloning/expression backends
 #   piper   piper_venv (Python 3.11): piper-tts + piper-train + patches, torch cu128
 #   app     register the faily package itself into .venv (needs the source tree)
-#   data    Seed-VC repo + Piper base checkpoint (writes into volume-mounted dirs,
-#           so the container runs this at startup — see entrypoint.sh)
+#   data    Seed-VC repo + Piper base checkpoint (into models/ and piper_checkpoints/)
 #
 # Why Python 3.14 for the main venv: chatterbox-tts pins torch==2.6.0 on
 # Python < 3.14 (torch>=2.9 only on 3.14+), and torch 2.6 has no Blackwell
@@ -31,7 +30,10 @@ PIPER_VENV="$PROJECT_DIR/piper_venv"
 TORCH_INDEX="https://download.pytorch.org/whl/cu128"
 MAIN_PY_VERSION="3.14"
 PIPER_PY_VERSION="3.11"   # piper-train's own pin
-export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$PROJECT_DIR/.python}"
+# Always inside the project, ignoring any inherited value: the dev container sets
+# UV_PYTHON_INSTALL_DIR=/opt/uv/python, which is lost on rebuild and would leave the
+# venvs pointing at a missing interpreter.
+export UV_PYTHON_INSTALL_DIR="$PROJECT_DIR/.python"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WARNINGS=()
@@ -167,7 +169,7 @@ phase_system() {
     if [ -n "$(uv_bin)" ]; then
         echo "uv already installed: $(uv_bin)"
     else
-        # Honors UV_INSTALL_DIR (the Dockerfile sets /usr/local/bin); defaults to ~/.local/bin.
+        # Honors UV_INSTALL_DIR; defaults to ~/.local/bin.
         curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
     fi
 }
@@ -180,7 +182,8 @@ phase_main() {
     "$pip" install --upgrade pip
 
     say "torch cu128"
-    ensure_cu128_torch "$VENV" torch torchaudio torchcodec
+    "$pip" uninstall -y torchcodec 2>/dev/null || true
+    ensure_cu128_torch "$VENV" torch torchaudio
 
     say "core deps (from pyproject.toml)"
     # Read [project.dependencies] rather than `pip install -e .` so this works
@@ -233,10 +236,11 @@ print('\n'.join(tomllib.load(open('$PROJECT_DIR/pyproject.toml', 'rb'))['project
     "$pip" install "protobuf>=6.31.1,<8"
 
     say "torch cu128 (re-check after backend installs)"
-    # torchcodec's cu128 build needs NVIDIA NPP, which torch doesn't pull in
-    # (loaded via a preload in model_manager.py — the wheel has no rpath to it).
-    "$pip" install "nvidia-npp-cu12==12.*"
-    ensure_cu128_torch "$VENV" torch torchaudio torchcodec
+    # torchcodec is unused by Faily (soundfile is used everywhere) and newer
+    # torchcodec releases drop cu128 wheels, so keep ensure_cu128_torch on
+    # torch and torchaudio only.
+    "$pip" uninstall -y torchcodec 2>/dev/null || true
+    ensure_cu128_torch "$VENV" torch torchaudio
 
     say "pip check (main venv) — conflicts here are expected, see comments above"
     "$pip" check || true
@@ -252,14 +256,21 @@ phase_piper() {
     make_venv "$PIPER_VENV" "$PIPER_PY_VERSION"
     local py="$PIPER_VENV/bin/python" pip="$PIPER_VENV/bin/pip"
 
-    if [ -x "$PIPER_VENV/bin/piper" ] && "$py" -c "import piper_train.vits.monotonic_align, onnx" 2>/dev/null; then
+    if [ -x "$PIPER_VENV/bin/piper" ] && "$py" -c "import piper_train.vits.monotonic_align, onnx, piper_phonemize_cpp" 2>/dev/null; then
         echo "piper venv already complete — skipping package installs."
     else
         # pip >= 24.1 rejects pytorch-lightning 1.7.x's invalid metadata.
         "$py" -m pip install "pip<24.1"
         "$pip" uninstall -y pytorch-lightning 2>/dev/null || true
 
+        # torch from the cu128 index BEFORE anything that depends on it, or
+        # pytorch-lightning pulls PyPI's latest build (a newer CUDA, untested here).
+        "$pip" install torch --index-url "$TORCH_INDEX"
         "$pip" install piper-tts phonemizer
+        # The real phonemizer extension (bundles espeak-ng + its data). Without it
+        # piper.py falls back to a phonemizer shim that needs the espeak-ng system
+        # library, which the dev container doesn't have.
+        "$pip" install "piper-phonemize==1.1.0"
         "$pip" install cython librosa six
         # torchmetrics pinned: newer releases dropped a private helper 1.7.x imports.
         "$pip" install "torchmetrics==0.11.4" "pytorch-lightning~=1.7.0"

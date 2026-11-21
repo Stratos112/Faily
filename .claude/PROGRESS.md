@@ -1,5 +1,7 @@
 # Server migration: progress notes
 
+> **Historical (superseded 2026-11-21):** Faily's own Dockerfile / docker-compose.yml / entrypoint.sh were removed. Faily now runs directly in the shared `~/projects` dev container (see CLAUDE.md, "Environment"). The notes below are kept for the reasoning behind setup_linux.sh, the 3.14 venv and the `models/` cache layout.
+
 These notes live in the repo because the dev container doesn't persist `~/.claude`, so memory is wiped on rebuild.
 
 ## Goal

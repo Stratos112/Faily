@@ -5,12 +5,27 @@ transformers' ASR pipeline: transformers 5's pipeline decodes through
 torchcodec, whose native libraries are the fragile part of this stack, and we
 always already have decoded samples anyway.
 """
+import logging
+
 import numpy as np
 
 from faily.core.model_manager import manager
 
 MODEL_ID = "openai/whisper-large-v3-turbo"
 _CHUNK_SECS = 28.0       # Whisper's window is 30 s
+
+
+class _NoLengthClashWarning(logging.Filter):
+    """transcribe() caps output with max_new_tokens, and the checkpoint's generation config also
+    has a max_length, so transformers warns "Both `max_new_tokens` … and `max_length` … seem to
+    have been set" on EVERY call (16 lines per pronunciation score). max_new_tokens wins, which is
+    what we want; clearing max_length doesn't help (it falls back to a default of 20 and still warns)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "seem to have been set" not in record.getMessage()
+
+
+logging.getLogger("transformers.generation.utils").addFilter(_NoLengthClashWarning())
 
 
 def _load():

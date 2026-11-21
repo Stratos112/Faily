@@ -239,3 +239,4 @@ hf_token.txt
 # Piper training venv — platform-specific, must never be committed
 # (a Linux-created pyvenv.cfg checked out on Windows breaks Scripts\python.exe)
 /piper_venv/
+/piper_venv.old-*/

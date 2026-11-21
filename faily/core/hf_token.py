@@ -1,6 +1,6 @@
 """Hugging Face access token — pasted once via the startup dialog or Settings,
 stored locally, and reused for any gated-repo download. Falls back to the
-HF_TOKEN env var (e.g. set in docker-compose) when nothing is saved."""
+HF_TOKEN env var when nothing is saved."""
 import os
 
 from faily.core.settings import config_file

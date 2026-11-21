@@ -209,7 +209,7 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
         tip = "Share of words a speech recogniser gets right on 16 sentences the model never trained on (base voice ≈ 99%)."
         if r["worst"]:
             tip += "  Examples that went wrong: " + " | ".join(f"“{w['heard'][:60]}”" for w in r["worst"][:3])
-        lbl.tooltip(tip)
+        lbl.tip.set_text(tip)           # made with the row: no new elements from a background task
 
     def _live_scores():
         """Fill in scores the training run has cached since the rows were drawn."""
@@ -249,7 +249,7 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                     r = await ni_run.io_bound(score_model, onnx)
                 except Exception as exc:
                     lbl.set_text("score unavailable")
-                    lbl.tooltip(str(exc)[-300:])
+                    lbl.tip.set_text(str(exc)[-300:])
                     continue
                 if r is None:        # run.io_bound returns None when cancelled / shutting down
                     return
@@ -281,7 +281,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                     try:
                         await ni_run.io_bound(infer, text, onnx, wav)
                     except Exception as exc:
-                        show_error(exc)
+                        with candidates_col:         # a background task has no UI context of its own
+                            show_error(exc)
                         continue
                     finally:
                         picker_note.set_text("")
@@ -296,6 +297,8 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                         ui.label(f"epoch {epoch}").classes("text-[#888] font-mono text-[10px] w-20 shrink-0")
                         score_lbl = ui.label("scoring…").classes(
                             "text-[#555] font-mono text-[10px] shrink-0 w-52")
+                        with score_lbl:
+                            score_lbl.tip = ui.tooltip("Pronunciation is scored as the checkpoint comes in.")
                         state["score_rows"].append((epoch, onnx, score_lbl))
                         ui.audio(output_url(wav)).classes("flex-grow").props("controls")
                         btns = []
