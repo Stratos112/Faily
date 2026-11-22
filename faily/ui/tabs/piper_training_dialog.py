@@ -152,7 +152,10 @@ def open_training_dialog(name: str, on_change, on_done=lambda: None) -> None:
                     .classes("w-full font-mono text-[11px]")
                 )
                 picker_note = ui.label("No checkpoints yet.").classes("text-[#666] font-mono text-[10px]")
-                candidates_col = ui.column().classes("w-full gap-1")
+                # Own scroll area (same height as the LOG box): a run leaves up to ~20
+                # checkpoints, and an unbounded list pushed the dialog's buttons off screen.
+                candidates_col = ui.column().classes("w-full gap-1 flex-nowrap overflow-y-auto pr-1").style(
+                    "max-height:420px")
             with ui.tab_panel("LOG").classes("p-0 gap-1"):
                 log = ui.log(max_lines=5000).classes(
                     "w-full font-mono text-[10px] rounded border border-[#1a1a1a]"

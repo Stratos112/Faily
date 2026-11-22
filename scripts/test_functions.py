@@ -3579,6 +3579,21 @@ class TestTrainingRunRecord(Sandboxed):
         self.assertNotIn("lbl.tooltip(", src)
         self.assertIn("score_lbl.tip = ui.tooltip(", src)
 
+    @regression(
+        "The CHECKPOINTS list had no height limit: ~20 checkpoints stretched the dialog and pushed "
+        "STOP EARLY / CLOSE off screen.",
+        "Keep candidates_col capped (max-height) with overflow-y-auto in open_training_dialog.",
+    )
+    def test_checkpoint_list_scrolls(self):
+        import inspect
+        import re
+        from faily.ui.tabs import piper_training_dialog as D
+        src = inspect.getsource(D.open_training_dialog)
+        m = re.search(r"candidates_col = ui\.column\(\)[^\n]*\n[^\n]*", src)
+        self.assertTrue(m, "candidates_col not found")
+        self.assertIn("overflow-y-auto", m.group(0))
+        self.assertIn("max-height", m.group(0))
+
     def test_train_writes_the_report_when_it_stops(self):
         import inspect
         from faily.modules import piper as P

@@ -101,3 +101,14 @@ g = defaultdict(list)
 for c in chain: g["REAL" if c.get("source") != "inflated" else f"inflated:{c.get('backend')}"].append((Path(c["audio"]), c.get("transcript", "")))
 for k, clips in g.items(): print(k, len(clips), {x: VM.measure_clips(clips, n=40).get(x) for x in ("wps", "pitch", "pitch_range", "centroid")})
 ```
+
+## 7. 2026-11-22 — Claude's own eg2 training experiments (blind test pending)
+User's verdict before: m011 best, but "cotton balls in her mouth" pronunciation; rhythm fine-not-great; told NOT to clean/low-cut the samples.
+Clarity metric (scratch, `$CLAUDE_JOB_DIR/tmp/clarity.py`): wav2vec2-base-960h greedy CER on 12 held-out consonant-heavy sentences (no LM, so it hears mush Whisper forgives).
+Baselines: Lessac 3.6 %, F5 clips 5.4, m007 5.4, Amy 6.2, m009 11.4, m011 15.1, her REAL recordings 33.4 %.
+Runs (all eg2, via piper.train exactly like the UI): bl1 m011 -> F5-only, timbre+pron ref, rhythm base, 5e-5 x30: CER 4.8 @2179, match 93.2 -> saved **m012 bl1-crisp**.
+bl2 bl1 -> real-only, timbre+rhythm ref, pron base, 2e-5: CER up to 16-22, noise floor back to her room -> saved 2199 as **m013 bl2-real** (contrast).
+bl3 bl1 -> real-only, ONLY rhythm (dp) unlocked, 1e-4: weights verified frozen except dp, still CER 20-26, match 85 -> not saved.
+bl4 fresh Lessac, F5-only, 1e-4 x30: 4.5-5.3 words/s, CER 14-25 -> not saved. bl5 bl1 -> everything, timbre only, 1e-5 x20: CER ~7.5, match 93.4 -> saved **m014 bl5-blend**.
+Conclusion so far: anything learned from her 103 real clips (any module) loses clarity; learning from the F5 clips gains it.
+Blind test: `outputs/misc/bline_compare/` (letters K P R T X, 5 sentences each, raw piper.infer defaults) covers m007, m011, m012, m013, m014. KEY: `.claude/bline_key.json` — don't reveal it until the user has ranked them.

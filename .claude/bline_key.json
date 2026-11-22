@@ -1,0 +1,22 @@
+{
+ "K": {
+  "id": "m011",
+  "name": "twsba_mk3"
+ },
+ "P": {
+  "id": "m012",
+  "name": "bl1-crisp"
+ },
+ "R": {
+  "id": "m007",
+  "name": "twostage_base"
+ },
+ "T": {
+  "id": "m013",
+  "name": "bl2-real"
+ },
+ "X": {
+  "id": "m014",
+  "name": "bl5-blend"
+ }
+}
